@@ -12,6 +12,17 @@ export interface ItemType {
   color: string
   defaultLayerId: Id | null
   fields: FieldDef[]
+  /** Folder this type is filed under in the sidebar; null/undefined = root. */
+  folderId?: Id | null
+}
+
+/** A loose sidebar folder for organizing item types. */
+export interface TypeFolder {
+  id: Id
+  name: string
+  color: string
+  icon: string
+  collapsed: boolean
 }
 
 /** Order in Project.layers = significance (index 0 is most significant). */
@@ -139,6 +150,7 @@ export interface Project {
   name: string
   hierarchyLevels: string[]
   types: ItemType[]
+  typeFolders: TypeFolder[]
   layers: Layer[]
   sections: Section[]
   branches: Branch[]

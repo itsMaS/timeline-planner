@@ -148,6 +148,26 @@ input, select, textarea { font: inherit; color: inherit; }
 .type-row.off { opacity: .38; }
 .type-row .row-gear { opacity: 0; }
 .type-row:hover .row-gear { opacity: 1; }
+
+/* Row action buttons only take space on hover (or while their state is lit),
+   so type names keep the full row width otherwise. */
+.row-act { display: none; padding: 3px; }
+.type-row:hover .row-act, .folder-row:hover .row-act, .row-act.on { display: inline-flex; }
+.type-row.off .row-act, .folder-row.off .row-act { display: inline-flex; }
+
+.folder-row {
+  display: flex; align-items: center; gap: 6px;
+  padding: 3px 6px 3px 0; border-radius: 8px; user-select: none;
+  transition: background .12s, opacity .2s;
+}
+.folder-row:hover { background: var(--panel2); }
+.folder-row.off { opacity: .38; }
+.folder-row .bare-input { font-weight: 600; }
+.folder-types { margin-left: 13px; padding-left: 4px; border-left: 1px solid var(--line-soft); }
+.sidebar.dragging .folder-row:hover,
+.sidebar.dragging .folder-types:hover {
+  outline: 1.5px dashed var(--accent); outline-offset: -1px; border-radius: 8px;
+}
 .type-swatch {
   display: inline-flex; align-items: center; justify-content: center;
   width: 24px; height: 24px; border-radius: 7px; flex-shrink: 0;

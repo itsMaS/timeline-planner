@@ -1,11 +1,13 @@
 import React, { useMemo, useRef, useState } from 'react'
 import {
-  ChevronDown, ChevronRight, ChevronUp, Eye, EyeOff, Pin, Plus, Settings2, Trash2,
+  ChevronDown, ChevronRight, ChevronUp, Eye, EyeOff, FolderPlus, Pin, Plus, Settings2, Target, Trash2,
 } from 'lucide-react'
 import { iconByName } from '../model/icons'
 import { itemMatchesFilters, typeOf } from '../model/layout'
 import { useActiveProject, useStore } from '../model/store'
-import { uid } from '../model/util'
+import type { ItemType } from '../model/types'
+import { PALETTE, uid } from '../model/util'
+import { IconPicker } from './IconPicker'
 import { chipDrop, nav } from './nav'
 
 // The min-zoom slider is logarithmic: camera zoom spans several orders of
@@ -41,6 +43,22 @@ export function Sidebar() {
   const [open, setOpen] = useState({ types: true, layers: true, structure: false, tags: false })
   const toggle = (k: keyof typeof open) => setOpen(o => ({ ...o, [k]: !o[k] }))
   const [openLayerId, setOpenLayerId] = useState<string | null>(null)
+  const [openFolderId, setOpenFolderId] = useState<string | null>(null)
+  const [folderIconPick, setFolderIconPick] = useState(false)
+
+  // ---- type visibility helpers (shared by rows, folders, and solo buttons)
+  const setTypesOff = (ids: string[], off: boolean) => tweak(p => {
+    const set = new Set(p.filters.offTypes)
+    for (const id of ids) { if (off) set.add(id); else set.delete(id) }
+    p.filters.offTypes = [...set]
+    p.activeViewId = null
+  })
+  /** Show only the given types; if they are already the only ones on, show all. */
+  const soloTypes = (ids: string[]) => {
+    const others = proj.types.filter(t => !ids.includes(t.id)).map(t => t.id)
+    const isSolo = proj.filters.offTypes.length === others.length && others.every(id => proj.filters.offTypes.includes(id))
+    tweak(p => { p.filters.offTypes = isSolo ? [] : others; p.activeViewId = null })
+  }
 
   // Counts respecting all other filter groups (not the type toggle itself).
   const counts = useMemo(() => {
@@ -123,8 +141,20 @@ export function Sidebar() {
       const d = dragStart.current
       dragStart.current = null
       if (d?.started) {
-        chipDrop.current?.(ev.clientX, ev.clientY, d.typeId)
         setUI({ dragTypeId: null })
+        // Dropping back onto the sidebar files the type into (or out of) a
+        // folder instead of creating an item on the timeline.
+        const el = document.elementFromPoint(ev.clientX, ev.clientY)
+        if (el?.closest('.sidebar')) {
+          const drop = el.closest('[data-type-folder]')
+          const fid = drop?.getAttribute('data-type-folder') || null
+          const cur = proj.types.find(t => t.id === d.typeId)?.folderId ?? null
+          if (drop && fid !== cur) {
+            mutate(p => { const t = p.types.find(x => x.id === d.typeId); if (t) t.folderId = fid })
+          }
+        } else {
+          chipDrop.current?.(ev.clientX, ev.clientY, d.typeId)
+        }
       } else if (d) {
         // Plain click: toggle filter. Alt-click: solo.
         if (ev.altKey) {
@@ -147,52 +177,161 @@ export function Sidebar() {
 
   if (!ui.sidebarOpen) return null
 
+  const typeRow = (t: ItemType) => {
+    const Icon = iconByName(t.icon)
+    const off = proj.filters.offTypes.includes(t.id)
+    return (
+      <div
+        key={t.id}
+        className={`type-row ${off ? 'off' : ''}`}
+        onPointerDown={e => chipPointerDown(e, t.id)}
+        title="Click to filter · Alt-click to solo · Drag onto the timeline to create, onto a folder to file"
+      >
+        <span className="type-swatch" style={{ background: `${t.color}26`, color: t.color }}>
+          <Icon width={14} height={14} />
+        </span>
+        <span className="type-name">{t.name}</span>
+        <span className="count">{counts.get(t.id) ?? 0}</span>
+        <button
+          className={`ghost-btn row-act ${off ? 'on' : ''}`}
+          title={off ? 'Unhide' : 'Hide'}
+          onPointerDown={e => e.stopPropagation()}
+          onClick={() => setTypesOff([t.id], !off)}
+        >{off ? <EyeOff width={13} height={13} /> : <Eye width={13} height={13} />}</button>
+        <button
+          className="ghost-btn row-act"
+          title="Solo — show only this type (again to show all)"
+          onPointerDown={e => e.stopPropagation()}
+          onClick={() => soloTypes([t.id])}
+        ><Target width={13} height={13} /></button>
+        <button
+          className="ghost-btn row-act"
+          title="Edit type"
+          onPointerDown={e => e.stopPropagation()}
+          onClick={() => setUI({ editTypeId: t.id })}
+        ><Settings2 width={13} height={13} /></button>
+      </div>
+    )
+  }
+
   return (
-    <aside className="sidebar">
+    <aside className={`sidebar ${ui.dragTypeId ? 'dragging' : ''}`}>
       {/* -------- types */}
       <SectionHeader
         title="Types" open={open.types} toggle={() => toggle('types')}
         action={
-          <button
-            className="ghost-btn"
-            title="Add type"
-            onClick={() => {
-              const id = uid()
-              mutate(p => p.types.push({
-                id, name: 'New type', icon: 'Circle', color: '#8b5cf6',
-                defaultLayerId: p.layers[Math.min(1, p.layers.length - 1)]?.id ?? null, fields: [],
-              }))
-              setUI({ editTypeId: id })
-            }}
-          ><Plus width={14} height={14} /></button>
+          <>
+            <button
+              className="ghost-btn"
+              title="Add folder"
+              onClick={() => mutate(p => p.typeFolders.push({
+                id: uid(), name: 'New folder', color: '#8b5cf6', icon: 'Folder', collapsed: false,
+              }))}
+            ><FolderPlus width={14} height={14} /></button>
+            <button
+              className="ghost-btn"
+              title="Add type"
+              onClick={() => {
+                const id = uid()
+                mutate(p => p.types.push({
+                  id, name: 'New type', icon: 'Circle', color: '#8b5cf6',
+                  defaultLayerId: p.layers[Math.min(1, p.layers.length - 1)]?.id ?? null, fields: [],
+                }))
+                setUI({ editTypeId: id })
+              }}
+            ><Plus width={14} height={14} /></button>
+          </>
         }
       />
       {open.types && (
-        <div className="sb-body">
-          {proj.types.map(t => {
-            const Icon = iconByName(t.icon)
-            const off = proj.filters.offTypes.includes(t.id)
+        <div className="sb-body" data-type-folder="">
+          {proj.typeFolders.map(f => {
+            const inside = proj.types.filter(t => t.folderId === f.id)
+            const FIcon = iconByName(f.icon)
+            const Chev = f.collapsed ? ChevronRight : ChevronDown
+            const allOff = inside.length > 0 && inside.every(t => proj.filters.offTypes.includes(t.id))
+            const editFolder = (recipe: (x: typeof f) => void) =>
+              mutate(p => { const x = p.typeFolders.find(y => y.id === f.id); if (x) recipe(x) })
             return (
-              <div
-                key={t.id}
-                className={`type-row ${off ? 'off' : ''}`}
-                onPointerDown={e => chipPointerDown(e, t.id)}
-                title="Click to filter · Alt-click to solo · Drag onto the timeline to create"
-              >
-                <span className="type-swatch" style={{ background: `${t.color}26`, color: t.color }}>
-                  <Icon width={14} height={14} />
-                </span>
-                <span className="type-name">{t.name}</span>
-                <span className="count">{counts.get(t.id) ?? 0}</span>
-                <button
-                  className="ghost-btn row-gear"
-                  onPointerDown={e => e.stopPropagation()}
-                  onClick={() => setUI({ editTypeId: t.id })}
-                ><Settings2 width={13} height={13} /></button>
-              </div>
+              <React.Fragment key={f.id}>
+                <div className={`folder-row ${allOff ? 'off' : ''}`} data-type-folder={f.id}>
+                  <button
+                    className="ghost-btn"
+                    title={f.collapsed ? 'Expand' : 'Collapse'}
+                    onClick={() => tweak(p => { const x = p.typeFolders.find(y => y.id === f.id); if (x) x.collapsed = !x.collapsed })}
+                  ><Chev width={13} height={13} /></button>
+                  <span className="type-swatch" style={{ background: `${f.color}26`, color: f.color }}>
+                    <FIcon width={14} height={14} />
+                  </span>
+                  <input
+                    className="bare-input"
+                    value={f.name}
+                    onChange={e => editFolder(x => { x.name = e.target.value })}
+                  />
+                  <span className="count">{inside.length}</span>
+                  <button
+                    className={`ghost-btn row-act ${allOff ? 'on' : ''}`}
+                    title={allOff ? 'Unhide folder' : 'Hide folder'}
+                    onClick={() => setTypesOff(inside.map(t => t.id), !allOff)}
+                    disabled={inside.length === 0}
+                  >{allOff ? <EyeOff width={13} height={13} /> : <Eye width={13} height={13} />}</button>
+                  <button
+                    className="ghost-btn row-act"
+                    title="Solo — show only this folder's types (again to show all)"
+                    onClick={() => soloTypes(inside.map(t => t.id))}
+                    disabled={inside.length === 0}
+                  ><Target width={13} height={13} /></button>
+                  <button
+                    className={`ghost-btn row-act ${openFolderId === f.id ? 'on' : ''}`}
+                    title="Folder settings"
+                    onClick={() => { setOpenFolderId(id => (id === f.id ? null : f.id)); setFolderIconPick(false) }}
+                  ><Settings2 width={13} height={13} /></button>
+                </div>
+                {openFolderId === f.id && (
+                  <div className="layer-config">
+                    <div className="palette">
+                      {PALETTE.map(c => (
+                        <button
+                          key={c}
+                          className={`swatch ${f.color === c ? 'on' : ''}`}
+                          style={{ background: c }}
+                          onClick={() => editFolder(x => { x.color = c })}
+                        />
+                      ))}
+                      <input
+                        type="color" value={f.color} title="Custom color"
+                        onChange={e => editFolder(x => { x.color = e.target.value })}
+                      />
+                    </div>
+                    <button className="ghost-btn add" onClick={() => setFolderIconPick(v => !v)}>
+                      {folderIconPick ? 'close icon picker' : 'change icon…'}
+                    </button>
+                    {folderIconPick && (
+                      <IconPicker value={f.icon} onPick={n => { editFolder(x => { x.icon = n }); setFolderIconPick(false) }} />
+                    )}
+                    <button
+                      className="ghost-btn add"
+                      onClick={() => {
+                        mutate(p => {
+                          p.typeFolders = p.typeFolders.filter(y => y.id !== f.id)
+                          for (const t of p.types) if (t.folderId === f.id) t.folderId = null
+                        })
+                        setOpenFolderId(null)
+                      }}
+                    ><Trash2 width={12} height={12} /> delete folder (types move out)</button>
+                  </div>
+                )}
+                {!f.collapsed && (
+                  <div className="folder-types" data-type-folder={f.id}>
+                    {inside.map(typeRow)}
+                    {inside.length === 0 && <div className="sb-hint">drag types here</div>}
+                  </div>
+                )}
+              </React.Fragment>
             )
           })}
-          <div className="sb-hint">drag a type onto the line to place it</div>
+          {proj.types.filter(t => !t.folderId).map(typeRow)}
+          <div className="sb-hint">drag a type onto the line to place it · drop it on a folder to file it</div>
         </div>
       )}
 

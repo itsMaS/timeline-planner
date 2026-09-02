@@ -82,6 +82,20 @@ export function TypeEditor() {
           </select>
         </div>
 
+        {proj.typeFolders.length > 0 && (
+          <div className="field">
+            <label>Folder</label>
+            <select
+              className="input"
+              value={type.folderId ?? ''}
+              onChange={e => edit(t => { t.folderId = e.target.value || null })}
+            >
+              <option value="">(none)</option>
+              {proj.typeFolders.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
+            </select>
+          </div>
+        )}
+
         <div className="field">
           <label>Custom fields</label>
           {type.fields.map(f => (

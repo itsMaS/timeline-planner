@@ -31,6 +31,8 @@ export function normalizeProject(p: Project): Project {
     l.minZoom ??= 0
   }
   for (const sc of p.sections) sc.description ??= ''
+  p.typeFolders ??= []
+  for (const t of p.types) t.folderId ??= null
   refreshSectionDepths(p)
   return p
 }
@@ -50,6 +52,7 @@ export function blankProject(name: string): Project {
     types: [
       { id: uid(), name: 'Note', icon: 'StickyNote', color: '#0ea5e9', defaultLayerId: layers[1].id, fields: [] },
     ],
+    typeFolders: [],
     layers,
     sections: [],
     branches: [],
