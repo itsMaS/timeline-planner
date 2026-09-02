@@ -1,10 +1,12 @@
 import React, { useMemo, useState } from 'react'
 import { ArrowDown, ArrowUp, Copy, Trash2, X } from 'lucide-react'
+import { iconByName } from '../model/icons'
 import { typeOf } from '../model/layout'
 import { useActiveProject, useStore } from '../model/store'
 import type { Branch, Item, Section } from '../model/types'
-import { uid } from '../model/util'
+import { formatUnit, uid, unitSuffix } from '../model/util'
 import { Markdown } from './Markdown'
+import { nav } from './nav'
 
 export function Inspector() {
   const proj = useActiveProject()
@@ -353,8 +355,17 @@ function SectionPanel({ section }: { section: Section }) {
   const mutate = useStore(s => s.mutate)
   const select = useStore(s => s.select)
   const showToast = useStore(s => s.showToast)
+  const [preview, setPreview] = useState(false)
   const edit = (recipe: (s: Section) => void) =>
     mutate(p => { const s = p.sections.find(x => x.id === section.id); if (s) recipe(s) })
+  // Items inside the section, in the order the timeline presents them.
+  const contained = useMemo(
+    () => proj.items
+      .filter(it => it.pos >= section.start - 1e-9 && it.pos <= section.end + 1e-9)
+      .sort((a, b) => a.pos - b.pos || a.title.localeCompare(b.title)),
+    [proj.items, section.start, section.end],
+  )
+  const suffix = unitSuffix(proj.settings.unit.preset, proj.settings.unit.custom)
   return (
     <>
       <Head title={proj.hierarchyLevels[section.depth] ?? 'Section'}>
@@ -382,6 +393,45 @@ function SectionPanel({ section }: { section: Section }) {
           <select className="input" value={section.depth} onChange={e => edit(s => { s.depth = Number(e.target.value) })}>
             {proj.hierarchyLevels.map((n, d) => <option key={d} value={d}>{n}</option>)}
           </select>
+        </div>
+        <div className="field">
+          <label>
+            Description <span className="muted">(markdown)</span>
+            <button className="link-btn right" onClick={() => setPreview(v => !v)}>{preview ? 'edit' : 'preview'}</button>
+          </label>
+          {preview ? (
+            <div className="md-preview"><Markdown text={section.description || '*nothing yet*'} /></div>
+          ) : (
+            <textarea
+              className="input desc"
+              value={section.description ?? ''}
+              onChange={e => edit(s => { s.description = e.target.value })}
+            />
+          )}
+        </div>
+        <div className="field">
+          <label>Items inside <span className="muted">({contained.length})</span></label>
+          {contained.length === 0 && <div className="sb-hint">no items inside this section</div>}
+          <div className="insp-items">
+            {contained.map(it => {
+              const t = typeOf(proj, it)
+              const Icon = iconByName(t?.icon ?? 'Circle')
+              return (
+                <button
+                  key={it.id}
+                  className="insp-item-row"
+                  title="Jump to item"
+                  onClick={() => nav.current?.flyToItem(it.id)}
+                >
+                  <Icon width={13} height={13} color={t?.color} strokeWidth={2} />
+                  <span className="insp-item-title">{it.title || '…'}</span>
+                  <span className="insp-item-pos">
+                    {formatUnit(it.pos, Math.max(Math.abs(it.pos), 0.01), suffix, proj.settings.unit.preset)}
+                  </span>
+                </button>
+              )
+            })}
+          </div>
         </div>
       </div>
     </>

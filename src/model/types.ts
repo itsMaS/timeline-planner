@@ -39,6 +39,8 @@ export interface Section {
   depth: number
   start: number
   end: number
+  /** Markdown notes, like an item's description. Normalized to '' on load. */
+  description?: string
 }
 
 export interface BranchPath {

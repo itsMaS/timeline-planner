@@ -373,6 +373,21 @@ input, select, textarea { font: inherit; color: inherit; }
 .md code { background: var(--line-soft); border-radius: 4px; padding: 0 4px; font-size: 11.5px; }
 .md a { color: var(--accent); }
 
+.insp-items {
+  display: flex; flex-direction: column; gap: 1px;
+  border: 1px solid var(--line-soft); border-radius: 8px;
+  max-height: 260px; overflow-y: auto; padding: 3px;
+}
+.insp-item-row {
+  display: flex; align-items: center; gap: 7px;
+  padding: 4px 7px; border-radius: 6px; text-align: left;
+  transition: background .12s;
+}
+.insp-item-row:hover { background: var(--panel2); }
+.insp-item-row svg { flex-shrink: 0; }
+.insp-item-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.insp-item-pos { font-size: 10.5px; color: var(--muted); flex-shrink: 0; }
+
 .seg { display: flex; border: 1px solid var(--line-soft); border-radius: 8px; overflow: hidden; }
 .seg button { flex: 1; padding: 6px 4px; font-size: 11.5px; color: var(--muted); transition: all .14s; }
 .seg button.on { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--text); }

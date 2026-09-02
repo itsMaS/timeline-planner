@@ -30,6 +30,7 @@ export function normalizeProject(p: Project): Project {
     l.size ??= 1
     l.minZoom ??= 0
   }
+  for (const sc of p.sections) sc.description ??= ''
   refreshSectionDepths(p)
   return p
 }
