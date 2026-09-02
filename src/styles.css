@@ -96,6 +96,8 @@ input, select, textarea { font: inherit; color: inherit; }
   padding: 7px 10px; border-radius: 7px; text-align: left;
 }
 .menu button:hover { background: var(--panel2); }
+.menu button.danger { color: #ef4444; }
+.menu.ctx { position: absolute; right: auto; top: auto; z-index: 50; min-width: 180px; }
 
 /* ---------------------------------------------------------------- viewbar */
 .viewbar {
@@ -180,14 +182,18 @@ input, select, textarea { font: inherit; color: inherit; }
 /* ---------------------------------------------------------------- canvas */
 .canvas-wrap {
   position: relative; flex: 1; min-width: 0; overflow: hidden;
-  background: var(--bg); cursor: grab; touch-action: none; user-select: none;
+  background: var(--bg); cursor: default; touch-action: none; user-select: none;
 }
-.canvas-wrap:active { cursor: grabbing; }
+.canvas-wrap.panning { cursor: grabbing; }
 .canvas-wrap.tool-branch { cursor: crosshair; }
 .scene { position: absolute; inset: 0; display: block; }
 .fx-canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 
 .spine { stroke: var(--line); stroke-width: 2; }
+
+.grid-line { stroke: var(--line-soft); stroke-width: 1; }
+.ruler-tick { stroke: var(--line); stroke-width: 1.5; }
+.ruler-label { font-size: 10px; fill: var(--muted); }
 
 .band-edge { stroke-width: 1; transition: stroke .2s; }
 .band-label { font-size: 11px; font-weight: 600; cursor: pointer; }
@@ -356,6 +362,15 @@ input, select, textarea { font: inherit; color: inherit; }
 .modal-foot { margin-top: 14px; display: flex; justify-content: flex-end; }
 .modal h2 { margin: 2px 0 4px; font-size: 17px; }
 .modal .field { margin-top: 10px; }
+.modal.settings { width: 420px; }
+.check-row {
+  display: flex; align-items: center; gap: 8px; font-size: 12.5px;
+  padding: 3px 0; cursor: pointer;
+}
+.check-row input { accent-color: var(--accent); }
+.slider-row { display: flex; align-items: center; gap: 10px; padding: 2px 0; }
+.slider-row span { font-size: 11.5px; color: var(--muted); min-width: 84px; }
+.slider-row input { flex: 1; accent-color: var(--accent); }
 
 .danger-btn {
   display: inline-flex; align-items: center; gap: 6px;

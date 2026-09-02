@@ -1,16 +1,19 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
-import { ListChecks, Shuffle } from 'lucide-react'
+import {
+  ClipboardCopy, ClipboardPaste, CopyPlus, ListChecks, Maximize2, Plus, Settings2, Shuffle, Trash2,
+} from 'lucide-react'
 import { iconByName } from '../model/icons'
 import {
-  BranchLayout, PlacedItem, ROW0_Y, ROW_H, contentExtent, fitCamera, itemMatchesFilters,
-  layoutTimeline, typeOf,
+  BranchLayout, PlacedItem, contentExtent, fitCamera, itemMatchesFilters,
+  layoutTimeline, rowY, typeOf,
 } from '../model/layout'
 import { useActiveProject, useStore } from '../model/store'
 import type { Camera, Item, Section } from '../model/types'
-import { clamp, sectionHue, snapPos, uid } from '../model/util'
+import { clamp, formatUnit, rulerStepFor, sectionHue, snapPos, uid, unitSuffix } from '../model/util'
 import { bindParticleCanvas, burst, puff, ripple, setParticleLevel } from '../fx/particles'
 import { setSoundOn, sfx } from '../fx/sound'
 import { flyCamera, cancelFlight } from '../fx/springs'
+import { getClipboard, setClipboard } from './clipboard'
 import { Markdown } from './Markdown'
 import { chipDrop, nav } from './nav'
 
@@ -18,13 +21,24 @@ const MIN_S = 0.4
 const MAX_S = 700
 
 type Drag =
-  | { kind: 'pan'; startClientX: number; startClientY: number; camX: number; moved: boolean }
+  | { kind: 'pan'; button: number; startClientX: number; startClientY: number; camX: number; moved: boolean }
   | { kind: 'marquee'; x0: number; y0: number; x1: number; y1: number }
   | { kind: 'branch'; startPos: number; curPos: number }
-  | { kind: 'item'; ids: string[]; startClientX: number; orig: Map<string, number>; moved: boolean; color: string }
+  | {
+      kind: 'item'; ids: string[]; grabId: string; startClientX: number
+      orig: Map<string, number>
+      /** Original positions of every item, for ripple (move-all) drags. */
+      allOrig: Map<string, number>
+      /** Ripple mode was on (or Shift held) when the drag started. */
+      ripple: boolean
+      moved: boolean; color: string
+    }
   | { kind: 'handle'; id: string; side: 'L' | 'R'; origPos: number; origDur: number; startClientX: number }
   | { kind: 'branchEnd'; id: string; side: 'fork' | 'join'; orig: number; startClientX: number }
   | { kind: 'sectionEdge'; id: string; side: 'L' | 'R'; orig: number; startClientX: number }
+
+type CtxTarget = { kind: 'bg'; pos: number } | { kind: 'item'; id: string }
+interface CtxMenu { x: number; y: number; target: CtxTarget }
 
 export function CanvasView() {
   const proj = useActiveProject()
@@ -49,8 +63,13 @@ export function CanvasView() {
   const [expandedCluster, setExpandedCluster] = useState<string | null>(null)
   const stickyRef = useRef<Set<string>>(new Set())
   const historyRef = useRef<{ past: Camera[]; future: Camera[] }>({ past: [], future: [] })
+  const [menu, setMenu] = useState<CtxMenu | null>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+  /** Set after a right-drag pan so the browser's contextmenu event doesn't open the menu. */
+  const suppressMenuRef = useRef(false)
 
   const cam = proj.camera
+  const st = proj.settings
   const spineY = Math.round(size.h * 0.42)
   const selection = useMemo(() => new Set(ui.selection), [ui.selection])
 
@@ -100,8 +119,8 @@ export function CanvasView() {
   }, [proj, posOverride, durOverride, branchOverride, sectionOverride])
 
   const layout = useMemo(
-    () => layoutTimeline(effective, cam, size.w, proj.filters, ui.density, ui.ghostHidden, stickyRef.current, selection),
-    [effective, cam, size.w, proj.filters, ui.density, ui.ghostHidden, selection],
+    () => layoutTimeline(effective, cam, size.w, proj.filters, ui.density, ui.ghostHidden, stickyRef.current, selection, st.placement),
+    [effective, cam, size.w, proj.filters, ui.density, ui.ghostHidden, selection, st.placement],
   )
   useEffect(() => {
     stickyRef.current = new Set(layout.placed.map(pl => pl.item.id))
@@ -248,23 +267,43 @@ export function CanvasView() {
     sfx.create()
   }
 
+  // ---- context menu close (outside click / Escape)
+  useEffect(() => {
+    if (!menu) return
+    const onDown = (e: PointerEvent) => {
+      if (!menuRef.current?.contains(e.target as Node)) setMenu(null)
+    }
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setMenu(null) }
+    window.addEventListener('pointerdown', onDown, true)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('pointerdown', onDown, true)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [menu])
+
   // ---- pointer interactions
   const setDragBoth = (d: Drag | null) => { dragRef.current = d; setDrag(d) }
 
   const bgPointerDown = (e: React.PointerEvent) => {
-    if (e.button !== 0) return
     const rect = wrapRef.current!.getBoundingClientRect()
     const x = e.clientX - rect.left
     const y = e.clientY - rect.top
+    // Panning is reserved for the right and middle mouse buttons.
+    if (e.button === 1 || e.button === 2) {
+      e.preventDefault()
+      cancelFlight()
+      ;(e.target as Element).setPointerCapture?.(e.pointerId)
+      setDragBoth({ kind: 'pan', button: e.button, startClientX: e.clientX, startClientY: e.clientY, camX: cam.x, moved: false })
+      return
+    }
+    if (e.button !== 0) return
     ;(e.target as Element).setPointerCapture?.(e.pointerId)
     if (ui.tool === 'branch') {
       const pos = ui.snap ? snapPos(toPos(x), cam.s) : toPos(x)
       setDragBoth({ kind: 'branch', startPos: pos, curPos: pos })
-    } else if (e.shiftKey) {
-      setDragBoth({ kind: 'marquee', x0: x, y0: y, x1: x, y1: y })
     } else {
-      cancelFlight()
-      setDragBoth({ kind: 'pan', startClientX: e.clientX, startClientY: e.clientY, camX: cam.x, moved: false })
+      setDragBoth({ kind: 'marquee', x0: x, y0: y, x1: x, y1: y })
     }
   }
 
@@ -276,7 +315,10 @@ export function CanvasView() {
     const y = e.clientY - rect.top
     if (d.kind === 'pan') {
       const dx = e.clientX - d.startClientX
-      if (Math.abs(dx) + Math.abs(e.clientY - d.startClientY) > 3) d.moved = true
+      if (Math.abs(dx) + Math.abs(e.clientY - d.startClientY) > 3) {
+        if (!d.moved) setMenu(null)
+        d.moved = true
+      }
       setCamera({ x: d.camX - dx / cam.s, s: cam.s })
     } else if (d.kind === 'marquee') {
       d.x1 = x; d.y1 = y
@@ -288,11 +330,19 @@ export function CanvasView() {
       const du = (e.clientX - d.startClientX) / cam.s
       if (Math.abs(e.clientX - d.startClientX) > 3) d.moved = true
       const next = new Map<string, number>()
-      d.orig.forEach((op, id) => {
-        let np = op + du
-        if (ui.snap && !e.altKey) np = snapPos(np, cam.s)
-        next.set(id, np)
-      })
+      if (d.ripple || e.shiftKey) {
+        // Ripple: snap the grabbed item, then shift every item by the same delta
+        // so all relative gaps are preserved.
+        const gp = d.orig.get(d.grabId) ?? d.orig.values().next().value ?? 0
+        const delta = ui.snap && !e.altKey ? snapPos(gp + du, cam.s) - gp : du
+        d.allOrig.forEach((op, id) => next.set(id, op + delta))
+      } else {
+        d.orig.forEach((op, id) => {
+          let np = op + du
+          if (ui.snap && !e.altKey) np = snapPos(np, cam.s)
+          next.set(id, np)
+        })
+      }
       setPosOverride(next)
     } else if (d.kind === 'handle') {
       const du = (e.clientX - d.startClientX) / cam.s
@@ -332,13 +382,19 @@ export function CanvasView() {
     if (!d) return
     const rect = wrapRef.current!.getBoundingClientRect()
     if (d.kind === 'pan') {
-      if (!d.moved && !e.shiftKey) select([])
+      // A completed right-drag pan must not pop the context menu on release.
+      if (d.moved && d.button === 2) suppressMenuRef.current = true
     } else if (d.kind === 'marquee') {
       const [ax, bx] = [Math.min(d.x0, d.x1), Math.max(d.x0, d.x1)]
       const [ay, by] = [Math.min(d.y0, d.y1), Math.max(d.y0, d.y1)]
+      if (bx - ax < 4 && by - ay < 4) {
+        // Plain click on empty space.
+        if (!e.shiftKey) select([])
+        return
+      }
       const hits: string[] = []
       for (const pl of layout.placed) {
-        const iy = spineY + ROW0_Y - pl.row * ROW_H
+        const iy = spineY + rowY(pl.row)
         if (pl.x >= ax && pl.x <= bx && iy >= ay && iy <= by) hits.push(pl.item.id)
       }
       for (const bl of layout.branches) {
@@ -459,14 +515,23 @@ export function CanvasView() {
         ?? proj.items.find(i => i.id === id)
       if (it) orig.set(id, it.pos)
       else {
-        const st = useStore.getState()
-        const cur = st.projects.find(p => p.id === st.activeId)
+        const state = useStore.getState()
+        const cur = state.projects.find(p => p.id === state.activeId)
         const it2 = cur?.items.find(i => i.id === id)
         if (it2) orig.set(id, it2.pos)
       }
     }
+    const allOrig = new Map<string, number>()
+    {
+      const state = useStore.getState()
+      const cur = state.projects.find(p => p.id === state.activeId) ?? proj
+      for (const it of cur.items) allOrig.set(it.id, it.pos)
+    }
     const type = typeOf(proj, item)
-    setDragBoth({ kind: 'item', ids, startClientX: e.clientX, orig, moved: false, color: type?.color ?? '#888' })
+    setDragBoth({
+      kind: 'item', ids, grabId: ids.includes(item.id) ? item.id : ids[0], startClientX: e.clientX,
+      orig, allOrig, ripple: ui.ripple || e.shiftKey, moved: false, color: type?.color ?? '#888',
+    })
   }
 
   const itemHoverStart = (e: React.PointerEvent, id: string) => {
@@ -479,6 +544,83 @@ export function CanvasView() {
   const itemHoverEnd = () => {
     clearTimeout(hoverTimer.current)
     setHover(null)
+  }
+
+  // ---- context menu
+  const bgContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault()
+    if (suppressMenuRef.current) { suppressMenuRef.current = false; return }
+    const rect = wrapRef.current!.getBoundingClientRect()
+    const x = e.clientX - rect.left
+    const y = e.clientY - rect.top
+    const pos = ui.snap ? snapPos(toPos(x), cam.s) : toPos(x)
+    setMenu({ x, y, target: { kind: 'bg', pos } })
+  }
+
+  const itemContextMenu = (e: React.MouseEvent, item: Item) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (suppressMenuRef.current) { suppressMenuRef.current = false; return }
+    if (!selection.has(item.id)) select([item.id])
+    const rect = wrapRef.current!.getBoundingClientRect()
+    setMenu({ x: e.clientX - rect.left, y: e.clientY - rect.top, target: { kind: 'item', id: item.id } })
+  }
+
+  const selectedItemIds = () => {
+    const sel = useStore.getState().ui.selection.filter(s => !s.includes(':'))
+    return sel.length ? sel : []
+  }
+
+  const menuCopy = () => {
+    const ids = selectedItemIds()
+    setClipboard(proj.items.filter(i => ids.includes(i.id)))
+    showToast(`Copied ${ids.length} item${ids.length === 1 ? '' : 's'}.`)
+    setMenu(null)
+  }
+
+  const menuDuplicate = () => {
+    const ids = selectedItemIds()
+    const nids: string[] = []
+    mutate(p => {
+      for (const id of ids) {
+        const src = p.items.find(i => i.id === id)
+        if (!src) continue
+        const cp = structuredClone(src)
+        cp.id = uid()
+        cp.pos += Math.max(0.5, cp.duration)
+        nids.push(cp.id)
+        p.items.push(cp)
+      }
+    })
+    select(nids)
+    setMenu(null)
+  }
+
+  const menuDelete = () => {
+    const ids = selectedItemIds()
+    mutate(p => { p.items = p.items.filter(i => !ids.includes(i.id)) })
+    select([])
+    showToast('Deleted.', true)
+    setMenu(null)
+  }
+
+  const menuPasteAt = (pos: number) => {
+    const clip = getClipboard()
+    if (!clip.length) return
+    const base = Math.min(...clip.map(i => i.pos))
+    const nids: string[] = []
+    mutate(p => {
+      for (const src of clip) {
+        const cp = structuredClone(src)
+        cp.id = uid()
+        cp.pos = pos + (src.pos - base)
+        cp.pathId = null
+        nids.push(cp.id)
+        p.items.push(cp)
+      }
+    })
+    select(nids)
+    setMenu(null)
   }
 
   // ---- breadcrumb
@@ -513,9 +655,11 @@ export function CanvasView() {
   return (
     <div
       ref={wrapRef}
-      className={`canvas-wrap tool-${ui.tool}`}
+      className={`canvas-wrap tool-${ui.tool} ${drag?.kind === 'pan' ? 'panning' : ''}`}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
+      onContextMenu={bgContextMenu}
+      onMouseDown={e => { if (e.button === 1) e.preventDefault() }}
     >
       <svg
         className="scene"
@@ -542,13 +686,13 @@ export function CanvasView() {
                 <rect
                   x={x1} y={yTop} width={w} height={hFull}
                   className="band"
-                  style={{ fill: `hsl(${hue} 60% 55% / ${0.024 + sc.depth * 0.013})` }}
+                  style={{ fill: `hsl(${hue} 60% 55% / ${(0.024 + sc.depth * 0.013) * st.bandStrength})` }}
                   pointerEvents="none"
                 />
                 <line x1={x1} y1={yTop} x2={x1} y2={yTop + hFull} className="band-edge"
-                  style={{ stroke: `hsl(${hue} 55% 55% / ${sel ? 0.8 : 0.2})` }} pointerEvents="none" />
+                  style={{ stroke: `hsl(${hue} 55% 55% / ${sel ? 0.8 : clamp(0.2 * st.bandStrength, 0, 1)})` }} pointerEvents="none" />
                 <line x1={x2} y1={yTop} x2={x2} y2={yTop + hFull} className="band-edge"
-                  style={{ stroke: `hsl(${hue} 55% 55% / ${sel ? 0.8 : 0.2})` }} pointerEvents="none" />
+                  style={{ stroke: `hsl(${hue} 55% 55% / ${sel ? 0.8 : clamp(0.2 * st.bandStrength, 0, 1)})` }} pointerEvents="none" />
                 {w > 60 && (
                   <text
                     x={labelX} y={labelY}
@@ -583,8 +727,43 @@ export function CanvasView() {
             )
           })}
 
+          {/* unit ruler & background grid */}
+          {(st.grid.show || st.unit.showRuler) && (() => {
+            const step = rulerStepFor(cam.s)
+            const n0 = Math.floor(cam.x / step)
+            const n1 = Math.ceil((cam.x + size.w / cam.s) / step)
+            const suffix = unitSuffix(st.unit.preset, st.unit.custom)
+            const dash = st.grid.style === 'dashed' ? '5 7' : st.grid.style === 'dots' ? '0.5 9' : undefined
+            const ticks: React.ReactNode[] = []
+            for (let n = n0; n <= n1; n++) {
+              const v = n * step
+              const x = toX(v)
+              ticks.push(
+                <g key={n}>
+                  {st.grid.show && (
+                    <line
+                      x1={x} y1={-spineY} x2={x} y2={size.h - spineY}
+                      className="grid-line" style={{ opacity: st.grid.opacity }}
+                      strokeDasharray={dash} strokeLinecap={st.grid.style === 'dots' ? 'round' : undefined}
+                    />
+                  )}
+                  {st.unit.showRuler && (
+                    <>
+                      <line x1={x} y1={-5} x2={x} y2={5} className="ruler-tick" />
+                      <text x={x + 5} y={16} className="ruler-label">{formatUnit(v, step, suffix)}</text>
+                    </>
+                  )}
+                </g>,
+              )
+            }
+            return <g pointerEvents="none">{ticks}</g>
+          })()}
+
           {/* spine */}
-          <line x1={0} y1={0} x2={size.w} y2={0} className="spine" />
+          <line
+            x1={0} y1={0} x2={size.w} y2={0} className="spine"
+            style={{ strokeWidth: st.spine.width, opacity: st.spine.opacity }}
+          />
 
           {/* branches */}
           {layout.branches.map(bl => (
@@ -596,6 +775,7 @@ export function CanvasView() {
               itemSelection={selection}
               proj={proj}
               itemPointerDown={itemPointerDown}
+              itemContextMenu={itemContextMenu}
               itemHoverStart={itemHoverStart}
               itemHoverEnd={itemHoverEnd}
               startEndDrag={(side, e) => {
@@ -621,7 +801,7 @@ export function CanvasView() {
             const x = toX(l.item.pos)
             if (x < -60 || x > size.w + 60) return null
             return (
-              <g key={`leave-${id}`} className="node" transform={`translate(${x}, ${ROW0_Y - l.row * ROW_H})`} pointerEvents="none">
+              <g key={`leave-${id}`} className="node" transform={`translate(${x}, ${rowY(l.row)})`} pointerEvents="none">
                 <g className="node-inner out">
                   <circle r={13} style={{ fill: `${type?.color}22`, stroke: type?.color }} />
                 </g>
@@ -638,6 +818,7 @@ export function CanvasView() {
               selected={selection.has(pl.item.id)}
               anim={ui.animLevel !== 'off'}
               onPointerDown={e => itemPointerDown(e, pl.item)}
+              onContextMenu={e => itemContextMenu(e, pl.item)}
               onHoverStart={e => itemHoverStart(e, pl.item.id)}
               onHoverEnd={itemHoverEnd}
               startHandle={(side, e) => {
@@ -751,6 +932,44 @@ export function CanvasView() {
           {hoverItem.description && <div className="tt-desc"><Markdown text={hoverItem.description.slice(0, 400)} /></div>}
         </div>
       )}
+
+      {/* context menu */}
+      {menu && (
+        <div
+          ref={menuRef}
+          className="menu ctx"
+          style={{ left: clamp(menu.x, 0, size.w - 200), top: clamp(menu.y, 0, size.h - 200) }}
+          onContextMenu={e => e.preventDefault()}
+        >
+          {menu.target.kind === 'bg' ? (() => {
+            const pos = menu.target.pos
+            return (
+              <>
+                <button onClick={() => {
+                  const typeId = ui.lastTypeId ?? proj.types[0]?.id
+                  if (typeId) createItem(typeId, pos, null, menu.x, menu.y)
+                  setMenu(null)
+                }}><Plus width={13} height={13} /> New item here</button>
+                {getClipboard().length > 0 && (
+                  <button onClick={() => menuPasteAt(pos)}><ClipboardPaste width={13} height={13} /> Paste here</button>
+                )}
+                <button onClick={() => { flyTo(fitCamera(proj, size.w)); setMenu(null) }}>
+                  <Maximize2 width={13} height={13} /> Fit everything
+                </button>
+                <button onClick={() => { setUI({ overlay: 'settings' }); setMenu(null) }}>
+                  <Settings2 width={13} height={13} /> Timeline settings…
+                </button>
+              </>
+            )
+          })() : (
+            <>
+              <button onClick={menuCopy}><ClipboardCopy width={13} height={13} /> Copy</button>
+              <button onClick={menuDuplicate}><CopyPlus width={13} height={13} /> Duplicate</button>
+              <button className="danger" onClick={menuDelete}><Trash2 width={13} height={13} /> Delete</button>
+            </>
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -763,6 +982,7 @@ function ItemG(props: {
   selected: boolean
   anim: boolean
   onPointerDown: (e: React.PointerEvent) => void
+  onContextMenu: (e: React.MouseEvent) => void
   onHoverStart: (e: React.PointerEvent) => void
   onHoverEnd: () => void
   startHandle: (side: 'L' | 'R', e: React.PointerEvent) => void
@@ -770,17 +990,18 @@ function ItemG(props: {
   const { pl, proj, selected } = props
   const type = typeOf(proj, pl.item)
   const Icon = iconByName(type?.icon ?? 'Circle')
-  const y = ROW0_Y - pl.row * ROW_H
+  const y = rowY(pl.row)
   const color = type?.color ?? '#888'
   return (
     <g
       className={`node ${pl.ghost ? 'ghost' : ''} ${selected ? 'sel' : ''}`}
       transform={`translate(${pl.x}, ${y})`}
       onPointerDown={props.onPointerDown}
+      onContextMenu={props.onContextMenu}
       onPointerEnter={props.onHoverStart}
       onPointerLeave={props.onHoverEnd}
     >
-      <line className="stem" x1={0} y1={14} x2={0} y2={-y} style={{ stroke: color }} />
+      <line className="stem" x1={0} y1={y < 0 ? 14 : -14} x2={0} y2={-y} style={{ stroke: color }} />
       <g className={`node-inner ${props.anim ? 'pop' : ''}`}>
         {pl.spanW > 0 && (
           <g>
@@ -817,6 +1038,7 @@ function BranchG(props: {
   itemSelection: Set<string>
   proj: ReturnType<typeof useActiveProject>
   itemPointerDown: (e: React.PointerEvent, item: Item) => void
+  itemContextMenu: (e: React.MouseEvent, item: Item) => void
   itemHoverStart: (e: React.PointerEvent, id: string) => void
   itemHoverEnd: () => void
   startEndDrag: (side: 'fork' | 'join', e: React.PointerEvent) => void
@@ -877,6 +1099,7 @@ function BranchG(props: {
                   className={`node ${pi.ghost ? 'ghost' : ''} ${sel ? 'sel' : ''}`}
                   transform={`translate(${pi.x}, ${pi.y})`}
                   onPointerDown={e => props.itemPointerDown(e, pi.item)}
+                  onContextMenu={e => props.itemContextMenu(e, pi.item)}
                   onPointerEnter={e => props.itemHoverStart(e, pi.item.id)}
                   onPointerLeave={props.itemHoverEnd}
                 >

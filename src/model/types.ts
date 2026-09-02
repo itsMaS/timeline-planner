@@ -87,6 +87,34 @@ export interface Camera {
   s: number
 }
 
+export type UnitPreset = 'none' | 'minutes' | 'hours' | 'days' | 'weeks' | 'months' | 'years' | 'custom'
+
+export interface TimelineSettings {
+  /** Where markers may be placed relative to the spine. */
+  placement: 'above' | 'both'
+  unit: {
+    preset: UnitPreset
+    /** Suffix used when preset is 'custom' (e.g. "beats"). */
+    custom: string
+    /** Draw tick marks + unit labels along the spine. */
+    showRuler: boolean
+  }
+  grid: {
+    show: boolean
+    style: 'solid' | 'dashed' | 'dots'
+    /** 0..1 */
+    opacity: number
+  }
+  spine: {
+    /** Stroke width in px. */
+    width: number
+    /** 0..1 */
+    opacity: number
+  }
+  /** Multiplier for section band tint (0 = invisible, 1 = default, 2 = strong). */
+  bandStrength: number
+}
+
 export interface Project {
   schemaVersion: 1
   id: Id
@@ -101,4 +129,5 @@ export interface Project {
   camera: Camera
   filters: Filters
   activeViewId: Id | null
+  settings: TimelineSettings
 }

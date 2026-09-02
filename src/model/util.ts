@@ -16,6 +16,29 @@ export function snapPos(pos: number, s: number): number {
   return Math.round(pos / st) * st
 }
 
+const RULER_STEPS = [0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000]
+
+/** Smallest world step whose labels stay at least ~90px apart at the given scale. */
+export function rulerStepFor(s: number): number {
+  for (const st of RULER_STEPS) if (st * s >= 90) return st
+  return RULER_STEPS[RULER_STEPS.length - 1]
+}
+
+const UNIT_SUFFIX: Record<string, string> = {
+  none: '', minutes: 'min', hours: 'h', days: 'd', weeks: 'w', months: 'mo', years: 'y',
+}
+
+export function unitSuffix(preset: string, custom: string): string {
+  return preset === 'custom' ? custom.trim() : (UNIT_SUFFIX[preset] ?? '')
+}
+
+/** Tick label for a ruler value, e.g. "12.5 d" or "40". */
+export function formatUnit(v: number, step: number, suffix: string): string {
+  const decimals = step < 0.1 ? 2 : step < 1 ? 1 : 0
+  const n = v.toFixed(decimals).replace(/\.0+$/, '').replace(/(\.\d*?)0+$/, '$1')
+  return suffix ? `${n} ${suffix}` : n
+}
+
 export const PALETTE = [
   '#ef4444', '#f97316', '#f59e0b', '#eab308',
   '#84cc16', '#22c55e', '#10b981', '#14b8a6',

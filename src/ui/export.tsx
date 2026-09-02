@@ -1,9 +1,9 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { ListChecks, Shuffle } from 'lucide-react'
 import { iconByName } from '../model/icons'
-import { ROW0_Y, ROW_H, contentExtent, layoutTimeline, typeOf } from '../model/layout'
+import { contentExtent, layoutTimeline, rowY, typeOf } from '../model/layout'
 import type { Camera, Project } from '../model/types'
-import { clamp, download, sectionHue } from '../model/util'
+import { clamp, download, formatUnit, rulerStepFor, sectionHue, unitSuffix } from '../model/util'
 
 interface Colors { bg: string; text: string; line: string; muted: string }
 const DARK: Colors = { bg: '#111318', text: '#e6e8ee', line: '#3a3f4d', muted: '#8b91a0' }
@@ -13,7 +13,8 @@ const LIGHT: Colors = { bg: '#f6f7f9', text: '#23262e', line: '#c3c8d4', muted: 
 function ExportScene(props: { proj: Project; cam: Camera; w: number; h: number; density: number; theme: 'dark' | 'light' }) {
   const { proj, cam, w, h, density, theme } = props
   const C = theme === 'dark' ? DARK : LIGHT
-  const layout = layoutTimeline(proj, cam, w, proj.filters, density, false, new Set())
+  const st = proj.settings
+  const layout = layoutTimeline(proj, cam, w, proj.filters, density, false, new Set(), new Set(), st.placement)
   const spineY = Math.round(h * 0.42)
   const toX = (pos: number) => (pos - cam.x) * cam.s
   const font = 'ui-sans-serif, system-ui, sans-serif'
@@ -35,7 +36,7 @@ function ExportScene(props: { proj: Project; cam: Camera; w: number; h: number; 
           return (
             <g key={sc.id}>
               <rect x={x1} y={-spineY} width={x2 - x1} height={h}
-                fill={`hsl(${hue} 60% 55% / ${0.024 + sc.depth * 0.013})`} />
+                fill={`hsl(${hue} 60% 55% / ${(0.024 + sc.depth * 0.013) * st.bandStrength})`} />
               <line x1={x1} y1={-spineY} x2={x1} y2={h - spineY} stroke={`hsl(${hue} 55% 55% / 0.2)`} />
               <line x1={x2} y1={-spineY} x2={x2} y2={h - spineY} stroke={`hsl(${hue} 55% 55% / 0.2)`} />
               <text x={Math.max(x1, 0) + 10} y={-spineY + 20 + sc.depth * 19} fontFamily={font} fontSize={11} fontWeight={600}
@@ -43,7 +44,34 @@ function ExportScene(props: { proj: Project; cam: Camera; w: number; h: number; 
             </g>
           )
         })}
-        <line x1={0} y1={0} x2={w} y2={0} stroke={C.line} strokeWidth={2} />
+        {(st.grid.show || st.unit.showRuler) && (() => {
+          const step = rulerStepFor(cam.s)
+          const n0 = Math.floor(cam.x / step)
+          const n1 = Math.ceil((cam.x + w / cam.s) / step)
+          const suffix = unitSuffix(st.unit.preset, st.unit.custom)
+          const dash = st.grid.style === 'dashed' ? '5 7' : st.grid.style === 'dots' ? '0.5 9' : undefined
+          const ticks = []
+          for (let n = n0; n <= n1; n++) {
+            const v = n * step
+            const x = toX(v)
+            ticks.push(
+              <g key={n}>
+                {st.grid.show && (
+                  <line x1={x} y1={-spineY} x2={x} y2={h - spineY} stroke={C.line} opacity={st.grid.opacity * 0.6}
+                    strokeDasharray={dash} strokeLinecap={st.grid.style === 'dots' ? 'round' : undefined} />
+                )}
+                {st.unit.showRuler && (
+                  <>
+                    <line x1={x} y1={-5} x2={x} y2={5} stroke={C.line} strokeWidth={1.5} />
+                    <text x={x + 5} y={16} fontFamily={font} fontSize={10} fill={C.muted}>{formatUnit(v, step, suffix)}</text>
+                  </>
+                )}
+              </g>,
+            )
+          }
+          return <g>{ticks}</g>
+        })()}
+        <line x1={0} y1={0} x2={w} y2={0} stroke={C.line} strokeWidth={st.spine.width} opacity={st.spine.opacity} />
         {layout.branches.map(bl => {
           const { branch } = bl
           const dash = branch.mode === 'any' ? '7 5' : undefined
@@ -89,10 +117,10 @@ function ExportScene(props: { proj: Project; cam: Camera; w: number; h: number; 
         {layout.placed.map(pl => {
           const t = typeOf(proj, pl.item)
           const Icon = iconByName(t?.icon ?? 'Circle')
-          const y = ROW0_Y - pl.row * ROW_H
+          const y = rowY(pl.row)
           return (
             <g key={pl.item.id} transform={`translate(${pl.x}, ${y})`} opacity={pl.ghost ? 0.18 : 1}>
-              <line x1={0} y1={14} x2={0} y2={-y} stroke={t?.color} strokeWidth={1} opacity={0.35} />
+              <line x1={0} y1={y < 0 ? 14 : -14} x2={0} y2={-y} stroke={t?.color} strokeWidth={1} opacity={0.35} />
               {pl.spanW > 0 && (
                 <rect x={0} y={17} width={pl.spanW} height={6} rx={3} fill={`${t?.color}55`} stroke={`${t?.color}88`} />
               )}

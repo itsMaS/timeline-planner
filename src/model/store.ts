@@ -1,8 +1,30 @@
 import { create } from 'zustand'
-import type { Camera, Filters, Id, Project } from './types'
+import type { Camera, Filters, Id, Project, TimelineSettings } from './types'
 import { uid } from './util'
 
 export const emptyFilters = (): Filters => ({ offTypes: [], offLayers: [], tags: [], text: '' })
+
+export const defaultSettings = (): TimelineSettings => ({
+  placement: 'above',
+  unit: { preset: 'none', custom: '', showRuler: false },
+  grid: { show: false, style: 'solid', opacity: 0.35 },
+  spine: { width: 2, opacity: 1 },
+  bandStrength: 1,
+})
+
+/** Fill in fields missing from projects saved by older versions. */
+export function normalizeProject(p: Project): Project {
+  const d = defaultSettings()
+  const s = (p.settings ?? {}) as Partial<TimelineSettings>
+  p.settings = {
+    placement: s.placement ?? d.placement,
+    unit: { ...d.unit, ...s.unit },
+    grid: { ...d.grid, ...s.grid },
+    spine: { ...d.spine, ...s.spine },
+    bandStrength: s.bandStrength ?? d.bandStrength,
+  }
+  return p
+}
 
 export function blankProject(name: string): Project {
   const layers = [
@@ -27,6 +49,7 @@ export function blankProject(name: string): Project {
     camera: { x: -8, s: 14 },
     filters: emptyFilters(),
     activeViewId: null,
+    settings: defaultSettings(),
   }
 }
 
@@ -47,8 +70,10 @@ interface UIState {
   soundOn: boolean
   animLevel: AnimLevel
   snap: boolean
+  /** Dragging one item moves every other item by the same amount. */
+  ripple: boolean
   tool: Tool
-  overlay: 'templates' | 'cheatsheet' | null
+  overlay: 'templates' | 'cheatsheet' | 'settings' | null
   editTypeId: Id | null
   dragTypeId: Id | null
   lastTypeId: Id | null
@@ -101,7 +126,7 @@ function persistSoon(get: () => Store) {
         activeId: s.activeId,
         prefs: {
           ghostHidden: s.ui.ghostHidden, density: s.ui.density, theme: s.ui.theme,
-          soundOn: s.ui.soundOn, animLevel: s.ui.animLevel, snap: s.ui.snap,
+          soundOn: s.ui.soundOn, animLevel: s.ui.animLevel, snap: s.ui.snap, ripple: s.ui.ripple,
         },
       }))
       for (const p of s.projects) {
@@ -127,7 +152,7 @@ function loadInitial(): { projects: Project[]; activeId: Id; prefs: Partial<UISt
       const projects: Project[] = []
       for (const id of idx.order) {
         const raw = localStorage.getItem(LS_PROJ(id))
-        if (raw) projects.push(JSON.parse(raw))
+        if (raw) projects.push(normalizeProject(JSON.parse(raw)))
       }
       if (projects.length) {
         const activeId = projects.some(p => p.id === idx.activeId) ? idx.activeId : projects[0].id
@@ -152,6 +177,7 @@ export const useStore = create<Store>((set, get) => ({
     soundOn: init.prefs.soundOn ?? false,
     animLevel: (init.prefs.animLevel as AnimLevel) ?? 'full',
     snap: init.prefs.snap ?? true,
+    ripple: init.prefs.ripple ?? false,
     tool: 'select',
     overlay: init.fresh ? 'templates' : null,
     editTypeId: null,
@@ -253,7 +279,7 @@ export const useStore = create<Store>((set, get) => ({
       const p = JSON.parse(json) as Project
       if (!p || p.schemaVersion !== 1 || !Array.isArray(p.items)) return 'Not a valid timeline file.'
       p.id = uid()
-      get().addProject(p)
+      get().addProject(normalizeProject(p))
       return null
     } catch {
       return 'Could not parse that file as JSON.'

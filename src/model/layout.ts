@@ -5,7 +5,7 @@ export interface PlacedItem {
   item: Item
   x: number // screen px of item.pos
   w: number // total card width (span bar or icon+label)
-  row: number // 0 = closest to spine, stacking upward
+  row: number // 0 = closest to spine, stacking upward; negative rows stack below the spine
   labelShown: boolean
   ghost: boolean
   spanW: number // pixel width of the duration bar (0 for points)
@@ -75,17 +75,27 @@ const ICON_W = 30
 export const ROW_H = 46
 export const ROW0_Y = -52 // y of row 0 relative to the spine
 
+/**
+ * Y of a row relative to the spine. Rows >= 0 stack upward above the spine;
+ * negative rows (-1, -2, …) stack downward below it.
+ */
+export function rowY(row: number): number {
+  return row >= 0 ? ROW0_Y - row * ROW_H : -ROW0_Y - (row + 1) * ROW_H
+}
+
 interface Interval { a: number; b: number }
 
-function fits(rows: Interval[][], row: number, a: number, b: number): boolean {
-  const list = rows[row]
+function fits(rows: Map<number, Interval[]>, row: number, a: number, b: number): boolean {
+  const list = rows.get(row)
   if (!list) return true
   for (const iv of list) if (a < iv.b && b > iv.a) return false
   return true
 }
 
-function occupy(rows: Interval[][], row: number, a: number, b: number) {
-  ;(rows[row] ??= []).push({ a, b })
+function occupy(rows: Map<number, Interval[]>, row: number, a: number, b: number) {
+  const list = rows.get(row)
+  if (list) list.push({ a, b })
+  else rows.set(row, [{ a, b }])
 }
 
 /**
@@ -102,6 +112,7 @@ export function layoutTimeline(
   ghostHidden: boolean,
   sticky: Set<string>,
   forced: Set<string> = new Set(),
+  placement: 'above' | 'both' = 'above',
 ): LayoutResult {
   const toX = (pos: number) => (pos - cam.x) * cam.s
   const margin = 220
@@ -138,9 +149,32 @@ export function layoutTimeline(
     return pa - pb || a.it.pos - b.it.pos
   })
 
-  const rows: Interval[][] = []
+  const rows = new Map<number, Interval[]>()
   const placed: PlacedItem[] = []
   const overflow: { it: Item; ghost: boolean }[] = []
+
+  // Branch fans live below the spine — reserve those rows so below-spine
+  // markers don't overlap the paths.
+  if (placement === 'both') {
+    for (const br of p.branches) {
+      const fx = toX(br.forkPos)
+      const jx = toX(br.joinPos)
+      if (jx < -margin || fx > width + margin) continue
+      const maxY = 64 + (br.paths.length - 1) * 58 + 26
+      for (let r = 1; rowY(-r) <= maxY; r++) occupy(rows, -r, fx - 24, jx + 24)
+    }
+  }
+
+  // Candidate rows in preference order: 0, -1, 1, -2, … when both sides are
+  // allowed (alternating keeps the timeline vertically balanced).
+  const candidateRows = (cap: number): number[] => {
+    const out: number[] = []
+    for (let r = 0; r < cap; r++) {
+      out.push(r)
+      if (placement === 'both') out.push(-(r + 1))
+    }
+    return out
+  }
 
   for (const { it, ghost, pin } of mainItems) {
     const x = toX(it.pos)
@@ -151,7 +185,7 @@ export function layoutTimeline(
       const w = Math.max(ICON_W + lw, spanW)
       const a = x - ICON_W / 2 - minGap / 2
       const b = x - ICON_W / 2 + w + minGap / 2
-      for (let r = 0; r < rowCap; r++) {
+      for (const r of candidateRows(rowCap)) {
         if (fits(rows, r, a, b)) {
           occupy(rows, r, a, b)
           return { item: it, x, w, row: r, labelShown: withLabel, ghost, spanW }

@@ -1,22 +1,21 @@
 import React, { useEffect, useRef, useState } from 'react'
 import {
-  Download, Eye, EyeOff, GitBranch, HelpCircle, Magnet, Maximize2, Minus, Moon, Plus,
-  Redo2, Search, Sun, Undo2, Upload, Volume2, VolumeX, X, ZoomIn,
+  Download, Eye, EyeOff, GitBranch, HelpCircle, Link, Magnet, Maximize2, Minus, Moon, Plus,
+  Redo2, Search, Settings2, Sun, Undo2, Upload, Volume2, VolumeX, X, ZoomIn,
 } from 'lucide-react'
 import { iconByName } from '../model/icons'
 import { itemMatchesFilters } from '../model/layout'
 import { blankProject, emptyFilters, useActiveProject, useStore } from '../model/store'
 import { TEMPLATES } from '../model/templates'
-import type { Item } from '../model/types'
+import type { TimelineSettings, UnitPreset } from '../model/types'
 import { uid } from '../model/util'
 import { exportFullSVG, exportJSON, exportPNG } from './export'
 import { CanvasView } from './Canvas'
+import { getClipboard, setClipboard } from './clipboard'
 import { Inspector } from './Inspector'
 import { Sidebar } from './Sidebar'
 import { TypeEditor } from './TypeEditor'
 import { nav } from './nav'
-
-let clipboard: Item[] = []
 
 export function App() {
   const proj = useActiveProject()
@@ -74,10 +73,11 @@ export function App() {
       }
       if (mod && e.key.toLowerCase() === 'c') {
         const ids = s.ui.selection.filter(x => !x.includes(':'))
-        clipboard = p.items.filter(i => ids.includes(i.id)).map(i => structuredClone(i))
+        setClipboard(p.items.filter(i => ids.includes(i.id)))
         return
       }
       if (mod && e.key.toLowerCase() === 'v') {
+        const clipboard = getClipboard()
         if (!clipboard.length) return
         e.preventDefault()
         const base = Math.min(...clipboard.map(i => i.pos))
@@ -180,6 +180,7 @@ export function App() {
       {ui.editTypeId && <TypeEditor />}
       {ui.overlay === 'templates' && <TemplateModal />}
       {ui.overlay === 'cheatsheet' && <Cheatsheet />}
+      {ui.overlay === 'settings' && <SettingsModal />}
       <ToastView />
       <DragGhost />
     </div>
@@ -272,6 +273,9 @@ function Toolbar({ applyView }: { applyView: (id: string | null) => void }) {
           </label>
           <button className={`ghost-btn ${ui.snap ? 'on' : ''}`} title="Snap to grid (hold Alt to bypass)"
             onClick={() => setUI({ snap: !ui.snap })}><Magnet width={15} height={15} /></button>
+          <button className={`ghost-btn ${ui.ripple ? 'on' : ''}`}
+            title="Linked move — dragging one item moves every other item with it (or hold Shift while dragging)"
+            onClick={() => setUI({ ripple: !ui.ripple })}><Link width={15} height={15} /></button>
           <button className={`ghost-btn ${ui.ghostHidden ? 'on' : ''}`} title="Hide filtered items completely (instead of ghosting)"
             onClick={() => setUI({ ghostHidden: !ui.ghostHidden })}>
             {ui.ghostHidden ? <EyeOff width={15} height={15} /> : <Eye width={15} height={15} />}
@@ -325,6 +329,9 @@ function Toolbar({ applyView }: { applyView: (id: string | null) => void }) {
               }}
             />
           </div>
+          <button className="ghost-btn" title="Timeline settings" onClick={() => setUI({ overlay: 'settings' })}>
+            <Settings2 width={15} height={15} />
+          </button>
           <button className="ghost-btn" title="Shortcuts (?)" onClick={() => setUI({ overlay: 'cheatsheet' })}>
             <HelpCircle width={15} height={15} />
           </button>
@@ -407,6 +414,134 @@ function TemplateModal() {
   )
 }
 
+const UNIT_PRESETS: { key: UnitPreset; label: string }[] = [
+  { key: 'none', label: 'None (plain numbers)' },
+  { key: 'minutes', label: 'Minutes' },
+  { key: 'hours', label: 'Hours' },
+  { key: 'days', label: 'Days' },
+  { key: 'weeks', label: 'Weeks' },
+  { key: 'months', label: 'Months' },
+  { key: 'years', label: 'Years' },
+  { key: 'custom', label: 'Custom unit…' },
+]
+
+function SettingsModal() {
+  const proj = useActiveProject()
+  const setUI = useStore(s => s.setUI)
+  const tweak = useStore(s => s.tweak)
+  const st = proj.settings
+
+  const patch = (recipe: (s: TimelineSettings) => void) => tweak(p => recipe(p.settings))
+
+  return (
+    <div className="modal-scrim" onPointerDown={e => { if (e.target === e.currentTarget) setUI({ overlay: null }) }}>
+      <div className="modal settings">
+        <div className="modal-head"><strong>Timeline settings</strong>
+          <span className="grow" />
+          <button className="ghost-btn" onClick={() => setUI({ overlay: null })}><X width={16} height={16} /></button>
+        </div>
+        <p className="muted">These apply to this project and are saved with it.</p>
+
+        <div className="field">
+          <label>Marker placement</label>
+          <div className="seg">
+            <button className={st.placement === 'above' ? 'on' : ''} onClick={() => patch(s => { s.placement = 'above' })}>
+              Above the line
+            </button>
+            <button className={st.placement === 'both' ? 'on' : ''} onClick={() => patch(s => { s.placement = 'both' })}>
+              Both sides (compact)
+            </button>
+          </div>
+        </div>
+
+        <div className="field">
+          <label>Time units</label>
+          <div className="row gap">
+            <select
+              className="input"
+              value={st.unit.preset}
+              onChange={e => patch(s => { s.unit.preset = e.target.value as UnitPreset })}
+            >
+              {UNIT_PRESETS.map(u => <option key={u.key} value={u.key}>{u.label}</option>)}
+            </select>
+            {st.unit.preset === 'custom' && (
+              <input
+                className="input" placeholder="unit, e.g. beats"
+                value={st.unit.custom}
+                onChange={e => patch(s => { s.unit.custom = e.target.value })}
+              />
+            )}
+          </div>
+          <label className="check-row">
+            <input
+              type="checkbox" checked={st.unit.showRuler}
+              onChange={e => patch(s => { s.unit.showRuler = e.target.checked })}
+            />
+            Show unit ruler along the timeline
+          </label>
+        </div>
+
+        <div className="field">
+          <label>Background grid</label>
+          <label className="check-row">
+            <input
+              type="checkbox" checked={st.grid.show}
+              onChange={e => patch(s => { s.grid.show = e.target.checked })}
+            />
+            Show vertical grid lines
+          </label>
+          {st.grid.show && (
+            <>
+              <div className="seg">
+                {(['solid', 'dashed', 'dots'] as const).map(style => (
+                  <button key={style} className={st.grid.style === style ? 'on' : ''}
+                    onClick={() => patch(s => { s.grid.style = style })}>{style}</button>
+                ))}
+              </div>
+              <label className="slider-row">
+                <span>Intensity</span>
+                <input
+                  type="range" min={0.05} max={1} step={0.05} value={st.grid.opacity}
+                  onChange={e => patch(s => { s.grid.opacity = Number(e.target.value) })}
+                />
+              </label>
+            </>
+          )}
+        </div>
+
+        <div className="field">
+          <label>Timeline line</label>
+          <label className="slider-row">
+            <span>Thickness</span>
+            <input
+              type="range" min={1} max={6} step={0.5} value={st.spine.width}
+              onChange={e => patch(s => { s.spine.width = Number(e.target.value) })}
+            />
+          </label>
+          <label className="slider-row">
+            <span>Opacity</span>
+            <input
+              type="range" min={0.15} max={1} step={0.05} value={st.spine.opacity}
+              onChange={e => patch(s => { s.spine.opacity = Number(e.target.value) })}
+            />
+          </label>
+        </div>
+
+        <div className="field">
+          <label>Section bands</label>
+          <label className="slider-row">
+            <span>Tint strength</span>
+            <input
+              type="range" min={0} max={2.5} step={0.1} value={st.bandStrength}
+              onChange={e => patch(s => { s.bandStrength = Number(e.target.value) })}
+            />
+          </label>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function Cheatsheet() {
   const setUI = useStore(s => s.setUI)
   const rows: [string, string][] = [
@@ -414,13 +549,15 @@ function Cheatsheet() {
     ['Double-click the line', 'Quick-create an item of the last-used type'],
     ['N', 'New item at the view center'],
     ['Drag item', 'Move (Alt = no snap · Alt at start = clone)'],
+    ['Shift+drag item', 'Move ALL items together (or toggle the link button)'],
     ['Drag span edge circles', 'Stretch an item into a span'],
-    ['Shift+drag empty space', 'Marquee multi-select'],
+    ['Drag empty space', 'Marquee multi-select'],
     ['Shift+click item', 'Add to selection'],
+    ['Right-click', 'Context menu (items or empty space)'],
     ['B, then drag on the line', 'Create a branch (fork → join)'],
     ['Click type in sidebar', 'Toggle its visibility · Alt-click = solo'],
     ['Wheel / pinch', 'Zoom toward cursor'],
-    ['Drag empty space', 'Pan'],
+    ['Right-drag / middle-drag', 'Pan'],
     ['0 / + / −', 'Fit all · zoom in · zoom out'],
     ['1–9', 'Switch saved views'],
     ['/', 'Focus the filter box (Enter jumps to first match)'],
