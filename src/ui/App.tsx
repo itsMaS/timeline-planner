@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import {
-  Download, Eye, EyeOff, GitBranch, HelpCircle, Link, Magnet, Maximize2, Minus, Moon, Plus,
+  Download, Eye, EyeOff, GitBranch, Grid3x3, HelpCircle, Link, Magnet, Maximize2, Minus, Moon, Plus,
   Redo2, Search, Settings2, Sun, Undo2, Upload, Volume2, VolumeX, X, ZoomIn,
 } from 'lucide-react'
 import { iconByName } from '../model/icons'
@@ -271,8 +271,10 @@ function Toolbar({ applyView }: { applyView: (id: string | null) => void }) {
               onChange={e => setUI({ density: Number(e.target.value) })}
             />
           </label>
+          <button className={`ghost-btn ${ui.magnet ? 'on' : ''}`} title="Stick to other items and section edges while dragging (hold Alt to bypass)"
+            onClick={() => setUI({ magnet: !ui.magnet })}><Magnet width={15} height={15} /></button>
           <button className={`ghost-btn ${ui.snap ? 'on' : ''}`} title="Snap to grid (hold Alt to bypass)"
-            onClick={() => setUI({ snap: !ui.snap })}><Magnet width={15} height={15} /></button>
+            onClick={() => setUI({ snap: !ui.snap })}><Grid3x3 width={15} height={15} /></button>
           <button className={`ghost-btn ${ui.ripple ? 'on' : ''}`}
             title="Linked move — dragging one item moves every other item with it (or hold Shift while dragging)"
             onClick={() => setUI({ ripple: !ui.ripple })}><Link width={15} height={15} /></button>
@@ -551,6 +553,7 @@ function Cheatsheet() {
     ['Drag item', 'Move (Alt = no snap · Alt at start = clone)'],
     ['Shift+drag item', 'Move ALL items together (or toggle the link button)'],
     ['Drag span edge circles', 'Stretch an item into a span'],
+    ['Drag a section edge', 'Resize the section (handles live on every band edge)'],
     ['Drag empty space', 'Marquee multi-select'],
     ['Shift+click item', 'Add to selection'],
     ['Right-click', 'Context menu (items or empty space)'],

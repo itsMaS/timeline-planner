@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  ClipboardCopy, ClipboardPaste, CopyPlus, ListChecks, Maximize2, Plus, Settings2, Shuffle, Trash2,
+  ClipboardCopy, ClipboardPaste, CopyPlus, ListChecks, Maximize2, Plus, RectangleHorizontal,
+  Settings2, Shuffle, Trash2,
 } from 'lucide-react'
 import { iconByName } from '../model/icons'
 import {
@@ -31,11 +32,11 @@ type Drag =
       allOrig: Map<string, number>
       /** Ripple mode was on (or Shift held) when the drag started. */
       ripple: boolean
-      moved: boolean; color: string
+      moved: boolean; color: string; cands: number[]
     }
-  | { kind: 'handle'; id: string; side: 'L' | 'R'; origPos: number; origDur: number; startClientX: number }
-  | { kind: 'branchEnd'; id: string; side: 'fork' | 'join'; orig: number; startClientX: number }
-  | { kind: 'sectionEdge'; id: string; side: 'L' | 'R'; orig: number; startClientX: number }
+  | { kind: 'handle'; id: string; side: 'L' | 'R'; origPos: number; origDur: number; startClientX: number; cands: number[] }
+  | { kind: 'branchEnd'; id: string; side: 'fork' | 'join'; orig: number; startClientX: number; cands: number[] }
+  | { kind: 'sectionEdge'; id: string; side: 'L' | 'R'; orig: number; startClientX: number; cands: number[] }
 
 type CtxTarget = { kind: 'bg'; pos: number } | { kind: 'item'; id: string }
 interface CtxMenu { x: number; y: number; target: CtxTarget }
@@ -282,6 +283,41 @@ export function CanvasView() {
     }
   }, [menu])
 
+  // ---- snapping
+  /** World positions dragged edges/items stick to while the magnet is on. */
+  const magnetCands = (exclude: { items?: Set<string>; sectionId?: string; branchId?: string }): number[] => {
+    const out: number[] = []
+    for (const it of proj.items) {
+      if (exclude.items?.has(it.id)) continue
+      out.push(it.pos)
+      if (it.duration > 0) out.push(it.pos + it.duration)
+    }
+    for (const sc of proj.sections) {
+      if (sc.id === exclude.sectionId) continue
+      out.push(sc.start, sc.end)
+    }
+    for (const br of proj.branches) {
+      if (br.id === exclude.branchId) continue
+      out.push(br.forkPos, br.joinPos)
+    }
+    return out
+  }
+
+  /** Magnet (stick to candidates within ~8px) first, then grid snap; Alt bypasses both. */
+  const snapWorld = (np: number, cands: number[] | undefined, bypass: boolean): number => {
+    if (bypass) return np
+    if (ui.magnet && cands) {
+      const thr = 8 / cam.s
+      let best: number | null = null
+      for (const c of cands) {
+        const dd = Math.abs(c - np)
+        if (dd < thr && (best === null || dd < Math.abs(best - np))) best = c
+      }
+      if (best !== null) return best
+    }
+    return ui.snap ? snapPos(np, cam.s) : np
+  }
+
   // ---- pointer interactions
   const setDragBoth = (d: Drag | null) => { dragRef.current = d; setDrag(d) }
 
@@ -330,45 +366,35 @@ export function CanvasView() {
       const du = (e.clientX - d.startClientX) / cam.s
       if (Math.abs(e.clientX - d.startClientX) > 3) d.moved = true
       const next = new Map<string, number>()
-      if (d.ripple || e.shiftKey) {
-        // Ripple: snap the grabbed item, then shift every item by the same delta
-        // so all relative gaps are preserved.
-        const gp = d.orig.get(d.grabId) ?? d.orig.values().next().value ?? 0
-        const delta = ui.snap && !e.altKey ? snapPos(gp + du, cam.s) - gp : du
-        d.allOrig.forEach((op, id) => next.set(id, op + delta))
-      } else {
-        d.orig.forEach((op, id) => {
-          let np = op + du
-          if (ui.snap && !e.altKey) np = snapPos(np, cam.s)
-          next.set(id, np)
-        })
-      }
+      const rippleOn = d.ripple || e.shiftKey
+      // Snap the grabbed item (magnet is pointless in ripple mode — everything
+      // moves together), then shift the rest by the same delta so gaps hold.
+      const gp = d.orig.get(d.grabId) ?? d.orig.values().next().value ?? 0
+      const delta = snapWorld(gp + du, rippleOn ? undefined : d.cands, e.altKey) - gp
+      const src = rippleOn ? d.allOrig : d.orig
+      src.forEach((op, id) => next.set(id, op + delta))
       setPosOverride(next)
     } else if (d.kind === 'handle') {
       const du = (e.clientX - d.startClientX) / cam.s
       if (d.side === 'R') {
-        let end = d.origPos + d.origDur + du
-        if (ui.snap && !e.altKey) end = snapPos(end, cam.s)
+        const end = snapWorld(d.origPos + d.origDur + du, d.cands, e.altKey)
         setDurOverride({ id: d.id, pos: d.origPos, duration: Math.max(0, end - d.origPos) })
       } else {
-        let start = d.origPos + du
-        if (ui.snap && !e.altKey) start = snapPos(start, cam.s)
+        let start = snapWorld(d.origPos + du, d.cands, e.altKey)
         const end = d.origPos + d.origDur
         start = Math.min(start, end)
         setDurOverride({ id: d.id, pos: start, duration: end - start })
       }
     } else if (d.kind === 'branchEnd') {
       const du = (e.clientX - d.startClientX) / cam.s
-      let np = d.orig + du
-      if (ui.snap && !e.altKey) np = snapPos(np, cam.s)
+      const np = snapWorld(d.orig + du, d.cands, e.altKey)
       const br = proj.branches.find(b => b.id === d.id)
       if (!br) return
       if (d.side === 'fork') setBranchOverride({ id: d.id, forkPos: Math.min(np, br.joinPos - 0.5), joinPos: br.joinPos })
       else setBranchOverride({ id: d.id, forkPos: br.forkPos, joinPos: Math.max(np, br.forkPos + 0.5) })
     } else if (d.kind === 'sectionEdge') {
       const du = (e.clientX - d.startClientX) / cam.s
-      let np = d.orig + du
-      if (ui.snap && !e.altKey) np = snapPos(np, cam.s)
+      const np = snapWorld(d.orig + du, d.cands, e.altKey)
       const sc = proj.sections.find(s0 => s0.id === d.id)
       if (!sc) return
       if (d.side === 'L') setSectionOverride({ id: d.id, start: Math.min(np, sc.end - 0.25), end: sc.end })
@@ -531,6 +557,7 @@ export function CanvasView() {
     setDragBoth({
       kind: 'item', ids, grabId: ids.includes(item.id) ? item.id : ids[0], startClientX: e.clientX,
       orig, allOrig, ripple: ui.ripple || e.shiftKey, moved: false, color: type?.color ?? '#888',
+      cands: magnetCands({ items: new Set(ids) }),
     })
   }
 
@@ -703,26 +730,26 @@ export function CanvasView() {
                     {sc.name}
                   </text>
                 )}
-                {sel && (
-                  <>
-                    <line
-                      x1={x1} y1={yTop} x2={x1} y2={yTop + hFull} className="band-handle"
-                      onPointerDown={e => {
-                        e.stopPropagation()
-                        ;(e.target as Element).setPointerCapture?.(e.pointerId)
-                        setDragBoth({ kind: 'sectionEdge', id: sc.id, side: 'L', orig: sc.start, startClientX: e.clientX })
-                      }}
-                    />
-                    <line
-                      x1={x2} y1={yTop} x2={x2} y2={yTop + hFull} className="band-handle"
-                      onPointerDown={e => {
-                        e.stopPropagation()
-                        ;(e.target as Element).setPointerCapture?.(e.pointerId)
-                        setDragBoth({ kind: 'sectionEdge', id: sc.id, side: 'R', orig: sc.end, startClientX: e.clientX })
-                      }}
-                    />
-                  </>
-                )}
+                {/* Edge handles are always live; nearly invisible unless the
+                    section is selected or the handle is hovered. */}
+                <line
+                  x1={x1} y1={yTop} x2={x1} y2={yTop + hFull} className={`band-handle ${sel ? '' : 'quiet'}`}
+                  onPointerDown={e => {
+                    if (e.button !== 0) return
+                    e.stopPropagation()
+                    ;(e.target as Element).setPointerCapture?.(e.pointerId)
+                    setDragBoth({ kind: 'sectionEdge', id: sc.id, side: 'L', orig: sc.start, startClientX: e.clientX, cands: magnetCands({ sectionId: sc.id }) })
+                  }}
+                />
+                <line
+                  x1={x2} y1={yTop} x2={x2} y2={yTop + hFull} className={`band-handle ${sel ? '' : 'quiet'}`}
+                  onPointerDown={e => {
+                    if (e.button !== 0) return
+                    e.stopPropagation()
+                    ;(e.target as Element).setPointerCapture?.(e.pointerId)
+                    setDragBoth({ kind: 'sectionEdge', id: sc.id, side: 'R', orig: sc.end, startClientX: e.clientX, cands: magnetCands({ sectionId: sc.id }) })
+                  }}
+                />
               </g>
             )
           })}
@@ -784,7 +811,7 @@ export function CanvasView() {
                 setDragBoth({
                   kind: 'branchEnd', id: bl.branch.id, side,
                   orig: side === 'fork' ? bl.branch.forkPos : bl.branch.joinPos,
-                  startClientX: e.clientX,
+                  startClientX: e.clientX, cands: magnetCands({ branchId: bl.branch.id }),
                 })
               }}
               zoomIn={() => {
@@ -825,7 +852,10 @@ export function CanvasView() {
                 e.stopPropagation()
                 ;(e.target as Element).setPointerCapture?.(e.pointerId)
                 const cur = effective.items.find(i => i.id === pl.item.id) ?? pl.item
-                setDragBoth({ kind: 'handle', id: pl.item.id, side, origPos: cur.pos, origDur: cur.duration, startClientX: e.clientX })
+                setDragBoth({
+                  kind: 'handle', id: pl.item.id, side, origPos: cur.pos, origDur: cur.duration,
+                  startClientX: e.clientX, cands: magnetCands({ items: new Set([pl.item.id]) }),
+                })
               }}
             />
           ))}
@@ -950,6 +980,16 @@ export function CanvasView() {
                   if (typeId) createItem(typeId, pos, null, menu.x, menu.y)
                   setMenu(null)
                 }}><Plus width={13} height={13} /> New item here</button>
+                <button onClick={() => {
+                  const levelName = proj.hierarchyLevels[0] ?? 'Section'
+                  const span = (size.w * 0.25) / cam.s
+                  const id = uid()
+                  mutate(p => p.sections.push({
+                    id, name: `New ${levelName.toLowerCase()}`, depth: 0, start: pos, end: pos + span,
+                  }))
+                  select([`S:${id}`])
+                  setMenu(null)
+                }}><RectangleHorizontal width={13} height={13} /> New section here</button>
                 {getClipboard().length > 0 && (
                   <button onClick={() => menuPasteAt(pos)}><ClipboardPaste width={13} height={13} /> Paste here</button>
                 )}

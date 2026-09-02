@@ -69,7 +69,10 @@ interface UIState {
   theme: 'dark' | 'light'
   soundOn: boolean
   animLevel: AnimLevel
+  /** Snap dragged positions to the grid steps. */
   snap: boolean
+  /** Stick dragged positions to other items / section edges nearby. */
+  magnet: boolean
   /** Dragging one item moves every other item by the same amount. */
   ripple: boolean
   tool: Tool
@@ -126,7 +129,7 @@ function persistSoon(get: () => Store) {
         activeId: s.activeId,
         prefs: {
           ghostHidden: s.ui.ghostHidden, density: s.ui.density, theme: s.ui.theme,
-          soundOn: s.ui.soundOn, animLevel: s.ui.animLevel, snap: s.ui.snap, ripple: s.ui.ripple,
+          soundOn: s.ui.soundOn, animLevel: s.ui.animLevel, snap: s.ui.snap, magnet: s.ui.magnet, ripple: s.ui.ripple,
         },
       }))
       for (const p of s.projects) {
@@ -176,7 +179,8 @@ export const useStore = create<Store>((set, get) => ({
     theme: (init.prefs.theme as 'dark' | 'light') ?? (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'),
     soundOn: init.prefs.soundOn ?? false,
     animLevel: (init.prefs.animLevel as AnimLevel) ?? 'full',
-    snap: init.prefs.snap ?? true,
+    snap: init.prefs.snap ?? false,
+    magnet: init.prefs.magnet ?? true,
     ripple: init.prefs.ripple ?? false,
     tool: 'select',
     overlay: init.fresh ? 'templates' : null,
