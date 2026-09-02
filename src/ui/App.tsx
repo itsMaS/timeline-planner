@@ -538,6 +538,24 @@ function SettingsModal() {
               onChange={e => patch(s => { s.bandStrength = Number(e.target.value) })}
             />
           </label>
+          <label className="slider-row">
+            <span>Top label size</span>
+            <input
+              type="range" min={10} max={22} step={1} value={st.sectionStyle.labelSize}
+              onChange={e => patch(s => { s.sectionStyle.labelSize = Number(e.target.value) })}
+            />
+          </label>
+          <label className="slider-row">
+            <span>Border strength</span>
+            <input
+              type="range" min={0} max={1} step={0.05} value={st.sectionStyle.edgeStrength}
+              onChange={e => patch(s => { s.sectionStyle.edgeStrength = Number(e.target.value) })}
+            />
+          </label>
+          <p className="muted" style={{ margin: '4px 0 0', fontSize: 11 }}>
+            Top-level sections render biggest and strongest; each nesting level shrinks and fades.
+            Nesting is automatic: a section inside another becomes its child.
+          </p>
         </div>
       </div>
     </div>

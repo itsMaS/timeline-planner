@@ -22,6 +22,14 @@ export interface Layer {
   eye: boolean
   /** Always shown regardless of zoom/density. */
   pin: boolean
+  /** Visual scale multiplier for items in this layer (1 = normal). */
+  size: number
+  /**
+   * Zoom threshold (camera px per world unit): when the camera is zoomed out
+   * below this, items in this layer collapse to small dots on the line.
+   * 0 = never minimize.
+   */
+  minZoom: number
 }
 
 export interface Section {
@@ -113,6 +121,12 @@ export interface TimelineSettings {
   }
   /** Multiplier for section band tint (0 = invisible, 1 = default, 2 = strong). */
   bandStrength: number
+  sectionStyle: {
+    /** Label font size (px) for top-level sections; deeper levels shrink. */
+    labelSize: number
+    /** Border opacity for top-level sections; fades with depth. */
+    edgeStrength: number
+  }
 }
 
 export interface Project {

@@ -6,7 +6,7 @@ import {
 import { iconByName } from '../model/icons'
 import {
   BranchLayout, PlacedItem, contentExtent, fitCamera, itemMatchesFilters,
-  layoutTimeline, rowY, typeOf,
+  layoutTimeline, refreshSectionDepths, rowY, typeOf,
 } from '../model/layout'
 import { useActiveProject, useStore } from '../model/store'
 import type { Camera, Item, Section } from '../model/types'
@@ -36,7 +36,14 @@ type Drag =
     }
   | { kind: 'handle'; id: string; side: 'L' | 'R'; origPos: number; origDur: number; startClientX: number; cands: number[] }
   | { kind: 'branchEnd'; id: string; side: 'fork' | 'join'; orig: number; startClientX: number; cands: number[] }
-  | { kind: 'sectionEdge'; id: string; side: 'L' | 'R'; orig: number; startClientX: number; cands: number[] }
+  | {
+      /** One or more section edges sharing the grabbed position (coincident
+          edges of adjacent sections move together in global mode). */
+      kind: 'sectionEdge'; edges: { id: string; side: 'L' | 'R' }[]
+      orig: number; startClientX: number; cands: number[]
+      /** Clamp range keeping every participating section at a minimum width. */
+      min: number; max: number
+    }
 
 type CtxTarget = { kind: 'bg'; pos: number } | { kind: 'item'; id: string }
 interface CtxMenu { x: number; y: number; target: CtxTarget }
@@ -58,7 +65,7 @@ export function CanvasView() {
   const [posOverride, setPosOverride] = useState<Map<string, number> | null>(null)
   const [durOverride, setDurOverride] = useState<{ id: string; pos: number; duration: number } | null>(null)
   const [branchOverride, setBranchOverride] = useState<{ id: string; forkPos: number; joinPos: number } | null>(null)
-  const [sectionOverride, setSectionOverride] = useState<{ id: string; start: number; end: number } | null>(null)
+  const [sectionOverride, setSectionOverride] = useState<{ id: string; start: number; end: number }[] | null>(null)
   const [hover, setHover] = useState<{ id: string; x: number; y: number } | null>(null)
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const [expandedCluster, setExpandedCluster] = useState<string | null>(null)
@@ -113,8 +120,13 @@ export function CanvasView() {
         ? { ...b, forkPos: branchOverride.forkPos, joinPos: branchOverride.joinPos } : b)
     }
     if (sectionOverride) {
-      p.sections = proj.sections.map(s => s.id === sectionOverride.id
-        ? { ...s, start: sectionOverride.start, end: sectionOverride.end } : s)
+      // Clone every section (depths are recomputed in place) so the live
+      // hierarchy follows the drag without touching the stored project.
+      p.sections = proj.sections.map(s => {
+        const o = sectionOverride.find(x => x.id === s.id)
+        return o ? { ...s, start: o.start, end: o.end } : { ...s }
+      })
+      refreshSectionDepths(p)
     }
     return p
   }, [proj, posOverride, durOverride, branchOverride, sectionOverride])
@@ -285,7 +297,7 @@ export function CanvasView() {
 
   // ---- snapping
   /** World positions dragged edges/items stick to while the magnet is on. */
-  const magnetCands = (exclude: { items?: Set<string>; sectionId?: string; branchId?: string }): number[] => {
+  const magnetCands = (exclude: { items?: Set<string>; sectionIds?: Set<string>; branchId?: string }): number[] => {
     const out: number[] = []
     for (const it of proj.items) {
       if (exclude.items?.has(it.id)) continue
@@ -293,7 +305,7 @@ export function CanvasView() {
       if (it.duration > 0) out.push(it.pos + it.duration)
     }
     for (const sc of proj.sections) {
-      if (sc.id === exclude.sectionId) continue
+      if (exclude.sectionIds?.has(sc.id)) continue
       out.push(sc.start, sc.end)
     }
     for (const br of proj.branches) {
@@ -316,6 +328,42 @@ export function CanvasView() {
       if (best !== null) return best
     }
     return ui.snap ? snapPos(np, cam.s) : np
+  }
+
+  const anySectionSelected = useMemo(() => ui.selection.some(s => s.startsWith('S:')), [ui.selection])
+
+  /**
+   * Start dragging a section edge. With no section selected (global mode),
+   * coincident edges of other sections are picked up too, so a shared border
+   * between adjacent sections moves as one. With a selection, only the
+   * selected section's own edge moves.
+   */
+  const startSectionEdge = (e: React.PointerEvent, sc: Section, side: 'L' | 'R') => {
+    if (e.button !== 0) return
+    e.stopPropagation()
+    ;(e.target as Element).setPointerCapture?.(e.pointerId)
+    const pos = side === 'L' ? sc.start : sc.end
+    const edges: { id: string; side: 'L' | 'R' }[] = [{ id: sc.id, side }]
+    if (!anySectionSelected) {
+      const tol = 1 / cam.s
+      for (const other of proj.sections) {
+        if (other.id === sc.id) continue
+        if (Math.abs(other.start - pos) <= tol) edges.push({ id: other.id, side: 'L' })
+        if (Math.abs(other.end - pos) <= tol) edges.push({ id: other.id, side: 'R' })
+      }
+    }
+    let min = -Infinity
+    let max = Infinity
+    for (const ed of edges) {
+      const s0 = proj.sections.find(x => x.id === ed.id)
+      if (!s0) continue
+      if (ed.side === 'L') max = Math.min(max, s0.end - 0.25)
+      else min = Math.max(min, s0.start + 0.25)
+    }
+    setDragBoth({
+      kind: 'sectionEdge', edges, orig: pos, startClientX: e.clientX,
+      cands: magnetCands({ sectionIds: new Set(edges.map(ed => ed.id)) }), min, max,
+    })
   }
 
   // ---- pointer interactions
@@ -394,11 +442,14 @@ export function CanvasView() {
       else setBranchOverride({ id: d.id, forkPos: br.forkPos, joinPos: Math.max(np, br.forkPos + 0.5) })
     } else if (d.kind === 'sectionEdge') {
       const du = (e.clientX - d.startClientX) / cam.s
-      const np = snapWorld(d.orig + du, d.cands, e.altKey)
-      const sc = proj.sections.find(s0 => s0.id === d.id)
-      if (!sc) return
-      if (d.side === 'L') setSectionOverride({ id: d.id, start: Math.min(np, sc.end - 0.25), end: sc.end })
-      else setSectionOverride({ id: d.id, start: sc.start, end: Math.max(np, sc.start + 0.25) })
+      const np = clamp(snapWorld(d.orig + du, d.cands, e.altKey), d.min, d.max)
+      const ovs: { id: string; start: number; end: number }[] = []
+      for (const ed of d.edges) {
+        const sc = proj.sections.find(s0 => s0.id === ed.id)
+        if (!sc) continue
+        ovs.push(ed.side === 'L' ? { id: ed.id, start: np, end: sc.end } : { id: ed.id, start: sc.start, end: np })
+      }
+      setSectionOverride(ovs)
     }
   }
 
@@ -482,10 +533,12 @@ export function CanvasView() {
     } else if (d.kind === 'sectionEdge') {
       const ov = sectionOverride
       setSectionOverride(null)
-      if (ov) {
+      if (ov?.length) {
         mutate(p => {
-          const sc = p.sections.find(s0 => s0.id === ov.id)
-          if (sc) { sc.start = ov.start; sc.end = ov.end }
+          for (const o of ov) {
+            const sc = p.sections.find(s0 => s0.id === o.id)
+            if (sc) { sc.start = o.start; sc.end = o.end }
+          }
         })
         sfx.snap()
       }
@@ -707,7 +760,15 @@ export function CanvasView() {
             const hue = sectionHue(depthIndex.get(sc.id) ?? 0)
             const sel = selection.has(`S:${sc.id}`)
             const labelX = Math.max(x1, 0) + 10
-            const labelY = yTop + 20 + sc.depth * 19
+            // Depth-graded emphasis: top-level sections get bigger labels and
+            // stronger borders; each level down fades and shrinks.
+            const sizeAt = (d0: number) => Math.max(10, st.sectionStyle.labelSize - 2.5 * d0)
+            const labelPx = sizeAt(sc.depth)
+            let labelY = yTop + 8
+            for (let d0 = 0; d0 < sc.depth; d0++) labelY += sizeAt(d0) + 6
+            labelY += labelPx
+            const edgeAlpha = sel ? 0.8 : clamp(st.sectionStyle.edgeStrength * Math.max(1 - 0.3 * sc.depth, 0.25), 0, 1)
+            const edgeW = sc.depth === 0 ? 1.6 : 1
             return (
               <g key={sc.id} className="band-g">
                 <rect
@@ -717,39 +778,39 @@ export function CanvasView() {
                   pointerEvents="none"
                 />
                 <line x1={x1} y1={yTop} x2={x1} y2={yTop + hFull} className="band-edge"
-                  style={{ stroke: `hsl(${hue} 55% 55% / ${sel ? 0.8 : clamp(0.2 * st.bandStrength, 0, 1)})` }} pointerEvents="none" />
+                  style={{ stroke: `hsl(${hue} 55% 55% / ${edgeAlpha})`, strokeWidth: edgeW }} pointerEvents="none" />
                 <line x1={x2} y1={yTop} x2={x2} y2={yTop + hFull} className="band-edge"
-                  style={{ stroke: `hsl(${hue} 55% 55% / ${sel ? 0.8 : clamp(0.2 * st.bandStrength, 0, 1)})` }} pointerEvents="none" />
+                  style={{ stroke: `hsl(${hue} 55% 55% / ${edgeAlpha})`, strokeWidth: edgeW }} pointerEvents="none" />
                 {w > 60 && (
                   <text
                     x={labelX} y={labelY}
                     className={`band-label ${sel ? 'sel' : ''}`}
-                    style={{ fill: `hsl(${hue} 50% var(--band-label-l))` }}
+                    style={{
+                      fill: `hsl(${hue} 50% var(--band-label-l))`,
+                      fontSize: labelPx,
+                      fontWeight: sc.depth === 0 ? 700 : 600,
+                      opacity: Math.max(1 - 0.12 * sc.depth, 0.6),
+                    }}
                     onPointerDown={e => { e.stopPropagation(); select([`S:${sc.id}`]) }}
                   >
                     {sc.name}
                   </text>
                 )}
-                {/* Edge handles are always live; nearly invisible unless the
-                    section is selected or the handle is hovered. */}
-                <line
-                  x1={x1} y1={yTop} x2={x1} y2={yTop + hFull} className={`band-handle ${sel ? '' : 'quiet'}`}
-                  onPointerDown={e => {
-                    if (e.button !== 0) return
-                    e.stopPropagation()
-                    ;(e.target as Element).setPointerCapture?.(e.pointerId)
-                    setDragBoth({ kind: 'sectionEdge', id: sc.id, side: 'L', orig: sc.start, startClientX: e.clientX, cands: magnetCands({ sectionId: sc.id }) })
-                  }}
-                />
-                <line
-                  x1={x2} y1={yTop} x2={x2} y2={yTop + hFull} className={`band-handle ${sel ? '' : 'quiet'}`}
-                  onPointerDown={e => {
-                    if (e.button !== 0) return
-                    e.stopPropagation()
-                    ;(e.target as Element).setPointerCapture?.(e.pointerId)
-                    setDragBoth({ kind: 'sectionEdge', id: sc.id, side: 'R', orig: sc.end, startClientX: e.clientX, cands: magnetCands({ sectionId: sc.id }) })
-                  }}
-                />
+                {/* Edge handles: with no section selected every edge is live
+                    (nearly invisible until hovered) and coincident edges drag
+                    together; with a selection only that section's edges work. */}
+                {(!anySectionSelected || sel) && (
+                  <>
+                    <line
+                      x1={x1} y1={yTop} x2={x1} y2={yTop + hFull} className={`band-handle ${sel ? '' : 'quiet'}`}
+                      onPointerDown={e => startSectionEdge(e, sc, 'L')}
+                    />
+                    <line
+                      x1={x2} y1={yTop} x2={x2} y2={yTop + hFull} className={`band-handle ${sel ? '' : 'quiet'}`}
+                      onPointerDown={e => startSectionEdge(e, sc, 'R')}
+                    />
+                  </>
+                )}
               </g>
             )
           })}
@@ -858,6 +919,22 @@ export function CanvasView() {
                 })
               }}
             />
+          ))}
+
+          {/* minimized layer items (below their layer's min zoom) */}
+          {layout.dots.map(dot => (
+            <g
+              key={dot.item.id}
+              className={`layer-dot ${dot.ghost ? 'ghost' : ''}`}
+              transform={`translate(${dot.x}, 0)`}
+              onPointerDown={e => itemPointerDown(e, dot.item)}
+              onContextMenu={e => itemContextMenu(e, dot.item)}
+              onPointerEnter={e => itemHoverStart(e, dot.item.id)}
+              onPointerLeave={itemHoverEnd}
+            >
+              <circle r={9} className="dot-hit" />
+              <circle r={3.5} className="dot-core" style={{ fill: dot.color }} />
+            </g>
           ))}
 
           {/* clusters */}
@@ -1032,6 +1109,8 @@ function ItemG(props: {
   const Icon = iconByName(type?.icon ?? 'Circle')
   const y = rowY(pl.row)
   const color = type?.color ?? '#888'
+  const z = pl.size || 1
+  const barY = 3 + 14 * z
   return (
     <g
       className={`node ${pl.ghost ? 'ghost' : ''} ${selected ? 'sel' : ''}`}
@@ -1041,26 +1120,29 @@ function ItemG(props: {
       onPointerEnter={props.onHoverStart}
       onPointerLeave={props.onHoverEnd}
     >
-      <line className="stem" x1={0} y1={y < 0 ? 14 : -14} x2={0} y2={-y} style={{ stroke: color }} />
+      <line className="stem" x1={0} y1={y < 0 ? 14 * z : -14 * z} x2={0} y2={-y} style={{ stroke: color }} />
       <g className={`node-inner ${props.anim ? 'pop' : ''}`}>
         {pl.spanW > 0 && (
           <g>
-            <rect x={0} y={17} width={pl.spanW} height={6} rx={3} style={{ fill: `${color}55`, stroke: `${color}88` }} />
+            <rect x={0} y={barY} width={pl.spanW} height={6} rx={3} style={{ fill: `${color}55`, stroke: `${color}88` }} />
             {selected && (
               <>
-                <circle cx={0} cy={20} r={6} className="dur-handle" style={{ stroke: color }}
+                <circle cx={0} cy={barY + 3} r={6} className="dur-handle" style={{ stroke: color }}
                   onPointerDown={e => props.startHandle('L', e)} />
-                <circle cx={pl.spanW} cy={20} r={6} className="dur-handle" style={{ stroke: color }}
+                <circle cx={pl.spanW} cy={barY + 3} r={6} className="dur-handle" style={{ stroke: color }}
                   onPointerDown={e => props.startHandle('R', e)} />
               </>
             )}
           </g>
         )}
-        {selected && <circle r={19} className="sel-ring" style={{ stroke: color }} />}
-        <circle r={14} className="node-bg" style={{ fill: `${color}26`, stroke: color }} />
-        <Icon x={-8} y={-8} width={16} height={16} color={color} strokeWidth={2} />
+        {selected && <circle r={19 * z} className="sel-ring" style={{ stroke: color }} />}
+        <circle r={14 * z} className="node-bg" style={{ fill: `${color}26`, stroke: color }} />
+        <Icon x={-8 * z} y={-8 * z} width={16 * z} height={16 * z} color={color} strokeWidth={2} />
         {pl.labelShown && (
-          <text x={20} y={4} className="node-label" style={{ fill: `color-mix(in srgb, ${color} 30%, var(--text))` }}>
+          <text
+            x={20 * z} y={4 * z} className="node-label"
+            style={{ fill: `color-mix(in srgb, ${color} 30%, var(--text))`, fontSize: 11.5 * clamp(z, 0.8, 1.35) }}
+          >
             {pl.item.title}
           </text>
         )}
@@ -1133,6 +1215,7 @@ function BranchG(props: {
               const t = typeOf(proj, pi.item)
               const Icon = iconByName(t?.icon ?? 'Circle')
               const sel = props.itemSelection.has(pi.item.id)
+              const z = pi.size || 1
               return (
                 <g
                   key={pi.item.id}
@@ -1144,10 +1227,10 @@ function BranchG(props: {
                   onPointerLeave={props.itemHoverEnd}
                 >
                   <g className="node-inner pop">
-                    {sel && <circle r={16} className="sel-ring" style={{ stroke: t?.color }} />}
-                    <circle r={11} className="node-bg" style={{ fill: `${t?.color}26`, stroke: t?.color }} />
-                    <Icon x={-6.5} y={-6.5} width={13} height={13} color={t?.color} strokeWidth={2} />
-                    {pi.labelShown && <text x={16} y={21} className="node-label sm">{pi.item.title}</text>}
+                    {sel && <circle r={16 * z} className="sel-ring" style={{ stroke: t?.color }} />}
+                    <circle r={11 * z} className="node-bg" style={{ fill: `${t?.color}26`, stroke: t?.color }} />
+                    <Icon x={-6.5 * z} y={-6.5 * z} width={13 * z} height={13 * z} color={t?.color} strokeWidth={2} />
+                    {pi.labelShown && <text x={16 * z} y={16 + 5 * z} className="node-label sm">{pi.item.title}</text>}
                   </g>
                 </g>
               )

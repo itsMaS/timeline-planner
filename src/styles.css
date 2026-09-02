@@ -158,6 +158,14 @@ input, select, textarea { font: inherit; color: inherit; }
 .layer-row { display: flex; align-items: center; gap: 4px; padding: 3px 4px; border-radius: 7px; }
 .layer-row:hover { background: var(--panel2); }
 .layer-row.off { opacity: .4; }
+.layer-config {
+  margin: 0 4px 6px 12px; padding: 4px 8px 6px;
+  border-left: 2px solid var(--line-soft);
+}
+.layer-config .slider-row span { min-width: 52px; }
+.layer-config .slider-row em {
+  font-style: normal; font-size: 10.5px; color: var(--muted); min-width: 34px; text-align: right;
+}
 .sig-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text); flex-shrink: 0; margin: 0 3px; }
 .bare-input {
   background: none; border: none; outline: none; min-width: 0; flex: 1;
@@ -236,6 +244,16 @@ input, select, textarea { font: inherit; color: inherit; }
 }
 .dur-handle { fill: var(--panel); stroke-width: 2; cursor: ew-resize; }
 .dur-handle:hover { fill: var(--panel2); }
+
+.layer-dot { cursor: pointer; }
+.layer-dot .dot-hit { fill: transparent; }
+.layer-dot .dot-core {
+  transform-box: fill-box; transform-origin: center;
+  transition: transform .15s cubic-bezier(.34,1.56,.64,1);
+}
+.layer-dot:hover .dot-core { transform: scale(1.7); }
+.layer-dot.ghost { opacity: .2; }
+.layer-dot.ghost:hover { opacity: .6; }
 
 .cluster { cursor: pointer; }
 .cluster-pill { fill: var(--panel); stroke: var(--line); stroke-width: 1.4; }

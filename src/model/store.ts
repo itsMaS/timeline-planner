@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { refreshSectionDepths } from './layout'
 import type { Camera, Filters, Id, Project, TimelineSettings } from './types'
 import { uid } from './util'
 
@@ -10,6 +11,7 @@ export const defaultSettings = (): TimelineSettings => ({
   grid: { show: false, style: 'solid', opacity: 0.35 },
   spine: { width: 2, opacity: 1 },
   bandStrength: 1,
+  sectionStyle: { labelSize: 14, edgeStrength: 0.5 },
 })
 
 /** Fill in fields missing from projects saved by older versions. */
@@ -22,16 +24,22 @@ export function normalizeProject(p: Project): Project {
     grid: { ...d.grid, ...s.grid },
     spine: { ...d.spine, ...s.spine },
     bandStrength: s.bandStrength ?? d.bandStrength,
+    sectionStyle: { ...d.sectionStyle, ...s.sectionStyle },
   }
+  for (const l of p.layers) {
+    l.size ??= 1
+    l.minZoom ??= 0
+  }
+  refreshSectionDepths(p)
   return p
 }
 
 export function blankProject(name: string): Project {
   const layers = [
-    { id: uid(), name: 'Critical', eye: false, pin: false },
-    { id: uid(), name: 'Major', eye: false, pin: false },
-    { id: uid(), name: 'Minor', eye: false, pin: false },
-    { id: uid(), name: 'Detail', eye: false, pin: false },
+    { id: uid(), name: 'Critical', eye: false, pin: false, size: 1, minZoom: 0 },
+    { id: uid(), name: 'Major', eye: false, pin: false, size: 1, minZoom: 0 },
+    { id: uid(), name: 'Minor', eye: false, pin: false, size: 1, minZoom: 0 },
+    { id: uid(), name: 'Detail', eye: false, pin: false, size: 1, minZoom: 0 },
   ]
   return {
     schemaVersion: 1,
@@ -208,6 +216,7 @@ export const useStore = create<Store>((set, get) => ({
     h.future = []
     const draft = structuredClone(cur)
     recipe(draft)
+    refreshSectionDepths(draft)
     set({ projects: s.projects.map(p => (p.id === cur.id ? draft : p)) })
     persistSoon(get)
   },
@@ -218,6 +227,7 @@ export const useStore = create<Store>((set, get) => ({
     if (!cur) return
     const draft = structuredClone(cur)
     recipe(draft)
+    refreshSectionDepths(draft)
     set({ projects: s.projects.map(p => (p.id === cur.id ? draft : p)) })
     persistSoon(get)
   },

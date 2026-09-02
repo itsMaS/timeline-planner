@@ -28,6 +28,7 @@ export function Sidebar() {
   const tweak = useStore(s => s.tweak)
   const [open, setOpen] = useState({ types: true, layers: true, structure: false, tags: false })
   const toggle = (k: keyof typeof open) => setOpen(o => ({ ...o, [k]: !o[k] }))
+  const [openLayerId, setOpenLayerId] = useState<string | null>(null)
 
   // Counts respecting all other filter groups (not the type toggle itself).
   const counts = useMemo(() => {
@@ -152,43 +153,73 @@ export function Sidebar() {
         title="Layers" open={open.layers} toggle={() => toggle('layers')}
         action={
           <button className="ghost-btn" title="Add layer"
-            onClick={() => mutate(p => p.layers.push({ id: uid(), name: 'New layer', eye: false, pin: false }))}
+            onClick={() => mutate(p => p.layers.push({ id: uid(), name: 'New layer', eye: false, pin: false, size: 1, minZoom: 0 }))}
           ><Plus width={14} height={14} /></button>
         }
       />
       {open.layers && (
         <div className="sb-body">
           {proj.layers.map((l, i) => (
-            <div key={l.id} className={`layer-row ${l.eye ? 'off' : ''}`}>
-              <span className="sig-dot" style={{ opacity: 1 - i * 0.85 / Math.max(proj.layers.length - 1, 1) }} />
-              <input
-                className="bare-input"
-                value={l.name}
-                onChange={e => mutate(p => { const x = p.layers.find(y => y.id === l.id); if (x) x.name = e.target.value })}
-              />
-              <span className="count">{layerCounts.get(l.id) ?? 0}</span>
-              <button
-                className={`ghost-btn ${l.eye ? 'on' : ''}`} title="Hide always"
-                onClick={() => mutate(p => { const x = p.layers.find(y => y.id === l.id); if (x) { x.eye = !x.eye; if (x.eye) x.pin = false } })}
-              >{l.eye ? <EyeOff width={13} height={13} /> : <Eye width={13} height={13} />}</button>
-              <button
-                className={`ghost-btn ${l.pin ? 'on' : ''}`} title="Show always (ignore density)"
-                onClick={() => mutate(p => { const x = p.layers.find(y => y.id === l.id); if (x) { x.pin = !x.pin; if (x.pin) x.eye = false } })}
-              ><Pin width={13} height={13} /></button>
-              <button
-                className="ghost-btn" title="More significant" disabled={i === 0}
-                onClick={() => mutate(p => { const j = p.layers.findIndex(y => y.id === l.id); if (j > 0) [p.layers[j - 1], p.layers[j]] = [p.layers[j], p.layers[j - 1]] })}
-              ><ChevronUp width={13} height={13} /></button>
-              <button
-                className="ghost-btn" title="Delete layer" disabled={proj.layers.length <= 1}
-                onClick={() => mutate(p => {
-                  p.layers = p.layers.filter(y => y.id !== l.id)
-                  const fallback = p.layers[0]?.id ?? null
-                  for (const t of p.types) if (t.defaultLayerId === l.id) t.defaultLayerId = fallback
-                  for (const it of p.items) if (it.layerId === l.id) it.layerId = null
-                })}
-              ><Trash2 width={13} height={13} /></button>
-            </div>
+            <React.Fragment key={l.id}>
+              <div className={`layer-row ${l.eye ? 'off' : ''}`}>
+                <span className="sig-dot" style={{ opacity: 1 - i * 0.85 / Math.max(proj.layers.length - 1, 1) }} />
+                <input
+                  className="bare-input"
+                  value={l.name}
+                  onChange={e => mutate(p => { const x = p.layers.find(y => y.id === l.id); if (x) x.name = e.target.value })}
+                />
+                <span className="count">{layerCounts.get(l.id) ?? 0}</span>
+                <button
+                  className={`ghost-btn ${l.eye ? 'on' : ''}`} title="Hide always"
+                  onClick={() => mutate(p => { const x = p.layers.find(y => y.id === l.id); if (x) { x.eye = !x.eye; if (x.eye) x.pin = false } })}
+                >{l.eye ? <EyeOff width={13} height={13} /> : <Eye width={13} height={13} />}</button>
+                <button
+                  className={`ghost-btn ${l.pin ? 'on' : ''}`} title="Show always (ignore density)"
+                  onClick={() => mutate(p => { const x = p.layers.find(y => y.id === l.id); if (x) { x.pin = !x.pin; if (x.pin) x.eye = false } })}
+                ><Pin width={13} height={13} /></button>
+                <button
+                  className="ghost-btn" title="More significant" disabled={i === 0}
+                  onClick={() => mutate(p => { const j = p.layers.findIndex(y => y.id === l.id); if (j > 0) [p.layers[j - 1], p.layers[j]] = [p.layers[j], p.layers[j - 1]] })}
+                ><ChevronUp width={13} height={13} /></button>
+                <button
+                  className={`ghost-btn ${openLayerId === l.id ? 'on' : ''}`} title="Layer display settings"
+                  onClick={() => setOpenLayerId(id => (id === l.id ? null : l.id))}
+                ><Settings2 width={13} height={13} /></button>
+                <button
+                  className="ghost-btn" title="Delete layer" disabled={proj.layers.length <= 1}
+                  onClick={() => mutate(p => {
+                    p.layers = p.layers.filter(y => y.id !== l.id)
+                    const fallback = p.layers[0]?.id ?? null
+                    for (const t of p.types) if (t.defaultLayerId === l.id) t.defaultLayerId = fallback
+                    for (const it of p.items) if (it.layerId === l.id) it.layerId = null
+                  })}
+                ><Trash2 width={13} height={13} /></button>
+              </div>
+              {openLayerId === l.id && (
+                <div className="layer-config">
+                  <label className="slider-row">
+                    <span>Item size</span>
+                    <input
+                      type="range" min={0.5} max={1.8} step={0.05} value={l.size}
+                      onChange={e => tweak(p => { const x = p.layers.find(y => y.id === l.id); if (x) x.size = Number(e.target.value) })}
+                    />
+                    <em>{l.size.toFixed(2)}×</em>
+                  </label>
+                  <label className="slider-row">
+                    <span>Min zoom</span>
+                    <input
+                      type="range" min={0} max={30} step={0.5} value={l.minZoom}
+                      onChange={e => tweak(p => { const x = p.layers.find(y => y.id === l.id); if (x) x.minZoom = Number(e.target.value) })}
+                    />
+                    <em>{l.minZoom === 0 ? 'never' : l.minZoom.toFixed(1)}</em>
+                  </label>
+                  <div className="sb-hint">
+                    zoomed out below min zoom, items become dots on the line
+                    · current zoom: {proj.camera.s.toFixed(1)}
+                  </div>
+                </div>
+              )}
+            </React.Fragment>
           ))}
           <div className="sb-hint">top = most significant · survives zoom-out longest</div>
         </div>

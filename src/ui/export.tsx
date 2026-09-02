@@ -33,13 +33,19 @@ function ExportScene(props: { proj: Project; cam: Camera; w: number; h: number; 
           const x2 = toX(sc.end)
           if (x2 < 0 || x1 > w || x2 - x1 < 20) return null
           const hue = sectionHue(i)
+          const sizeAt = (d0: number) => Math.max(10, st.sectionStyle.labelSize - 2.5 * d0)
+          let labelY = -spineY + 8
+          for (let d0 = 0; d0 < sc.depth; d0++) labelY += sizeAt(d0) + 6
+          labelY += sizeAt(sc.depth)
+          const edgeAlpha = clamp(st.sectionStyle.edgeStrength * Math.max(1 - 0.3 * sc.depth, 0.25), 0, 1)
           return (
             <g key={sc.id}>
               <rect x={x1} y={-spineY} width={x2 - x1} height={h}
                 fill={`hsl(${hue} 60% 55% / ${(0.024 + sc.depth * 0.013) * st.bandStrength})`} />
-              <line x1={x1} y1={-spineY} x2={x1} y2={h - spineY} stroke={`hsl(${hue} 55% 55% / 0.2)`} />
-              <line x1={x2} y1={-spineY} x2={x2} y2={h - spineY} stroke={`hsl(${hue} 55% 55% / 0.2)`} />
-              <text x={Math.max(x1, 0) + 10} y={-spineY + 20 + sc.depth * 19} fontFamily={font} fontSize={11} fontWeight={600}
+              <line x1={x1} y1={-spineY} x2={x1} y2={h - spineY} stroke={`hsl(${hue} 55% 55% / ${edgeAlpha})`} strokeWidth={sc.depth === 0 ? 1.6 : 1} />
+              <line x1={x2} y1={-spineY} x2={x2} y2={h - spineY} stroke={`hsl(${hue} 55% 55% / ${edgeAlpha})`} strokeWidth={sc.depth === 0 ? 1.6 : 1} />
+              <text x={Math.max(x1, 0) + 10} y={labelY} fontFamily={font} fontSize={sizeAt(sc.depth)}
+                fontWeight={sc.depth === 0 ? 700 : 600} opacity={Math.max(1 - 0.12 * sc.depth, 0.6)}
                 fill={`hsl(${hue} 50% ${theme === 'dark' ? '70%' : '38%'})`}>{sc.name}</text>
             </g>
           )
@@ -114,20 +120,24 @@ function ExportScene(props: { proj: Project; cam: Camera; w: number; h: number; 
             </g>
           )
         })}
+        {layout.dots.map(dot => (
+          <circle key={dot.item.id} cx={dot.x} r={3.5} fill={dot.color} opacity={dot.ghost ? 0.2 : 1} />
+        ))}
         {layout.placed.map(pl => {
           const t = typeOf(proj, pl.item)
           const Icon = iconByName(t?.icon ?? 'Circle')
           const y = rowY(pl.row)
+          const z = pl.size || 1
           return (
             <g key={pl.item.id} transform={`translate(${pl.x}, ${y})`} opacity={pl.ghost ? 0.18 : 1}>
-              <line x1={0} y1={y < 0 ? 14 : -14} x2={0} y2={-y} stroke={t?.color} strokeWidth={1} opacity={0.35} />
+              <line x1={0} y1={y < 0 ? 14 * z : -14 * z} x2={0} y2={-y} stroke={t?.color} strokeWidth={1} opacity={0.35} />
               {pl.spanW > 0 && (
-                <rect x={0} y={17} width={pl.spanW} height={6} rx={3} fill={`${t?.color}55`} stroke={`${t?.color}88`} />
+                <rect x={0} y={3 + 14 * z} width={pl.spanW} height={6} rx={3} fill={`${t?.color}55`} stroke={`${t?.color}88`} />
               )}
-              <circle r={14} fill={C.bg} stroke={t?.color} strokeWidth={1.5} />
-              <Icon x={-8} y={-8} width={16} height={16} color={t?.color} strokeWidth={2} />
+              <circle r={14 * z} fill={C.bg} stroke={t?.color} strokeWidth={1.5} />
+              <Icon x={-8 * z} y={-8 * z} width={16 * z} height={16 * z} color={t?.color} strokeWidth={2} />
               {pl.labelShown && (
-                <text x={20} y={4} fontFamily={font} fontSize={11.5} fill={C.text}>{pl.item.title}</text>
+                <text x={20 * z} y={4 * z} fontFamily={font} fontSize={11.5 * clamp(z, 0.8, 1.35)} fill={C.text}>{pl.item.title}</text>
               )}
             </g>
           )

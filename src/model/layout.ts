@@ -9,6 +9,15 @@ export interface PlacedItem {
   labelShown: boolean
   ghost: boolean
   spanW: number // pixel width of the duration bar (0 for points)
+  size: number // visual scale from the item's layer (1 = normal)
+}
+
+/** An item minimized to a dot on the spine (its layer's minZoom is above the camera zoom). */
+export interface LayerDot {
+  item: Item
+  x: number
+  color: string
+  ghost: boolean
 }
 
 export interface Cluster {
@@ -25,6 +34,7 @@ export interface PathPlacedItem {
   y: number
   labelShown: boolean
   ghost: boolean
+  size: number
 }
 
 export interface BranchLayout {
@@ -38,10 +48,29 @@ export interface BranchLayout {
 
 export interface LayoutResult {
   placed: PlacedItem[]
+  dots: LayerDot[]
   clusters: Cluster[]
   branches: BranchLayout[]
   shownCount: number
   totalCount: number
+}
+
+/**
+ * Derive each section's depth from geometric containment: a section nests one
+ * level under every strictly larger section that fully encloses it, so the
+ * hierarchy follows the actual bounds and updates as edges are dragged.
+ */
+export function refreshSectionDepths(p: Project) {
+  const eps = 1e-9
+  for (const s of p.sections) {
+    let depth = 0
+    for (const t of p.sections) {
+      if (t === s) continue
+      const larger = t.end - t.start > s.end - s.start + eps
+      if (larger && t.start <= s.start + eps && t.end >= s.end - eps) depth++
+    }
+    s.depth = depth
+  }
 }
 
 export function layerIndexOf(p: Project, it: Item): number {
@@ -122,7 +151,8 @@ export function layoutTimeline(
   const eyeHidden = new Set(p.layers.filter(l => l.eye).map(l => l.id))
   const pinned = new Set(p.layers.filter(l => l.pin).map(l => l.id))
 
-  const mainItems: { it: Item; li: number; ghost: boolean; pin: boolean }[] = []
+  const mainItems: { it: Item; li: number; ghost: boolean; pin: boolean; size: number }[] = []
+  const dots: LayerDot[] = []
   const pathItems = new Map<string, Item[]>()
   let totalCount = 0
 
@@ -139,7 +169,18 @@ export function layoutTimeline(
     if (layerId && eyeHidden.has(layerId)) { totalCount--; continue }
     const ghost = !itemMatchesFilters(p, it, filters)
     if (ghost && ghostHidden) { continue }
-    mainItems.push({ it, li: layerIndexOf(p, it), ghost, pin: (!!layerId && pinned.has(layerId)) || forced.has(it.id) })
+    const layer = layerId ? p.layers.find(l => l.id === layerId) : undefined
+    // Zoomed out past the layer's minZoom → the item collapses to a dot on the
+    // line. Selected (forced) items stay full-size so they remain editable.
+    if (layer && (layer.minZoom ?? 0) > 0 && cam.s < layer.minZoom && !forced.has(it.id)) {
+      dots.push({ item: it, x, color: typeOf(p, it)?.color ?? '#888', ghost })
+      continue
+    }
+    mainItems.push({
+      it, li: layerIndexOf(p, it), ghost,
+      pin: (!!layerId && pinned.has(layerId)) || forced.has(it.id),
+      size: layer?.size ?? 1,
+    })
   }
 
   // Priority: pinned first, then real items by layer significance (sticky bonus), ghosts last.
@@ -176,19 +217,20 @@ export function layoutTimeline(
     return out
   }
 
-  for (const { it, ghost, pin } of mainItems) {
+  for (const { it, ghost, pin, size } of mainItems) {
     const x = toX(it.pos)
     const spanW = it.duration > 0 ? Math.max(it.duration * cam.s, 10) : 0
     const rowCap = pin ? maxRows + 4 : maxRows
+    const iconW = ICON_W * size
     const tryPlace = (withLabel: boolean): PlacedItem | null => {
-      const lw = withLabel ? labelWidth(it.title || '…') + 8 : 0
-      const w = Math.max(ICON_W + lw, spanW)
-      const a = x - ICON_W / 2 - minGap / 2
-      const b = x - ICON_W / 2 + w + minGap / 2
+      const lw = withLabel ? (labelWidth(it.title || '…') + 8) * size : 0
+      const w = Math.max(iconW + lw, spanW)
+      const a = x - iconW / 2 - minGap / 2
+      const b = x - iconW / 2 + w + minGap / 2
       for (const r of candidateRows(rowCap)) {
         if (fits(rows, r, a, b)) {
           occupy(rows, r, a, b)
-          return { item: it, x, w, row: r, labelShown: withLabel, ghost, spanW }
+          return { item: it, x, w, row: r, labelShown: withLabel, ghost, spanW, size }
         }
       }
       return null
@@ -197,6 +239,12 @@ export function layoutTimeline(
     if (pl) placed.push(pl)
     else if (!ghost) overflow.push({ it, ghost })
   }
+
+  // Stable render order: keyed siblings must never reorder between layout
+  // passes, or React moves their DOM nodes and every CSS enter-animation
+  // (the pop tween) restarts on items that were already on screen.
+  placed.sort((a, b) => (a.item.id < b.item.id ? -1 : 1))
+  dots.sort((a, b) => (a.item.id < b.item.id ? -1 : 1))
 
   // Cluster overflow items by screen proximity.
   overflow.sort((a, b) => a.it.pos - b.it.pos)
@@ -237,7 +285,9 @@ export function layoutTimeline(
         const x = clamp(toX(it.pos), forkX + 30, joinX - 30)
         const next = list[i + 1]
         const gap = next ? Math.abs(clamp(toX(next.pos), forkX + 30, joinX - 30) - x) : Infinity
-        out.push({ item: it, x, y: pathYs[pi], labelShown: gap > 74 && !collapsed, ghost })
+        const lid = it.layerId ?? typeOf(p, it)?.defaultLayerId ?? null
+        const size = (lid ? p.layers.find(l => l.id === lid)?.size : 1) ?? 1
+        out.push({ item: it, x, y: pathYs[pi], labelShown: gap > 74 && !collapsed, ghost, size })
       }
       return out
     })
@@ -245,10 +295,11 @@ export function layoutTimeline(
   }
 
   const shownCount = placed.filter(pl => !pl.ghost).length +
+    dots.filter(d => !d.ghost).length +
     branches.reduce((n, b) => n + (b.collapsed ? 0 : b.items.flat().filter(i => !i.ghost).length), 0)
   const totalWithPaths = totalCount + [...pathItems.values()].reduce((n, l) => n + l.length, 0)
 
-  return { placed, clusters, branches, shownCount, totalCount: totalWithPaths }
+  return { placed, dots, clusters, branches, shownCount, totalCount: totalWithPaths }
 }
 
 /** World extent of all content, padded. */
