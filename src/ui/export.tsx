@@ -14,8 +14,17 @@ function ExportScene(props: { proj: Project; cam: Camera; w: number; h: number; 
   const { proj, cam, w, h, density, theme } = props
   const C = theme === 'dark' ? DARK : LIGHT
   const st = proj.settings
-  const layout = layoutTimeline(proj, cam, w, proj.filters, density, false, new Set(), new Set(), st.placement)
   const spineY = Math.round(h * 0.42)
+  const sizeAt = (d0: number) => Math.max(10, st.sectionStyle.labelSize - 2.5 * d0)
+  const barTopFor = (depth: number) => {
+    let y = 0
+    for (let d0 = 0; d0 < depth; d0++) y += sizeAt(d0) + 10
+    return y
+  }
+  const maxDepth = proj.sections.length ? Math.max(...proj.sections.map(s => s.depth)) : -1
+  const headerH = maxDepth >= 0 ? barTopFor(maxDepth + 1) : 0
+  const maxUpRows = Math.max(1, Math.floor((spineY - headerH - 76) / 46) + 1)
+  const layout = layoutTimeline(proj, cam, w, proj.filters, density, false, new Set(), new Set(), st.placement, maxUpRows)
   const toX = (pos: number) => (pos - cam.x) * cam.s
   const font = 'ui-sans-serif, system-ui, sans-serif'
 
@@ -45,28 +54,26 @@ function ExportScene(props: { proj: Project; cam: Camera; w: number; h: number; 
         })}
         {/* header bars above the band edges so nothing cuts through them */}
         {(() => {
-          const sizeAt = (d0: number) => Math.max(10, st.sectionStyle.labelSize - 2.5 * d0)
           const hueIdx = new Map<number, number>()
           return sorted.map(sc => {
             const i = hueIdx.get(sc.depth) ?? 0
             hueIdx.set(sc.depth, i + 1)
             const x1 = toX(sc.start)
             const x2 = toX(sc.end)
-            if (x2 < 0 || x1 > w || x2 - x1 < 20) return null
+            if (x2 < 0 || x1 > w || x2 - x1 < 2) return null
             const hue = sectionHue(i)
             const labelPx = sizeAt(sc.depth)
-            let barTop = -spineY + 4
-            for (let d0 = 0; d0 < sc.depth; d0++) barTop += sizeAt(d0) + 10
+            const barTop = -spineY + barTopFor(sc.depth)
+            const showText = x2 - (Math.max(x1, 0) + 8) >= sc.name.length * labelPx * 0.62 + 8
             return (
-              <g key={`hdr-${sc.id}`} opacity={Math.max(1 - 0.1 * sc.depth, 0.65)}>
-                <clipPath id={`xbl-${sc.id}`}>
-                  <rect x={x1 + 1} y={barTop} width={Math.max(x2 - x1 - 2, 0)} height={labelPx + 10} />
-                </clipPath>
+              <g key={`hdr-${sc.id}`}>
                 <rect x={x1} y={barTop} width={x2 - x1} height={labelPx + 10}
-                  fill={C.bg} fillOpacity={0.92} stroke={`hsl(${hue} 55% 55% / 0.45)`} />
-                <text x={Math.max(x1, 0) + 8} y={barTop + labelPx + 3} fontFamily={font} fontSize={labelPx}
-                  fontWeight={sc.depth === 0 ? 700 : 600} clipPath={`url(#xbl-${sc.id})`}
-                  fill={`hsl(${hue} 50% ${theme === 'dark' ? '70%' : '38%'})`}>{sc.name}</text>
+                  fill={C.bg} stroke={`hsl(${hue} 55% 55% / 0.45)`} />
+                {showText && (
+                  <text x={Math.max(x1, 0) + 8} y={barTop + labelPx + 3} fontFamily={font} fontSize={labelPx}
+                    fontWeight={sc.depth === 0 ? 700 : 600}
+                    fill={`hsl(${hue} 50% ${theme === 'dark' ? '70%' : '38%'})`}>{sc.name}</text>
+                )}
               </g>
             )
           })

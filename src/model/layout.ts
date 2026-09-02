@@ -142,6 +142,8 @@ export function layoutTimeline(
   sticky: Set<string>,
   forced: Set<string> = new Set(),
   placement: 'above' | 'both' = 'above',
+  /** Hard cap on rows above the spine so items never reach the section header bars. */
+  maxUpRows = Infinity,
 ): LayoutResult {
   const toX = (pos: number) => (pos - cam.x) * cam.s
   const margin = 220
@@ -211,7 +213,7 @@ export function layoutTimeline(
   const candidateRows = (cap: number): number[] => {
     const out: number[] = []
     for (let r = 0; r < cap; r++) {
-      out.push(r)
+      if (r < maxUpRows) out.push(r)
       if (placement === 'both') out.push(-(r + 1))
     }
     return out

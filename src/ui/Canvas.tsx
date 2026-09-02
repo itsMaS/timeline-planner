@@ -5,7 +5,7 @@ import {
 } from 'lucide-react'
 import { iconByName } from '../model/icons'
 import {
-  BranchLayout, PlacedItem, contentExtent, fitCamera, itemMatchesFilters,
+  BranchLayout, PlacedItem, ROW_H, contentExtent, fitCamera, itemMatchesFilters,
   layoutTimeline, refreshSectionDepths, rowY, typeOf,
 } from '../model/layout'
 import { useActiveProject, useStore } from '../model/store'
@@ -160,9 +160,23 @@ export function CanvasView() {
     return p
   }, [proj, posOverride, durOverride, branchOverride, sectionOverride])
 
+  // Depth-graded emphasis: top-level sections get bigger labels and stronger
+  // borders; each level down shrinks. Header bars stack flush from the very
+  // top of the canvas (no gap that would expose band edges above them).
+  const sizeAtDepth = (d0: number) => Math.max(10, st.sectionStyle.labelSize - 2.5 * d0)
+  const barTopFor = (depth: number) => {
+    let y = 0
+    for (let d0 = 0; d0 < depth; d0++) y += sizeAtDepth(d0) + 10
+    return y
+  }
+  // Vertical space taken by the header bar stack — item rows must stay below it.
+  const maxSectionDepth = proj.sections.length ? Math.max(...proj.sections.map(s => s.depth)) : -1
+  const headerH = maxSectionDepth >= 0 ? barTopFor(maxSectionDepth + 1) : 0
+  const maxUpRows = Math.max(1, Math.floor((spineY - headerH - 76) / ROW_H) + 1)
+
   const layout = useMemo(
-    () => layoutTimeline(effective, cam, size.w, proj.filters, ui.density, ui.ghostHidden, stickyRef.current, selection, st.placement),
-    [effective, cam, size.w, proj.filters, ui.density, ui.ghostHidden, selection, st.placement],
+    () => layoutTimeline(effective, cam, size.w, proj.filters, ui.density, ui.ghostHidden, stickyRef.current, selection, st.placement, maxUpRows),
+    [effective, cam, size.w, proj.filters, ui.density, ui.ghostHidden, selection, st.placement, maxUpRows],
   )
   useEffect(() => {
     stickyRef.current = new Set(layout.placed.map(pl => pl.item.id))
@@ -698,7 +712,7 @@ export function CanvasView() {
       for (const sc of proj.sections) {
         const sx1 = toX(sc.start)
         const sx2 = toX(sc.end)
-        if (sx2 < -40 || sx1 > size.w + 40 || sx2 - sx1 < 24) continue
+        if (sx2 < -40 || sx1 > size.w + 40 || sx2 - sx1 < 2) continue
         const barTop = barTopFor(sc.depth)
         const barBottom = barTop + sizeAtDepth(sc.depth) + 10
         if (sx1 < bx && sx2 > ax && barTop < by && barBottom > ay) hits.push(`S:${sc.id}`)
@@ -959,26 +973,21 @@ export function CanvasView() {
     return idx
   }, [proj.sections])
 
-  // Depth-graded emphasis: top-level sections get bigger labels and stronger
-  // borders; each level down fades and shrinks. Header bars stack flush.
-  const sizeAtDepth = (d0: number) => Math.max(10, st.sectionStyle.labelSize - 2.5 * d0)
-  const barTopFor = (depth: number) => {
-    let y = 4
-    for (let d0 = 0; d0 < depth; d0++) y += sizeAtDepth(d0) + 10
-    return y
-  }
   const bandGeo = sectionsSorted.flatMap(sc => {
     const x1 = toX(sc.start)
     const x2 = toX(sc.end)
     const w = x2 - x1
-    if (x2 < -40 || x1 > size.w + 40 || w < 24) return []
+    if (x2 < -40 || x1 > size.w + 40 || w < 2) return []
     const sel = selection.has(`S:${sc.id}`)
+    const labelPx = sizeAtDepth(sc.depth)
     return [{
-      sc, x1, x2, w, sel,
+      sc, x1, x2, w, sel, labelPx,
       hue: sectionHue(depthIndex.get(sc.id) ?? 0),
-      labelPx: sizeAtDepth(sc.depth),
       barTop: -spineY + barTopFor(sc.depth),
-      barH: sizeAtDepth(sc.depth) + 10,
+      barH: labelPx + 10,
+      // The label renders only when it fits fully inside the (visible part of
+      // the) bar — otherwise the colored bar alone marks the section.
+      showText: x2 - (Math.max(x1, 0) + 8) >= sc.name.length * labelPx * 0.62 + 8,
       edgeAlpha: sel ? 0.8 : clamp(st.sectionStyle.edgeStrength * Math.max(1 - 0.3 * sc.depth, 0.25), 0, 1),
       edgeW: sc.depth === 0 ? 1.6 : 1,
     }]
@@ -1048,45 +1057,10 @@ export function CanvasView() {
             return <g pointerEvents="none">{ticks}</g>
           })()}
 
-          {/* section header bars — a padding-free opaque strip spanning the
-              whole section at its depth row, drawn above band edges and grid
-              so nothing cuts through it. Also the section's drag target. */}
-          {bandGeo.map(({ sc, x1, w, hue, sel, labelPx, barTop, barH }) => (
-            <g
-              key={`hdr-${sc.id}`}
-              className="band-label-g"
-              style={{ opacity: Math.max(1 - 0.1 * sc.depth, 0.65) }}
-              onPointerDown={e => labelPointerDown(e, sc)}
-            >
-              <clipPath id={`bl-${sc.id}`}>
-                <rect x={x1 + 1} y={barTop} width={Math.max(w - 2, 0)} height={barH} />
-              </clipPath>
-              <rect
-                x={x1} y={barTop} width={w} height={barH}
-                className="band-label-box"
-                style={{
-                  fill: `color-mix(in srgb, hsl(${hue} 60% 55%) 16%, var(--panel))`,
-                  stroke: `hsl(${hue} 55% 55% / ${sel ? 0.95 : 0.45})`,
-                }}
-              />
-              <text
-                x={Math.max(x1, 0) + 8} y={barTop + labelPx + 3}
-                className={`band-label ${sel ? 'sel' : ''}`}
-                clipPath={`url(#bl-${sc.id})`}
-                style={{
-                  fill: `hsl(${hue} 50% var(--band-label-l))`,
-                  fontSize: labelPx,
-                  fontWeight: sc.depth === 0 ? 700 : 600,
-                }}
-              >
-                {sc.name}
-              </text>
-            </g>
-          ))}
-
           {/* Edge handles: with no section selected every edge is live (nearly
               invisible until hovered) and coincident edges drag together; with
-              a selection only that section's edges work. */}
+              a selection only that section's edges work. They sit below the
+              header bars so they never draw lines across them. */}
           {bandGeo.map(({ sc, x1, x2, sel }) => (!anySectionSelected || sel) && (
             <g key={`eh-${sc.id}`}>
               <line
@@ -1097,6 +1071,39 @@ export function CanvasView() {
                 x1={x2} y1={-spineY} x2={x2} y2={size.h - spineY} className={`band-handle ${sel ? '' : 'quiet'}`}
                 onPointerDown={e => startSectionEdge(e, sc, 'R')}
               />
+            </g>
+          ))}
+
+          {/* section header bars — a padding-free, fully opaque strip spanning
+              the whole section at its depth row, drawn above everything else in
+              the band so nothing cuts through it. Also the section's drag target. */}
+          {bandGeo.map(({ sc, x1, w, hue, sel, labelPx, barTop, barH, showText }) => (
+            <g
+              key={`hdr-${sc.id}`}
+              className="band-label-g"
+              onPointerDown={e => labelPointerDown(e, sc)}
+            >
+              <rect
+                x={x1} y={barTop} width={w} height={barH}
+                className="band-label-box"
+                style={{
+                  fill: `color-mix(in srgb, hsl(${hue} 60% 55%) 16%, var(--panel))`,
+                  stroke: `hsl(${hue} 55% 55% / ${sel ? 0.95 : 0.45})`,
+                }}
+              />
+              {showText && (
+                <text
+                  x={Math.max(x1, 0) + 8} y={barTop + labelPx + 3}
+                  className={`band-label ${sel ? 'sel' : ''}`}
+                  style={{
+                    fill: `hsl(${hue} 50% var(--band-label-l))`,
+                    fontSize: labelPx,
+                    fontWeight: sc.depth === 0 ? 700 : 600,
+                  }}
+                >
+                  {sc.name}
+                </text>
+              )}
             </g>
           ))}
 
