@@ -47,6 +47,8 @@ type Drag =
       origSects: Map<string, { start: number; end: number }>
       /** Item → its position and innermost affected section at drag start. */
       itemSec: Map<string, { pos: number; secId: string }>
+      /** Contained sub-sections; they redistribute with the parent while Shift is held. */
+      subSects: Map<string, { start: number; end: number; parentId: string }>
     }
   | {
       /** Translate every selected section together (label drag). */
@@ -61,6 +63,8 @@ type Drag =
           opposite extreme (edge drag with a multi-section selection). */
       kind: 'sectionScale'; ids: string[]; startClientX: number
       orig: Map<string, { start: number; end: number }>
+      /** Contained (unselected) sub-sections; they scale along while Shift is held. */
+      subOrig: Map<string, { start: number; end: number }>
       /** Items inside the scaled sections (spacing rescales while Shift is held). */
       itemOrig: Map<string, number>
       anchor: number; grabPos: number
@@ -420,7 +424,10 @@ export function CanvasView() {
       const selBounds = proj.sections.filter(s0 => selectedSectionIds.includes(s0.id))
       const allIds = expandContained(selectedSectionIds)
       const all = proj.sections.filter(s0 => allIds.includes(s0.id))
-      const orig = new Map(all.map(s0 => [s0.id, { start: s0.start, end: s0.end }]))
+      const orig = new Map(selBounds.map(s0 => [s0.id, { start: s0.start, end: s0.end }]))
+      const subOrig = new Map(
+        all.filter(s0 => !selectedSectionIds.includes(s0.id)).map(s0 => [s0.id, { start: s0.start, end: s0.end }]),
+      )
       // Anchor on the selected group's extremes (contained children just follow).
       const anchor = side === 'R'
         ? Math.min(...selBounds.map(s0 => s0.start))
@@ -428,8 +435,8 @@ export function CanvasView() {
       if (Math.abs(pos - anchor) < 1e-9) return
       const minW = Math.min(...all.map(s0 => s0.end - s0.start))
       setDragBoth({
-        kind: 'sectionScale', ids: allIds, startClientX: e.clientX,
-        orig, itemOrig: itemsWithin(orig.values()), anchor, grabPos: pos,
+        kind: 'sectionScale', ids: selectedSectionIds, startClientX: e.clientX,
+        orig, subOrig, itemOrig: itemsWithin(orig.values()), anchor, grabPos: pos,
         cands: magnetCands({ sectionIds: new Set(allIds) }),
         minFactor: minW > 0 ? 0.25 / minW : 0.05, moved: false,
       })
@@ -458,10 +465,25 @@ export function CanvasView() {
         return [ed.id, { start: s0.start, end: s0.end }] as const
       }),
     )
+    // Sub-sections contained in a dragged section, mapped to their innermost
+    // dragged parent — they redistribute with it while Shift is held.
+    const subSects = new Map<string, { start: number; end: number; parentId: string }>()
+    for (const s0 of proj.sections) {
+      if (origSects.has(s0.id)) continue
+      let parentId: string | null = null
+      let span = Infinity
+      origSects.forEach((b, id) => {
+        if (s0.start >= b.start - 1e-9 && s0.end <= b.end + 1e-9 && b.end - b.start < span) {
+          parentId = id
+          span = b.end - b.start
+        }
+      })
+      if (parentId) subSects.set(s0.id, { start: s0.start, end: s0.end, parentId })
+    }
     setDragBoth({
       kind: 'sectionEdge', edges, orig: pos, startClientX: e.clientX,
       cands: magnetCands({ sectionIds: new Set(edges.map(ed => ed.id)) }), min, max,
-      origSects, itemSec: itemSecFor(origSects),
+      origSects, itemSec: itemSecFor(origSects), subSects,
     })
   }
 
@@ -580,20 +602,30 @@ export function CanvasView() {
         ovById.set(ed.id, nb)
         ovs.push({ id: ed.id, ...nb })
       }
-      setSectionOverride(ovs)
-      // Shift: redistribute each section's items linearly into its new span.
+      // Shift: redistribute the section's contents — sub-sections and items —
+      // linearly into its new span.
       if (e.shiftKey) {
-        const pv = new Map<string, number>()
-        d.itemSec.forEach(({ pos, secId }, itemId) => {
+        const remap = (secId: string, v: number): number | null => {
           const os = d.origSects.get(secId)
           const nb = ovById.get(secId)
-          if (!os || !nb || os.end - os.start < 1e-9) return
-          pv.set(itemId, nb.start + ((pos - os.start) / (os.end - os.start)) * (nb.end - nb.start))
+          if (!os || !nb || os.end - os.start < 1e-9) return null
+          return nb.start + ((v - os.start) / (os.end - os.start)) * (nb.end - nb.start)
+        }
+        d.subSects.forEach((sb, id) => {
+          const a = remap(sb.parentId, sb.start)
+          const b = remap(sb.parentId, sb.end)
+          if (a !== null && b !== null) ovs.push({ id, start: Math.min(a, b), end: Math.max(a, b) })
+        })
+        const pv = new Map<string, number>()
+        d.itemSec.forEach(({ pos, secId }, itemId) => {
+          const npos = remap(secId, pos)
+          if (npos !== null) pv.set(itemId, npos)
         })
         setPosOverride(pv)
       } else {
         setPosOverride(null)
       }
+      setSectionOverride(ovs)
     } else if (d.kind === 'sectionMove') {
       if (!d.moved && Math.abs(e.clientX - d.startClientX) <= 3) return
       d.moved = true
@@ -615,20 +647,23 @@ export function CanvasView() {
       const np = snapWorld(d.grabPos + du, d.cands, e.altKey)
       const factor = Math.max((np - d.anchor) / (d.grabPos - d.anchor), d.minFactor)
       const ovs: { id: string; start: number; end: number }[] = []
-      d.orig.forEach((o, id) => {
+      const scaleBounds = (o: { start: number; end: number }, id: string) => {
         const a = d.anchor + (o.start - d.anchor) * factor
         const b = d.anchor + (o.end - d.anchor) * factor
         ovs.push({ id, start: Math.min(a, b), end: Math.max(a, b) })
-      })
-      setSectionOverride(ovs)
-      // Shift: item spacing scales with the sections; otherwise items stay put.
+      }
+      d.orig.forEach(scaleBounds)
+      // Shift: contained sub-sections and item spacing scale along with the
+      // selection; otherwise they stay where they are.
       if (e.shiftKey) {
+        d.subOrig.forEach(scaleBounds)
         const pv = new Map<string, number>()
         d.itemOrig.forEach((pos, id) => pv.set(id, d.anchor + (pos - d.anchor) * factor))
         setPosOverride(pv)
       } else {
         setPosOverride(null)
       }
+      setSectionOverride(ovs)
     }
   }
 
@@ -660,17 +695,12 @@ export function CanvasView() {
         }))
       }
       // Sections join the marquee through their header bars (same geometry as render).
-      const sizeAt = (d0: number) => Math.max(10, st.sectionStyle.labelSize - 2.5 * d0)
       for (const sc of proj.sections) {
         const sx1 = toX(sc.start)
         const sx2 = toX(sc.end)
         if (sx2 < -40 || sx1 > size.w + 40 || sx2 - sx1 < 24) continue
-        const px = sizeAt(sc.depth)
-        let baseline = 8
-        for (let d0 = 0; d0 < sc.depth; d0++) baseline += sizeAt(d0) + 6
-        baseline += px
-        const barTop = baseline - px - 4
-        const barBottom = barTop + px + 8
+        const barTop = barTopFor(sc.depth)
+        const barBottom = barTop + sizeAtDepth(sc.depth) + 10
         if (sx1 < bx && sx2 > ax && barTop < by && barBottom > ay) hits.push(`S:${sc.id}`)
       }
       select(hits)
@@ -929,6 +959,31 @@ export function CanvasView() {
     return idx
   }, [proj.sections])
 
+  // Depth-graded emphasis: top-level sections get bigger labels and stronger
+  // borders; each level down fades and shrinks. Header bars stack flush.
+  const sizeAtDepth = (d0: number) => Math.max(10, st.sectionStyle.labelSize - 2.5 * d0)
+  const barTopFor = (depth: number) => {
+    let y = 4
+    for (let d0 = 0; d0 < depth; d0++) y += sizeAtDepth(d0) + 10
+    return y
+  }
+  const bandGeo = sectionsSorted.flatMap(sc => {
+    const x1 = toX(sc.start)
+    const x2 = toX(sc.end)
+    const w = x2 - x1
+    if (x2 < -40 || x1 > size.w + 40 || w < 24) return []
+    const sel = selection.has(`S:${sc.id}`)
+    return [{
+      sc, x1, x2, w, sel,
+      hue: sectionHue(depthIndex.get(sc.id) ?? 0),
+      labelPx: sizeAtDepth(sc.depth),
+      barTop: -spineY + barTopFor(sc.depth),
+      barH: sizeAtDepth(sc.depth) + 10,
+      edgeAlpha: sel ? 0.8 : clamp(st.sectionStyle.edgeStrength * Math.max(1 - 0.3 * sc.depth, 0.25), 0, 1),
+      edgeW: sc.depth === 0 ? 1.6 : 1,
+    }]
+  })
+
   return (
     <div
       ref={wrapRef}
@@ -946,85 +1001,20 @@ export function CanvasView() {
         onDoubleClick={bgDoubleClick}
       >
         <g transform={`translate(0, ${spineY})`}>
-          {/* section bands */}
-          {sectionsSorted.map(sc => {
-            const x1 = toX(sc.start)
-            const x2 = toX(sc.end)
-            const w = x2 - x1
-            if (x2 < -40 || x1 > size.w + 40 || w < 24) return null
-            const yTop = -spineY
-            const hFull = size.h
-            const hue = sectionHue(depthIndex.get(sc.id) ?? 0)
-            const sel = selection.has(`S:${sc.id}`)
-            const labelX = Math.max(x1, 0) + 10
-            // Depth-graded emphasis: top-level sections get bigger labels and
-            // stronger borders; each level down fades and shrinks.
-            const sizeAt = (d0: number) => Math.max(10, st.sectionStyle.labelSize - 2.5 * d0)
-            const labelPx = sizeAt(sc.depth)
-            let labelY = yTop + 8
-            for (let d0 = 0; d0 < sc.depth; d0++) labelY += sizeAt(d0) + 6
-            labelY += labelPx
-            const edgeAlpha = sel ? 0.8 : clamp(st.sectionStyle.edgeStrength * Math.max(1 - 0.3 * sc.depth, 0.25), 0, 1)
-            const edgeW = sc.depth === 0 ? 1.6 : 1
-            return (
-              <g key={sc.id} className="band-g">
-                <rect
-                  x={x1} y={yTop} width={w} height={hFull}
-                  className="band"
-                  style={{ fill: `hsl(${hue} 60% 55% / ${(0.024 + sc.depth * 0.013) * st.bandStrength})` }}
-                  pointerEvents="none"
-                />
-                <line x1={x1} y1={yTop} x2={x1} y2={yTop + hFull} className="band-edge"
-                  style={{ stroke: `hsl(${hue} 55% 55% / ${edgeAlpha})`, strokeWidth: edgeW }} pointerEvents="none" />
-                <line x1={x2} y1={yTop} x2={x2} y2={yTop + hFull} className="band-edge"
-                  style={{ stroke: `hsl(${hue} 55% 55% / ${edgeAlpha})`, strokeWidth: edgeW }} pointerEvents="none" />
-                {/* Full-width opaque header bar for the section at its depth row. */}
-                <g
-                  className="band-label-g"
-                  style={{ opacity: Math.max(1 - 0.1 * sc.depth, 0.65) }}
-                  onPointerDown={e => labelPointerDown(e, sc)}
-                >
-                  <rect
-                    x={x1} y={labelY - labelPx - 4}
-                    width={w} height={labelPx + 8}
-                    className="band-label-box"
-                    style={{
-                      fill: `color-mix(in srgb, hsl(${hue} 60% 55%) 16%, var(--panel))`,
-                      stroke: `hsl(${hue} 55% 55% / ${sel ? 0.95 : 0.45})`,
-                    }}
-                  />
-                  {w > 60 && (
-                    <text
-                      x={labelX} y={labelY}
-                      className={`band-label ${sel ? 'sel' : ''}`}
-                      style={{
-                        fill: `hsl(${hue} 50% var(--band-label-l))`,
-                        fontSize: labelPx,
-                        fontWeight: sc.depth === 0 ? 700 : 600,
-                      }}
-                    >
-                      {sc.name}
-                    </text>
-                  )}
-                </g>
-                {/* Edge handles: with no section selected every edge is live
-                    (nearly invisible until hovered) and coincident edges drag
-                    together; with a selection only that section's edges work. */}
-                {(!anySectionSelected || sel) && (
-                  <>
-                    <line
-                      x1={x1} y1={yTop} x2={x1} y2={yTop + hFull} className={`band-handle ${sel ? '' : 'quiet'}`}
-                      onPointerDown={e => startSectionEdge(e, sc, 'L')}
-                    />
-                    <line
-                      x1={x2} y1={yTop} x2={x2} y2={yTop + hFull} className={`band-handle ${sel ? '' : 'quiet'}`}
-                      onPointerDown={e => startSectionEdge(e, sc, 'R')}
-                    />
-                  </>
-                )}
-              </g>
-            )
-          })}
+          {/* section bands (fills + edges; header bars render on top later) */}
+          {bandGeo.map(({ sc, x1, x2, w, hue, edgeAlpha, edgeW }) => (
+            <g key={sc.id} className="band-g" pointerEvents="none">
+              <rect
+                x={x1} y={-spineY} width={w} height={size.h}
+                className="band"
+                style={{ fill: `hsl(${hue} 60% 55% / ${(0.024 + sc.depth * 0.013) * st.bandStrength})` }}
+              />
+              <line x1={x1} y1={-spineY} x2={x1} y2={size.h - spineY} className="band-edge"
+                style={{ stroke: `hsl(${hue} 55% 55% / ${edgeAlpha})`, strokeWidth: edgeW }} />
+              <line x1={x2} y1={-spineY} x2={x2} y2={size.h - spineY} className="band-edge"
+                style={{ stroke: `hsl(${hue} 55% 55% / ${edgeAlpha})`, strokeWidth: edgeW }} />
+            </g>
+          ))}
 
           {/* unit ruler & background grid */}
           {(st.grid.show || st.unit.showRuler) && (() => {
@@ -1057,6 +1047,58 @@ export function CanvasView() {
             }
             return <g pointerEvents="none">{ticks}</g>
           })()}
+
+          {/* section header bars — a padding-free opaque strip spanning the
+              whole section at its depth row, drawn above band edges and grid
+              so nothing cuts through it. Also the section's drag target. */}
+          {bandGeo.map(({ sc, x1, w, hue, sel, labelPx, barTop, barH }) => (
+            <g
+              key={`hdr-${sc.id}`}
+              className="band-label-g"
+              style={{ opacity: Math.max(1 - 0.1 * sc.depth, 0.65) }}
+              onPointerDown={e => labelPointerDown(e, sc)}
+            >
+              <clipPath id={`bl-${sc.id}`}>
+                <rect x={x1 + 1} y={barTop} width={Math.max(w - 2, 0)} height={barH} />
+              </clipPath>
+              <rect
+                x={x1} y={barTop} width={w} height={barH}
+                className="band-label-box"
+                style={{
+                  fill: `color-mix(in srgb, hsl(${hue} 60% 55%) 16%, var(--panel))`,
+                  stroke: `hsl(${hue} 55% 55% / ${sel ? 0.95 : 0.45})`,
+                }}
+              />
+              <text
+                x={Math.max(x1, 0) + 8} y={barTop + labelPx + 3}
+                className={`band-label ${sel ? 'sel' : ''}`}
+                clipPath={`url(#bl-${sc.id})`}
+                style={{
+                  fill: `hsl(${hue} 50% var(--band-label-l))`,
+                  fontSize: labelPx,
+                  fontWeight: sc.depth === 0 ? 700 : 600,
+                }}
+              >
+                {sc.name}
+              </text>
+            </g>
+          ))}
+
+          {/* Edge handles: with no section selected every edge is live (nearly
+              invisible until hovered) and coincident edges drag together; with
+              a selection only that section's edges work. */}
+          {bandGeo.map(({ sc, x1, x2, sel }) => (!anySectionSelected || sel) && (
+            <g key={`eh-${sc.id}`}>
+              <line
+                x1={x1} y1={-spineY} x2={x1} y2={size.h - spineY} className={`band-handle ${sel ? '' : 'quiet'}`}
+                onPointerDown={e => startSectionEdge(e, sc, 'L')}
+              />
+              <line
+                x1={x2} y1={-spineY} x2={x2} y2={size.h - spineY} className={`band-handle ${sel ? '' : 'quiet'}`}
+                onPointerDown={e => startSectionEdge(e, sc, 'R')}
+              />
+            </g>
+          ))}
 
           {/* spine */}
           <line

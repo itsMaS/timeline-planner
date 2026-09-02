@@ -33,10 +33,6 @@ function ExportScene(props: { proj: Project; cam: Camera; w: number; h: number; 
           const x2 = toX(sc.end)
           if (x2 < 0 || x1 > w || x2 - x1 < 20) return null
           const hue = sectionHue(i)
-          const sizeAt = (d0: number) => Math.max(10, st.sectionStyle.labelSize - 2.5 * d0)
-          let labelY = -spineY + 8
-          for (let d0 = 0; d0 < sc.depth; d0++) labelY += sizeAt(d0) + 6
-          labelY += sizeAt(sc.depth)
           const edgeAlpha = clamp(st.sectionStyle.edgeStrength * Math.max(1 - 0.3 * sc.depth, 0.25), 0, 1)
           return (
             <g key={sc.id}>
@@ -44,16 +40,37 @@ function ExportScene(props: { proj: Project; cam: Camera; w: number; h: number; 
                 fill={`hsl(${hue} 60% 55% / ${(0.024 + sc.depth * 0.013) * st.bandStrength})`} />
               <line x1={x1} y1={-spineY} x2={x1} y2={h - spineY} stroke={`hsl(${hue} 55% 55% / ${edgeAlpha})`} strokeWidth={sc.depth === 0 ? 1.6 : 1} />
               <line x1={x2} y1={-spineY} x2={x2} y2={h - spineY} stroke={`hsl(${hue} 55% 55% / ${edgeAlpha})`} strokeWidth={sc.depth === 0 ? 1.6 : 1} />
-              <rect
-                x={x1} y={labelY - sizeAt(sc.depth) - 4}
-                width={x2 - x1} height={sizeAt(sc.depth) + 8}
-                fill={C.bg} fillOpacity={0.92} stroke={`hsl(${hue} 55% 55% / 0.45)`} />
-              <text x={Math.max(x1, 0) + 10} y={labelY} fontFamily={font} fontSize={sizeAt(sc.depth)}
-                fontWeight={sc.depth === 0 ? 700 : 600} opacity={Math.max(1 - 0.12 * sc.depth, 0.6)}
-                fill={`hsl(${hue} 50% ${theme === 'dark' ? '70%' : '38%'})`}>{sc.name}</text>
             </g>
           )
         })}
+        {/* header bars above the band edges so nothing cuts through them */}
+        {(() => {
+          const sizeAt = (d0: number) => Math.max(10, st.sectionStyle.labelSize - 2.5 * d0)
+          const hueIdx = new Map<number, number>()
+          return sorted.map(sc => {
+            const i = hueIdx.get(sc.depth) ?? 0
+            hueIdx.set(sc.depth, i + 1)
+            const x1 = toX(sc.start)
+            const x2 = toX(sc.end)
+            if (x2 < 0 || x1 > w || x2 - x1 < 20) return null
+            const hue = sectionHue(i)
+            const labelPx = sizeAt(sc.depth)
+            let barTop = -spineY + 4
+            for (let d0 = 0; d0 < sc.depth; d0++) barTop += sizeAt(d0) + 10
+            return (
+              <g key={`hdr-${sc.id}`} opacity={Math.max(1 - 0.1 * sc.depth, 0.65)}>
+                <clipPath id={`xbl-${sc.id}`}>
+                  <rect x={x1 + 1} y={barTop} width={Math.max(x2 - x1 - 2, 0)} height={labelPx + 10} />
+                </clipPath>
+                <rect x={x1} y={barTop} width={x2 - x1} height={labelPx + 10}
+                  fill={C.bg} fillOpacity={0.92} stroke={`hsl(${hue} 55% 55% / 0.45)`} />
+                <text x={Math.max(x1, 0) + 8} y={barTop + labelPx + 3} fontFamily={font} fontSize={labelPx}
+                  fontWeight={sc.depth === 0 ? 700 : 600} clipPath={`url(#xbl-${sc.id})`}
+                  fill={`hsl(${hue} 50% ${theme === 'dark' ? '70%' : '38%'})`}>{sc.name}</text>
+              </g>
+            )
+          })
+        })()}
         {(st.grid.show || st.unit.showRuler) && (() => {
           const step = rulerStepFor(cam.s, st.unit.preset)
           const n0 = Math.floor(cam.x / step)
