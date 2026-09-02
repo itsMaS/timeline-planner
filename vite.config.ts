@@ -4,5 +4,6 @@ import { viteSingleFile } from 'vite-plugin-singlefile'
 
 export default defineConfig({
   plugins: [react(), viteSingleFile()],
-  build: { chunkSizeWarningLimit: 6000 },
+  // Build straight into docs/ so GitHub Pages can serve main:/docs.
+  build: { outDir: 'docs', chunkSizeWarningLimit: 6000 },
 })

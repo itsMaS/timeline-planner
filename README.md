@@ -12,12 +12,21 @@ The full design rationale lives in [DESIGN.md](DESIGN.md).
 ```bash
 npm install
 npm run dev       # local dev server
-npm run build     # produces dist/index.html — one self-contained file
+npm run build     # produces docs/index.html — one self-contained file
 ```
 
-The build is a **single HTML file** (`dist/index.html`). Host it anywhere
+The build is a **single HTML file** (`docs/index.html`). Host it anywhere
 static, or just open it from disk. All data autosaves to the browser's
 localStorage; use *Export → Project JSON* for durable, git-committable saves.
+
+### GitHub Pages
+
+The site is served from the `main` branch's `docs/` folder
+(repo Settings → Pages → *Deploy from a branch* → `main` / `/docs`):
+**https://itsmas.github.io/timeline-planner/**
+
+To ship an update: `npm run build`, commit the regenerated
+`docs/index.html`, push to `main`.
 
 ## What it does
 
