@@ -270,6 +270,19 @@ export function Sidebar() {
                   />
                   <span className="count">{inside.length}</span>
                   <button
+                    className="ghost-btn row-act"
+                    title="New type in this folder"
+                    onClick={() => {
+                      const id = uid()
+                      mutate(p => p.types.push({
+                        id, name: 'New type', icon: 'Circle', color: f.color, folderId: f.id,
+                        defaultLayerId: p.layers[Math.min(1, p.layers.length - 1)]?.id ?? null, fields: [],
+                      }))
+                      tweak(p => { const x = p.typeFolders.find(y => y.id === f.id); if (x) x.collapsed = false })
+                      setUI({ editTypeId: id })
+                    }}
+                  ><Plus width={13} height={13} /></button>
+                  <button
                     className={`ghost-btn row-act ${allOff ? 'on' : ''}`}
                     title={allOff ? 'Unhide folder' : 'Hide folder'}
                     onClick={() => setTypesOff(inside.map(t => t.id), !allOff)}

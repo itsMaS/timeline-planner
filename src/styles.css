@@ -121,7 +121,7 @@ input, select, textarea { font: inherit; color: inherit; }
 
 /* ---------------------------------------------------------------- sidebar */
 .sidebar {
-  width: 236px; min-width: 236px; overflow-y: auto;
+  width: 271px; min-width: 271px; overflow-y: auto;
   background: var(--panel); border-right: 1px solid var(--line-soft);
   padding-bottom: 30px;
 }
