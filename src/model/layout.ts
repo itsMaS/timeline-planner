@@ -67,25 +67,40 @@ export function itemMatchesFilters(p: Project, it: Item, f: Filters): boolean {
   return true
 }
 
+const LABEL_MAX = 200
+
 export function labelWidth(title: string): number {
-  return Math.min(title.length * 6.6, 130)
+  return Math.min(title.length * 6.6, LABEL_MAX)
+}
+
+/** Title truncated to the width actually reserved by labelWidth. */
+export function displayLabel(title: string): string {
+  if (title.length * 6.6 <= LABEL_MAX) return title
+  return title.slice(0, Math.floor(LABEL_MAX / 6.6) - 1) + '…'
 }
 
 const ICON_W = 30
 export const ROW_H = 46
 export const ROW0_Y = -52 // y of row 0 relative to the spine
 
+/** Row → y offset from the spine. Negative rows stack downward, mirrored. */
+export function rowY(row: number): number {
+  return row >= 0 ? ROW0_Y - row * ROW_H : -ROW0_Y - (row + 1) * ROW_H
+}
+
 interface Interval { a: number; b: number }
 
-function fits(rows: Interval[][], row: number, a: number, b: number): boolean {
-  const list = rows[row]
+function fits(rows: Map<number, Interval[]>, row: number, a: number, b: number): boolean {
+  const list = rows.get(row)
   if (!list) return true
   for (const iv of list) if (a < iv.b && b > iv.a) return false
   return true
 }
 
-function occupy(rows: Interval[][], row: number, a: number, b: number) {
-  ;(rows[row] ??= []).push({ a, b })
+function occupy(rows: Map<number, Interval[]>, row: number, a: number, b: number) {
+  const list = rows.get(row)
+  if (list) list.push({ a, b })
+  else rows.set(row, [{ a, b }])
 }
 
 /**
@@ -107,6 +122,18 @@ export function layoutTimeline(
   const margin = 220
   const minGap = lerp(46, 10, density)
   const maxRows = Math.round(lerp(3, 7, density))
+  const maxBelow = Math.round(lerp(1, 3, density))
+
+  // Screen intervals occupied by visible branches — rows below the spine are
+  // only usable where they don't collide with branch paths.
+  const branchSpans: Interval[] = []
+  for (const br of p.branches) {
+    const fx = toX(br.forkPos)
+    const jx = toX(br.joinPos)
+    if (jx < -margin || fx > width + margin) continue
+    branchSpans.push({ a: fx - 24, b: jx + 24 })
+  }
+  const belowBlocked = (a: number, b: number) => branchSpans.some(iv => a < iv.b && b > iv.a)
 
   const eyeHidden = new Set(p.layers.filter(l => l.eye).map(l => l.id))
   const pinned = new Set(p.layers.filter(l => l.pin).map(l => l.id))
@@ -138,7 +165,7 @@ export function layoutTimeline(
     return pa - pb || a.it.pos - b.it.pos
   })
 
-  const rows: Interval[][] = []
+  const rows = new Map<number, Interval[]>()
   const placed: PlacedItem[] = []
   const overflow: { it: Item; ghost: boolean }[] = []
 
@@ -146,12 +173,20 @@ export function layoutTimeline(
     const x = toX(it.pos)
     const spanW = it.duration > 0 ? Math.max(it.duration * cam.s, 10) : 0
     const rowCap = pin ? maxRows + 4 : maxRows
+    const belowCap = pin ? maxBelow + 2 : maxBelow
+    // Alternate above/below the spine: 0, 1, -1, 2, -2, …
+    const order: number[] = [0]
+    for (let r = 1; r < Math.max(rowCap, belowCap + 1); r++) {
+      if (r < rowCap) order.push(r)
+      if (r <= belowCap) order.push(-r)
+    }
     const tryPlace = (withLabel: boolean): PlacedItem | null => {
       const lw = withLabel ? labelWidth(it.title || '…') + 8 : 0
       const w = Math.max(ICON_W + lw, spanW)
       const a = x - ICON_W / 2 - minGap / 2
       const b = x - ICON_W / 2 + w + minGap / 2
-      for (let r = 0; r < rowCap; r++) {
+      for (const r of order) {
+        if (r < 0 && belowBlocked(a, b)) continue
         if (fits(rows, r, a, b)) {
           occupy(rows, r, a, b)
           return { item: it, x, w, row: r, labelShown: withLabel, ghost, spanW }
@@ -230,8 +265,18 @@ export function contentExtent(p: Project): { min: number; max: number } {
   return { min: min - pad, max: max + pad }
 }
 
+/**
+ * Lowest allowed zoom for a project: far enough out that the whole content
+ * span fits in half the viewport, whatever scale the project works at
+ * (minutes, hours, seconds), with an absolute floor.
+ */
+export function minZoomFor(p: Project, width: number): number {
+  const { min, max } = contentExtent(p)
+  return clamp((width * 0.5) / (max - min), 0.0005, 0.4)
+}
+
 export function fitCamera(p: Project, width: number): Camera {
   const { min, max } = contentExtent(p)
-  const s = clamp(width / (max - min), 0.5, 600)
+  const s = clamp(width / (max - min), 0.0005, 600)
   return { x: min, s }
 }

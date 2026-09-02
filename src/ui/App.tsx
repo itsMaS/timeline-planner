@@ -9,7 +9,7 @@ import { blankProject, emptyFilters, useActiveProject, useStore } from '../model
 import { TEMPLATES } from '../model/templates'
 import type { Item } from '../model/types'
 import { uid } from '../model/util'
-import { exportFullSVG, exportJSON, exportPNG } from './export'
+import { exportCSV, exportFullSVG, exportJSON, exportPNG } from './export'
 import { CanvasView } from './Canvas'
 import { Inspector } from './Inspector'
 import { Sidebar } from './Sidebar'
@@ -309,6 +309,9 @@ function Toolbar({ applyView }: { applyView: (id: string | null) => void }) {
                 <button onClick={() => { exportFullSVG(proj, ui.density, ui.theme); setExportOpen(false) }}>
                   <Download width={13} height={13} /> SVG of full timeline
                 </button>
+                <button onClick={() => { exportCSV(proj); setExportOpen(false) }}>
+                  <Download width={13} height={13} /> CSV of all items
+                </button>
                 <button onClick={() => { fileRef.current?.click(); setExportOpen(false) }}>
                   <Upload width={13} height={13} /> Import JSON…
                 </button>
@@ -418,6 +421,9 @@ function Cheatsheet() {
     ['Shift+drag empty space', 'Marquee multi-select'],
     ['Shift+click item', 'Add to selection'],
     ['B, then drag on the line', 'Create a branch (fork → join)'],
+    ['Drag dot on the line', 'Move every item stacked at that position'],
+    ['Drag section header', 'Move the section (Alt = duplicate it)'],
+    ['Right-click a section', 'Split it at that spot'],
     ['Click type in sidebar', 'Toggle its visibility · Alt-click = solo'],
     ['Wheel / pinch', 'Zoom toward cursor'],
     ['Drag empty space', 'Pan'],
