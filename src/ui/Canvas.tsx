@@ -43,11 +43,11 @@ type Drag =
       orig: number; startClientX: number; cands: number[]
       /** Clamp range keeping every participating section at a minimum width. */
       min: number; max: number
-      /** Original bounds of the affected sections (for Shift item redistribution). */
+      /** Original bounds of the affected sections (for item/sub-section redistribution). */
       origSects: Map<string, { start: number; end: number }>
       /** Item → its position and innermost affected section at drag start. */
       itemSec: Map<string, { pos: number; secId: string }>
-      /** Contained sub-sections; they redistribute with the parent while Shift is held. */
+      /** Contained sub-sections; they redistribute with the parent unless Shift is held. */
       subSects: Map<string, { start: number; end: number; parentId: string }>
     }
   | {
@@ -63,9 +63,9 @@ type Drag =
           opposite extreme (edge drag with a multi-section selection). */
       kind: 'sectionScale'; ids: string[]; startClientX: number
       orig: Map<string, { start: number; end: number }>
-      /** Contained (unselected) sub-sections; they scale along while Shift is held. */
+      /** Contained (unselected) sub-sections; they scale along unless Shift is held. */
       subOrig: Map<string, { start: number; end: number }>
-      /** Items inside the scaled sections (spacing rescales while Shift is held). */
+      /** Items inside the scaled sections (spacing rescales unless Shift is held). */
       itemOrig: Map<string, number>
       anchor: number; grabPos: number
       cands: number[]; minFactor: number; moved: boolean
@@ -466,7 +466,7 @@ export function CanvasView() {
       }),
     )
     // Sub-sections contained in a dragged section, mapped to their innermost
-    // dragged parent — they redistribute with it while Shift is held.
+    // dragged parent — they redistribute with it unless Shift is held.
     const subSects = new Map<string, { start: number; end: number; parentId: string }>()
     for (const s0 of proj.sections) {
       if (origSects.has(s0.id)) continue
@@ -602,9 +602,9 @@ export function CanvasView() {
         ovById.set(ed.id, nb)
         ovs.push({ id: ed.id, ...nb })
       }
-      // Shift: redistribute the section's contents — sub-sections and items —
-      // linearly into its new span.
-      if (e.shiftKey) {
+      // Default: the section's contents — sub-sections and items — redistribute
+      // linearly into its new span; holding Shift leaves them in place.
+      if (!e.shiftKey) {
         const remap = (secId: string, v: number): number | null => {
           const os = d.origSects.get(secId)
           const nb = ovById.get(secId)
@@ -653,9 +653,9 @@ export function CanvasView() {
         ovs.push({ id, start: Math.min(a, b), end: Math.max(a, b) })
       }
       d.orig.forEach(scaleBounds)
-      // Shift: contained sub-sections and item spacing scale along with the
-      // selection; otherwise they stay where they are.
-      if (e.shiftKey) {
+      // Default: contained sub-sections and item spacing scale along with the
+      // selection; holding Shift leaves them where they are.
+      if (!e.shiftKey) {
         d.subOrig.forEach(scaleBounds)
         const pv = new Map<string, number>()
         d.itemOrig.forEach((pos, id) => pv.set(id, d.anchor + (pos - d.anchor) * factor))
