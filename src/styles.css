@@ -215,6 +215,19 @@ input, select, textarea { font: inherit; color: inherit; }
 .band-handle.quiet { opacity: .04; }
 .band-handle.quiet:hover { opacity: .75; }
 
+.node-under {
+  fill: var(--bg); stroke: none;
+  transform-box: fill-box; transform-origin: center;
+  transition: transform .16s cubic-bezier(.34,1.56,.64,1);
+}
+.node:hover .node-under { transform: scale(1.14); }
+.base-dot {
+  fill: var(--bg); stroke-width: 1.6; cursor: ew-resize;
+  transform-box: fill-box; transform-origin: center;
+  transition: transform .15s cubic-bezier(.34,1.56,.64,1);
+}
+.base-dot:hover { transform: scale(1.5); }
+
 .node { cursor: pointer; }
 .node-inner { transform-box: fill-box; transform-origin: center; }
 .node-inner.pop { animation: pop .22s cubic-bezier(.34,1.56,.64,1); }

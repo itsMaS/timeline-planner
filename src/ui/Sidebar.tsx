@@ -8,6 +8,18 @@ import { useActiveProject, useStore } from '../model/store'
 import { uid } from '../model/util'
 import { chipDrop, nav } from './nav'
 
+// The min-zoom slider is logarithmic: camera zoom spans several orders of
+// magnitude depending on the project's scope (a 4-hour plan in hours sits in
+// the hundreds of px/unit; a huge custom scope well below 1), so a linear
+// range can't cover the usable values. Slider 0 = never; 1..100 maps to
+// [MZ_LO, MZ_HI] on a log scale.
+const MZ_LO = 0.05
+const MZ_HI = 5000
+const minZoomFromSlider = (v: number) => (v <= 0 ? 0 : MZ_LO * Math.pow(MZ_HI / MZ_LO, (v - 1) / 99))
+const sliderFromMinZoom = (mz: number) =>
+  mz <= 0 ? 0 : Math.round(Math.min(100, Math.max(1, 1 + 99 * Math.log(mz / MZ_LO) / Math.log(MZ_HI / MZ_LO))))
+const fmtZoom = (s: number) => (s >= 100 ? s.toFixed(0) : s >= 10 ? s.toFixed(1) : s >= 1 ? s.toFixed(2) : s.toFixed(3))
+
 function SectionHeader(props: { title: string; open: boolean; toggle: () => void; action?: React.ReactNode }) {
   const Chev = props.open ? ChevronDown : ChevronRight
   return (
@@ -244,15 +256,25 @@ export function Sidebar() {
                   <label className="slider-row">
                     <span>Min zoom</span>
                     <input
-                      type="range" min={0} max={30} step={0.5} value={l.minZoom}
-                      onChange={e => tweak(p => { const x = p.layers.find(y => y.id === l.id); if (x) x.minZoom = Number(e.target.value) })}
+                      type="range" min={0} max={100} step={1} value={sliderFromMinZoom(l.minZoom)}
+                      onChange={e => tweak(p => {
+                        const x = p.layers.find(y => y.id === l.id)
+                        if (x) x.minZoom = minZoomFromSlider(Number(e.target.value))
+                      })}
                     />
-                    <em>{l.minZoom === 0 ? 'never' : l.minZoom.toFixed(1)}</em>
+                    <em>{l.minZoom === 0 ? 'never' : fmtZoom(l.minZoom)}</em>
                   </label>
                   <div className="sb-hint">
                     zoomed out below min zoom, items become dots on the line
-                    · current zoom: {proj.camera.s.toFixed(1)}
+                    · current zoom: {fmtZoom(proj.camera.s)}
                   </div>
+                  <button
+                    className="ghost-btn add"
+                    onClick={() => tweak(p => {
+                      const x = p.layers.find(y => y.id === l.id)
+                      if (x) x.minZoom = Math.max(MZ_LO, proj.camera.s)
+                    })}
+                  >set to current zoom</button>
                 </div>
               )}
             </React.Fragment>

@@ -96,8 +96,17 @@ export function itemMatchesFilters(p: Project, it: Item, f: Filters): boolean {
   return true
 }
 
+const LABEL_MAX = 200
+
 export function labelWidth(title: string): number {
-  return Math.min(title.length * 6.6, 130)
+  return Math.min(title.length * 6.6, LABEL_MAX)
+}
+
+/** Title truncated to the width labelWidth actually reserves, so long labels
+ *  can't overflow their slot and run into neighboring items. */
+export function displayLabel(title: string): string {
+  if (title.length * 6.6 <= LABEL_MAX) return title
+  return title.slice(0, Math.floor(LABEL_MAX / 6.6) - 1) + '…'
 }
 
 const ICON_W = 30
@@ -317,8 +326,18 @@ export function contentExtent(p: Project): { min: number; max: number } {
   return { min: min - pad, max: max + pad }
 }
 
+/**
+ * Lowest allowed camera zoom for a project: far enough out that the whole
+ * content span fits in half the viewport, whatever scale the project works at,
+ * with an absolute floor. Never above the regular zoom-out limit.
+ */
+export function minZoomFor(p: Project, width: number): number {
+  const { min, max } = contentExtent(p)
+  return clamp((width * 0.5) / (max - min), 0.0005, 0.4)
+}
+
 export function fitCamera(p: Project, width: number): Camera {
   const { min, max } = contentExtent(p)
-  const s = clamp(width / (max - min), 0.5, 600)
+  const s = clamp(width / (max - min), 0.0005, 600)
   return { x: min, s }
 }

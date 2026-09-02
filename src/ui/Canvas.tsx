@@ -1,12 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ClipboardCopy, ClipboardPaste, CopyPlus, ListChecks, Maximize2, Plus, RectangleHorizontal,
-  Settings2, Shuffle, Trash2,
+  Scissors, Settings2, Shuffle, Trash2,
 } from 'lucide-react'
 import { iconByName } from '../model/icons'
 import {
-  BranchLayout, PlacedItem, ROW_H, contentExtent, fitCamera, itemMatchesFilters,
-  layoutTimeline, refreshSectionDepths, rowY, typeOf,
+  BranchLayout, PlacedItem, ROW_H, contentExtent, displayLabel, fitCamera, itemMatchesFilters,
+  layoutTimeline, minZoomFor, refreshSectionDepths, rowY, typeOf,
 } from '../model/layout'
 import { useActiveProject, useStore } from '../model/store'
 import type { Camera, Item, Section } from '../model/types'
@@ -71,7 +71,7 @@ type Drag =
       cands: number[]; minFactor: number; moved: boolean
     }
 
-type CtxTarget = { kind: 'bg'; pos: number } | { kind: 'item'; id: string }
+type CtxTarget = { kind: 'bg'; pos: number; rawPos: number } | { kind: 'item'; id: string }
 interface CtxMenu { x: number; y: number; target: CtxTarget }
 
 export function CanvasView() {
@@ -107,6 +107,8 @@ export function CanvasView() {
   // Time presets can zoom far enough in to read individual seconds.
   const timeBase = timeBaseFor(st.unit.preset)
   const maxS = timeBase ? Math.max(MAX_S, timeBase * 400) : MAX_S
+  // Zoom-out limit follows the content extent so large scopes stay reachable.
+  const minS = Math.min(MIN_S, minZoomFor(proj, size.w))
   const spineY = Math.round(size.h * 0.42)
   const selection = useMemo(() => new Set(ui.selection), [ui.selection])
 
@@ -227,7 +229,7 @@ export function CanvasView() {
       flyTo: c => flyTo(c),
       fitAll: () => flyTo(fitCamera(proj, size.w)),
       zoomBy: f => {
-        const s = clamp(cam.s * f, MIN_S, maxS)
+        const s = clamp(cam.s * f, minS, maxS)
         const cx = size.w / 2
         flyTo({ x: toPos(cx) - cx / s, s }, false)
       },
@@ -242,7 +244,7 @@ export function CanvasView() {
         const sc = proj.sections.find(s0 => s0.id === id)
         if (!sc) return
         const span = Math.max(sc.end - sc.start, 0.5)
-        const s = clamp((size.w * 0.86) / span, MIN_S, maxS)
+        const s = clamp((size.w * 0.86) / span, minS, maxS)
         flyTo({ x: sc.start - (size.w - span * s) / 2 / s, s })
       },
       back: () => {
@@ -274,12 +276,13 @@ export function CanvasView() {
       const base = timeBaseFor(p0.settings.unit.preset)
       const wheelMaxS = base ? Math.max(MAX_S, base * 400) : MAX_S
       const rect = el.getBoundingClientRect()
+      const wheelMinS = Math.min(MIN_S, minZoomFor(p0, rect.width))
       const mx = e.clientX - rect.left
       if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
         st.setCamera({ x: c.x + e.deltaX / c.s, s: c.s })
       } else {
         const k = Math.exp(-e.deltaY * (e.ctrlKey ? 0.006 : 0.0018))
-        const s = clamp(c.s * k, MIN_S, wheelMaxS)
+        const s = clamp(c.s * k, wheelMinS, wheelMaxS)
         const wx = c.x + mx / c.s
         st.setCamera({ x: wx - mx / s, s })
       }
@@ -515,11 +518,48 @@ export function CanvasView() {
     })
   }
 
-  /** Label drag: select the section (shift adds) and move all selected together. */
+  /** Label drag: select the section (shift adds) and move all selected together.
+      Alt at the start duplicates the section (with contained sections and
+      items) and drags the copy instead. */
   const labelPointerDown = (e: React.PointerEvent, sc: Section) => {
     if (e.button !== 0) return
     e.stopPropagation()
     ;(e.target as Element).setPointerCapture?.(e.pointerId)
+    if (e.altKey) {
+      const srcIds = expandContained([sc.id])
+      const srcSects = proj.sections.filter(s0 => srcIds.includes(s0.id))
+      const srcItems = itemsWithin(srcSects)
+      const idMap = new Map(srcIds.map(id => [id, uid()]))
+      const newItemIds: string[] = []
+      const orig = new Map<string, { start: number; end: number }>()
+      const itemOrig = new Map<string, number>()
+      mutate(p => {
+        for (const s0 of srcSects) {
+          const nid = idMap.get(s0.id)!
+          p.sections.push({
+            ...s0, id: nid, name: s0.id === sc.id ? `${s0.name} copy` : s0.name,
+          })
+          orig.set(nid, { start: s0.start, end: s0.end })
+        }
+        for (const it of p.items) {
+          if (!srcItems.has(it.id)) continue
+          const cp = structuredClone(it)
+          cp.id = uid()
+          newItemIds.push(cp.id)
+          itemOrig.set(cp.id, cp.pos)
+          p.items.push(cp)
+        }
+      })
+      const newGrabId = idMap.get(sc.id)!
+      select([`S:${newGrabId}`])
+      setDragBoth({
+        kind: 'sectionMove', ids: [...idMap.values()], grabId: newGrabId,
+        startClientX: e.clientX, orig, itemOrig,
+        cands: magnetCands({ sectionIds: new Set(idMap.values()), items: new Set(newItemIds) }),
+        moved: false,
+      })
+      return
+    }
     const key = `S:${sc.id}`
     let ids: string[]
     if (selection.has(key)) {
@@ -881,6 +921,37 @@ export function CanvasView() {
     setHover(null)
   }
 
+  // ---- base dots: one per stack of placed items sharing a position; dragging
+  // the dot moves every item in that stack together.
+  const columns = useMemo(() => {
+    const sorted = [...layout.placed].sort((a, b) => a.x - b.x)
+    const cols: { x: number; ids: string[]; color: string }[] = []
+    for (const pl of sorted) {
+      const last = cols[cols.length - 1]
+      if (last && Math.abs(pl.x - last.x) < 5) last.ids.push(pl.item.id)
+      else cols.push({ x: pl.x, ids: [pl.item.id], color: typeOf(proj, pl.item)?.color ?? '#888' })
+    }
+    return cols
+  }, [layout, proj])
+
+  const basePointerDown = (e: React.PointerEvent, col: { x: number; ids: string[]; color: string }) => {
+    if (e.button !== 0) return
+    e.stopPropagation()
+    ;(e.target as Element).setPointerCapture?.(e.pointerId)
+    const orig = new Map<string, number>()
+    for (const id of col.ids) {
+      const it = proj.items.find(i => i.id === id)
+      if (it) orig.set(id, it.pos)
+    }
+    const allOrig = new Map<string, number>()
+    for (const it of proj.items) allOrig.set(it.id, it.pos)
+    setDragBoth({
+      kind: 'item', ids: col.ids, grabId: col.ids[0], startClientX: e.clientX,
+      orig, allOrig, ripple: ui.ripple || e.shiftKey, moved: false, color: col.color,
+      cands: magnetCands({ items: new Set(col.ids) }),
+    })
+  }
+
   // ---- context menu
   const bgContextMenu = (e: React.MouseEvent) => {
     e.preventDefault()
@@ -888,8 +959,9 @@ export function CanvasView() {
     const rect = wrapRef.current!.getBoundingClientRect()
     const x = e.clientX - rect.left
     const y = e.clientY - rect.top
-    const pos = ui.snap ? snapPos(toPos(x), cam.s) : toPos(x)
-    setMenu({ x, y, target: { kind: 'bg', pos } })
+    const rawPos = toPos(x)
+    const pos = ui.snap ? snapPos(rawPos, cam.s) : rawPos
+    setMenu({ x, y, target: { kind: 'bg', pos, rawPos } })
   }
 
   const itemContextMenu = (e: React.MouseEvent, item: Item) => {
@@ -936,6 +1008,19 @@ export function CanvasView() {
     mutate(p => { p.items = p.items.filter(i => !ids.includes(i.id)) })
     select([])
     showToast('Deleted.', true)
+    setMenu(null)
+  }
+
+  const menuSplitSection = (id: string, rawPos: number) => {
+    mutate(p => {
+      const sc = p.sections.find(s0 => s0.id === id)
+      if (!sc) return
+      const cut = clamp(ui.snap ? snapPos(rawPos, cam.s) : rawPos, sc.start + 0.05, sc.end - 0.05)
+      p.sections.push({ ...sc, id: uid(), name: `${sc.name} (2)`, start: cut })
+      sc.end = cut
+    })
+    showToast('Section split.', true)
+    sfx.snap()
     setMenu(null)
   }
 
@@ -1082,23 +1167,6 @@ export function CanvasView() {
             return <g pointerEvents="none">{ticks}</g>
           })()}
 
-          {/* Edge handles: with no section selected every edge is live (nearly
-              invisible until hovered) and coincident edges drag together; with
-              a selection only that section's edges work. They sit below the
-              header bars so they never draw lines across them. */}
-          {bandGeo.map(({ sc, x1, x2, sel }) => (!anySectionSelected || sel) && (
-            <g key={`eh-${sc.id}`}>
-              <line
-                x1={x1} y1={-spineY} x2={x1} y2={size.h - spineY} className={`band-handle ${sel ? '' : 'quiet'}`}
-                onPointerDown={e => startSectionEdge(e, sc, 'L')}
-              />
-              <line
-                x1={x2} y1={-spineY} x2={x2} y2={size.h - spineY} className={`band-handle ${sel ? '' : 'quiet'}`}
-                onPointerDown={e => startSectionEdge(e, sc, 'R')}
-              />
-            </g>
-          ))}
-
           {/* section header bars — a padding-free, fully opaque strip spanning
               the whole section at its depth row, drawn above everything else in
               the band so nothing cuts through it. Also the section's drag target. */}
@@ -1141,11 +1209,46 @@ export function CanvasView() {
             </g>
           ))}
 
+          {/* Edge handles: with no section selected every edge is live (nearly
+              invisible until hovered) and coincident edges drag together; with
+              a selection only that section's edges work. They live only in the
+              header-bar strip — between the header boxes — never as grab lines
+              inside the timeline itself. */}
+          {bandGeo.map(({ sc, x1, x2, sel, barTop, barH }) => (!anySectionSelected || sel) && (
+            <g key={`eh-${sc.id}`}>
+              <line
+                x1={x1} y1={barTop - 2} x2={x1} y2={barTop + barH + 2} className={`band-handle ${sel ? '' : 'quiet'}`}
+                onPointerDown={e => startSectionEdge(e, sc, 'L')}
+              />
+              <line
+                x1={x2} y1={barTop - 2} x2={x2} y2={barTop + barH + 2} className={`band-handle ${sel ? '' : 'quiet'}`}
+                onPointerDown={e => startSectionEdge(e, sc, 'R')}
+              />
+            </g>
+          ))}
+
           {/* spine */}
           <line
             x1={0} y1={0} x2={size.w} y2={0} className="spine"
             style={{ strokeWidth: st.spine.width, opacity: st.spine.opacity }}
           />
+
+          {/* stems — one layer under every node, so a stem heading for a high
+              row can never show through the icons of the rows below it */}
+          <g pointerEvents="none">
+            {layout.placed.map(pl => {
+              const t = typeOf(proj, pl.item)
+              const y = rowY(pl.row)
+              const z = pl.size || 1
+              return (
+                <line
+                  key={`stem-${pl.item.id}`} className="stem"
+                  x1={pl.x} y1={y + (y < 0 ? 14 * z : -14 * z)} x2={pl.x} y2={0}
+                  style={{ stroke: t?.color }}
+                />
+              )
+            })}
+          </g>
 
           {/* branches */}
           {layout.branches.map(bl => (
@@ -1171,7 +1274,7 @@ export function CanvasView() {
               }}
               zoomIn={() => {
                 const span = bl.branch.joinPos - bl.branch.forkPos
-                const s = clamp((size.w * 0.7) / span, MIN_S, maxS)
+                const s = clamp((size.w * 0.7) / span, minS, maxS)
                 flyTo({ x: bl.branch.forkPos - (size.w - span * s) / 2 / s, s })
               }}
             />
@@ -1247,7 +1350,7 @@ export function CanvasView() {
                 <g
                   onPointerDown={e => {
                     e.stopPropagation()
-                    const s = clamp(cam.s * 2.4, MIN_S, maxS)
+                    const s = clamp(cam.s * 2.4, minS, maxS)
                     const wx = toPos(cl.x)
                     flyTo({ x: wx - size.w / 2 / s, s })
                   }}
@@ -1277,6 +1380,19 @@ export function CanvasView() {
                 </g>
               )}
             </g>
+          ))}
+
+          {/* base dots — drag one to move every item stacked at that position */}
+          {!drag && columns.map(col => (
+            <circle
+              key={`base-${col.ids[0]}`}
+              cx={col.x} cy={0} r={4}
+              className="base-dot"
+              style={{ stroke: col.color }}
+              onPointerDown={e => basePointerDown(e, col)}
+            >
+              <title>{col.ids.length > 1 ? `Move ${col.ids.length} items` : 'Move item'}</title>
+            </circle>
           ))}
 
           {/* branch creation preview */}
@@ -1343,7 +1459,7 @@ export function CanvasView() {
           onContextMenu={e => e.preventDefault()}
         >
           {menu.target.kind === 'bg' ? (() => {
-            const pos = menu.target.pos
+            const { pos, rawPos } = menu.target
             return (
               <>
                 <button onClick={() => {
@@ -1361,6 +1477,14 @@ export function CanvasView() {
                   select([`S:${id}`])
                   setMenu(null)
                 }}><RectangleHorizontal width={13} height={13} /> New section here</button>
+                {proj.sections
+                  .filter(sc => sc.start < rawPos && sc.end > rawPos)
+                  .sort((a, b) => a.depth - b.depth)
+                  .map(sc => (
+                    <button key={`split-${sc.id}`} onClick={() => menuSplitSection(sc.id, rawPos)}>
+                      <Scissors width={13} height={13} /> Split “{sc.name}” here
+                    </button>
+                  ))}
                 {getClipboard().length > 0 && (
                   <button onClick={() => menuPasteAt(pos)}><ClipboardPaste width={13} height={13} /> Paste here</button>
                 )}
@@ -1414,7 +1538,6 @@ function ItemG(props: {
       onPointerEnter={props.onHoverStart}
       onPointerLeave={props.onHoverEnd}
     >
-      <line className="stem" x1={0} y1={y < 0 ? 14 * z : -14 * z} x2={0} y2={-y} style={{ stroke: color }} />
       <g className={`node-inner ${props.anim ? 'pop' : ''}`}>
         {pl.spanW > 0 && (
           <g>
@@ -1430,6 +1553,7 @@ function ItemG(props: {
           </g>
         )}
         {selected && <circle r={19 * z} className="sel-ring" style={{ stroke: color }} />}
+        <circle r={14 * z} className="node-under" />
         <circle r={14 * z} className="node-bg" style={{ fill: `${color}26`, stroke: color }} />
         <Icon x={-8 * z} y={-8 * z} width={16 * z} height={16 * z} color={color} strokeWidth={2} />
         {pl.labelShown && (
@@ -1437,7 +1561,7 @@ function ItemG(props: {
             x={20 * z} y={4 * z} className="node-label"
             style={{ fill: `color-mix(in srgb, ${color} 30%, var(--text))`, fontSize: 11.5 * clamp(z, 0.8, 1.35) }}
           >
-            {pl.item.title}
+            {displayLabel(pl.item.title)}
           </text>
         )}
       </g>
@@ -1522,6 +1646,7 @@ function BranchG(props: {
                 >
                   <g className="node-inner pop">
                     {sel && <circle r={16 * z} className="sel-ring" style={{ stroke: t?.color }} />}
+                    <circle r={11 * z} className="node-under" />
                     <circle r={11 * z} className="node-bg" style={{ fill: `${t?.color}26`, stroke: t?.color }} />
                     <Icon x={-6.5 * z} y={-6.5 * z} width={13 * z} height={13 * z} color={t?.color} strokeWidth={2} />
                     {pi.labelShown && <text x={16 * z} y={16 + 5 * z} className="node-label sm">{pi.item.title}</text>}

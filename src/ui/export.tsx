@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { ListChecks, Shuffle } from 'lucide-react'
 import { iconByName } from '../model/icons'
-import { contentExtent, layoutTimeline, rowY, typeOf } from '../model/layout'
+import { contentExtent, displayLabel, layoutTimeline, rowY, typeOf } from '../model/layout'
 import type { Camera, Project } from '../model/types'
 import { clamp, download, formatUnit, rulerStepFor, sectionHue, unitSuffix } from '../model/util'
 
@@ -165,19 +165,27 @@ function ExportScene(props: { proj: Project; cam: Camera; w: number; h: number; 
         ))}
         {layout.placed.map(pl => {
           const t = typeOf(proj, pl.item)
+          const y = rowY(pl.row)
+          const z = pl.size || 1
+          return (
+            <line key={`stem-${pl.item.id}`} x1={pl.x} y1={y + (y < 0 ? 14 * z : -14 * z)} x2={pl.x} y2={0}
+              stroke={t?.color} strokeWidth={1} opacity={pl.ghost ? 0.1 : 0.35} />
+          )
+        })}
+        {layout.placed.map(pl => {
+          const t = typeOf(proj, pl.item)
           const Icon = iconByName(t?.icon ?? 'Circle')
           const y = rowY(pl.row)
           const z = pl.size || 1
           return (
             <g key={pl.item.id} transform={`translate(${pl.x}, ${y})`} opacity={pl.ghost ? 0.18 : 1}>
-              <line x1={0} y1={y < 0 ? 14 * z : -14 * z} x2={0} y2={-y} stroke={t?.color} strokeWidth={1} opacity={0.35} />
               {pl.spanW > 0 && (
                 <rect x={0} y={3 + 14 * z} width={pl.spanW} height={6} rx={3} fill={`${t?.color}55`} stroke={`${t?.color}88`} />
               )}
               <circle r={14 * z} fill={C.bg} stroke={t?.color} strokeWidth={1.5} />
               <Icon x={-8 * z} y={-8 * z} width={16 * z} height={16 * z} color={t?.color} strokeWidth={2} />
               {pl.labelShown && (
-                <text x={20 * z} y={4 * z} fontFamily={font} fontSize={11.5 * clamp(z, 0.8, 1.35)} fill={C.text}>{pl.item.title}</text>
+                <text x={20 * z} y={4 * z} fontFamily={font} fontSize={11.5 * clamp(z, 0.8, 1.35)} fill={C.text}>{displayLabel(pl.item.title)}</text>
               )}
             </g>
           )
@@ -200,6 +208,50 @@ function ExportScene(props: { proj: Project; cam: Camera; w: number; h: number; 
       <text x={12} y={h - 12} fontFamily={font} fontSize={11} fill={C.muted}>{proj.name}</text>
     </svg>
   )
+}
+
+/**
+ * All items in timeline order, one row per item. Each hierarchy level gets its
+ * own column holding the name of the section containing the item at that depth
+ * (e.g. a Chapter column and a Level column).
+ */
+export function exportCSV(proj: Project) {
+  const esc = (v: string | number) => {
+    const s = String(v)
+    return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+  }
+  const sectionAt = (depth: number, pos: number) =>
+    proj.sections.find(sc => sc.depth === depth && sc.start <= pos && sc.end >= pos)?.name ?? ''
+  const pathName = (pathId: string | null) => {
+    if (!pathId) return ''
+    for (const br of proj.branches) {
+      const i = br.paths.findIndex(pp => pp.id === pathId)
+      if (i >= 0) return br.paths[i].label || `Path ${i + 1}`
+    }
+    return ''
+  }
+  const maxDepth = proj.sections.reduce((n, sc) => Math.max(n, sc.depth), -1)
+  const levels = Array.from(
+    { length: maxDepth + 1 },
+    (_, d) => proj.hierarchyLevels[d] ?? `Level ${d + 1}`,
+  )
+  const header = [...levels, 'Title', 'Type', 'Position', 'Duration', 'Branch path', 'Tags', 'Description', 'Link']
+  const rows = [...proj.items]
+    .sort((a, b) => a.pos - b.pos)
+    .map(it => [
+      ...levels.map((_, d) => sectionAt(d, it.pos)),
+      it.title,
+      typeOf(proj, it)?.name ?? '',
+      it.pos,
+      it.duration,
+      pathName(it.pathId),
+      it.tags.join('; '),
+      it.description,
+      it.link,
+    ].map(esc).join(','))
+  const csv = '\ufeff' + [header.map(esc).join(','), ...rows].join('\r\n')
+  download(`${proj.name.replace(/\s+/g, '-').toLowerCase()}.csv`,
+    new Blob([csv], { type: 'text/csv;charset=utf-8' }))
 }
 
 export function exportJSON(proj: Project) {
