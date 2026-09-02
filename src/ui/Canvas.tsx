@@ -659,19 +659,19 @@ export function CanvasView() {
           if (pi.x >= ax && pi.x <= bx && iy >= ay && iy <= by) hits.push(pi.item.id)
         }))
       }
-      // Sections join the marquee through their labels (same geometry as render).
+      // Sections join the marquee through their header bars (same geometry as render).
       const sizeAt = (d0: number) => Math.max(10, st.sectionStyle.labelSize - 2.5 * d0)
       for (const sc of proj.sections) {
         const sx1 = toX(sc.start)
         const sx2 = toX(sc.end)
-        if (sx2 < -40 || sx1 > size.w + 40 || sx2 - sx1 <= 60) continue
-        const labelX = Math.max(sx1, 0) + 10
+        if (sx2 < -40 || sx1 > size.w + 40 || sx2 - sx1 < 24) continue
         const px = sizeAt(sc.depth)
         let baseline = 8
         for (let d0 = 0; d0 < sc.depth; d0++) baseline += sizeAt(d0) + 6
         baseline += px
-        const lw = Math.min(sc.name.length * px * 0.6, 280)
-        if (labelX < bx && labelX + lw > ax && baseline - px < by && baseline > ay) hits.push(`S:${sc.id}`)
+        const barTop = baseline - px - 4
+        const barBottom = barTop + px + 8
+        if (sx1 < bx && sx2 > ax && barTop < by && barBottom > ay) hits.push(`S:${sc.id}`)
       }
       select(hits)
     } else if (d.kind === 'branch') {
@@ -978,22 +978,22 @@ export function CanvasView() {
                   style={{ stroke: `hsl(${hue} 55% 55% / ${edgeAlpha})`, strokeWidth: edgeW }} pointerEvents="none" />
                 <line x1={x2} y1={yTop} x2={x2} y2={yTop + hFull} className="band-edge"
                   style={{ stroke: `hsl(${hue} 55% 55% / ${edgeAlpha})`, strokeWidth: edgeW }} pointerEvents="none" />
-                {w > 60 && (
-                  <g
-                    className="band-label-g"
-                    style={{ opacity: Math.max(1 - 0.1 * sc.depth, 0.65) }}
-                    onPointerDown={e => labelPointerDown(e, sc)}
-                  >
-                    <rect
-                      x={labelX - 7} y={labelY - labelPx - 4}
-                      width={Math.min(sc.name.length * labelPx * 0.58, 300) + 14}
-                      height={labelPx + 9} rx={5}
-                      className="band-label-box"
-                      style={{
-                        fill: `color-mix(in srgb, hsl(${hue} 60% 55%) 16%, var(--panel))`,
-                        stroke: `hsl(${hue} 55% 55% / ${sel ? 0.95 : 0.45})`,
-                      }}
-                    />
+                {/* Full-width opaque header bar for the section at its depth row. */}
+                <g
+                  className="band-label-g"
+                  style={{ opacity: Math.max(1 - 0.1 * sc.depth, 0.65) }}
+                  onPointerDown={e => labelPointerDown(e, sc)}
+                >
+                  <rect
+                    x={x1} y={labelY - labelPx - 4}
+                    width={w} height={labelPx + 8}
+                    className="band-label-box"
+                    style={{
+                      fill: `color-mix(in srgb, hsl(${hue} 60% 55%) 16%, var(--panel))`,
+                      stroke: `hsl(${hue} 55% 55% / ${sel ? 0.95 : 0.45})`,
+                    }}
+                  />
+                  {w > 60 && (
                     <text
                       x={labelX} y={labelY}
                       className={`band-label ${sel ? 'sel' : ''}`}
@@ -1005,8 +1005,8 @@ export function CanvasView() {
                     >
                       {sc.name}
                     </text>
-                  </g>
-                )}
+                  )}
+                </g>
                 {/* Edge handles: with no section selected every edge is live
                     (nearly invisible until hovered) and coincident edges drag
                     together; with a selection only that section's edges work. */}
