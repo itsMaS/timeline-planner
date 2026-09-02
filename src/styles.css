@@ -227,6 +227,9 @@ input, select, textarea { font: inherit; color: inherit; }
   transition: transform .15s cubic-bezier(.34,1.56,.64,1);
 }
 .base-dot:hover { transform: scale(1.5); }
+/* A stack whose items are all filtered out fades exactly like its ghost items. */
+.base-dot.ghost { opacity: .15; }
+.base-dot.ghost:hover { opacity: .5; }
 
 .node { cursor: pointer; }
 .node-inner { transform-box: fill-box; transform-origin: center; }

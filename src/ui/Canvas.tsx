@@ -925,11 +925,17 @@ export function CanvasView() {
   // the dot moves every item in that stack together.
   const columns = useMemo(() => {
     const sorted = [...layout.placed].sort((a, b) => a.x - b.x)
-    const cols: { x: number; ids: string[]; color: string }[] = []
+    const cols: { x: number; ids: string[]; color: string; ghost: boolean }[] = []
     for (const pl of sorted) {
       const last = cols[cols.length - 1]
-      if (last && Math.abs(pl.x - last.x) < 5) last.ids.push(pl.item.id)
-      else cols.push({ x: pl.x, ids: [pl.item.id], color: typeOf(proj, pl.item)?.color ?? '#888' })
+      if (last && Math.abs(pl.x - last.x) < 5) {
+        last.ids.push(pl.item.id)
+        // The dot fades with its stack: it stays solid while any item in the
+        // stack survives the current filters.
+        last.ghost = last.ghost && pl.ghost
+      } else {
+        cols.push({ x: pl.x, ids: [pl.item.id], color: typeOf(proj, pl.item)?.color ?? '#888', ghost: pl.ghost })
+      }
     }
     return cols
   }, [layout, proj])
@@ -1387,7 +1393,7 @@ export function CanvasView() {
             <circle
               key={`base-${col.ids[0]}`}
               cx={col.x} cy={0} r={4}
-              className="base-dot"
+              className={`base-dot ${col.ghost ? 'ghost' : ''}`}
               style={{ stroke: col.color }}
               onPointerDown={e => basePointerDown(e, col)}
             >
