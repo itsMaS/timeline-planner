@@ -456,7 +456,7 @@ export function CanvasView() {
       })
       return
     }
-    const edges: { id: string; side: 'L' | 'R' }[] = [{ id: sc.id, side }]
+    let edges: { id: string; side: 'L' | 'R' }[] = [{ id: sc.id, side }]
     if (!anySectionSelected) {
       const tol = 1 / cam.s
       for (const other of proj.sections) {
@@ -464,6 +464,20 @@ export function CanvasView() {
         if (Math.abs(other.start - pos) <= tol) edges.push({ id: other.id, side: 'L' })
         if (Math.abs(other.end - pos) <= tol) edges.push({ id: other.id, side: 'R' })
       }
+      // A sub-section flush with the grabbed boundary is content of its parent,
+      // not a border peer: drop any participant contained inside another one so
+      // it redistributes with the parent instead of getting one edge stretched.
+      const boundsOf = (id: string) => proj.sections.find(x => x.id === id)
+      edges = edges.filter(ed => {
+        const a = boundsOf(ed.id)
+        if (!a) return false
+        return !edges.some(other => {
+          if (other.id === ed.id) return false
+          const b = boundsOf(other.id)
+          return !!b && b.end - b.start > a.end - a.start + 1e-9 &&
+            b.start <= a.start + 1e-9 && b.end >= a.end - 1e-9
+        })
+      })
     }
     let min = -Infinity
     let max = Infinity
