@@ -56,6 +56,42 @@ export function Sidebar() {
     return [...s].sort()
   }, [proj.items])
 
+  // Sections as a containment tree: each section nests under the smallest
+  // section that fully encloses it, children ordered by start.
+  const sectionTree = useMemo(() => {
+    const secs = proj.sections
+    const eps = 1e-9
+    const parentOf = new Map<string, string | null>()
+    for (const s of secs) {
+      let best: (typeof secs)[number] | null = null
+      for (const t of secs) {
+        if (t === s) continue
+        const larger = t.end - t.start > s.end - s.start + eps
+        if (larger && t.start <= s.start + eps && t.end >= s.end - eps) {
+          if (!best || t.end - t.start < best.end - best.start) best = t
+        }
+      }
+      parentOf.set(s.id, best?.id ?? null)
+    }
+    const childrenOf = new Map<string | null, (typeof secs)[number][]>()
+    for (const s of secs) {
+      const pid = parentOf.get(s.id) ?? null
+      const list = childrenOf.get(pid)
+      if (list) list.push(s)
+      else childrenOf.set(pid, [s])
+    }
+    childrenOf.forEach(list => list.sort((a, b) => a.start - b.start))
+    const out: { sc: (typeof secs)[number]; level: number }[] = []
+    const walk = (pid: string | null, level: number) => {
+      for (const s of childrenOf.get(pid) ?? []) {
+        out.push({ sc: s, level })
+        walk(s.id, level + 1)
+      }
+    }
+    walk(null, 0)
+    return out
+  }, [proj.sections])
+
   // ---- chip drag-to-create
   const dragStart = useRef<{ x: number; y: number; typeId: string; started: boolean } | null>(null)
   const chipPointerDown = (e: React.PointerEvent, typeId: string) => {
@@ -265,8 +301,8 @@ export function Sidebar() {
             </button>
           )}
           <div className="sb-sub">Sections</div>
-          {[...proj.sections].sort((a, b) => a.depth - b.depth || a.start - b.start).map(sc => (
-            <div key={sc.id} className="section-row" style={{ paddingLeft: 8 + sc.depth * 14 }}>
+          {sectionTree.map(({ sc, level }) => (
+            <div key={sc.id} className="section-row" style={{ paddingLeft: 8 + level * 14 }}>
               <button className="link-btn" onClick={() => nav.current?.flyToSection(sc.id)}>{sc.name}</button>
             </div>
           ))}

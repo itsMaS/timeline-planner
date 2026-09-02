@@ -44,6 +44,11 @@ function ExportScene(props: { proj: Project; cam: Camera; w: number; h: number; 
                 fill={`hsl(${hue} 60% 55% / ${(0.024 + sc.depth * 0.013) * st.bandStrength})`} />
               <line x1={x1} y1={-spineY} x2={x1} y2={h - spineY} stroke={`hsl(${hue} 55% 55% / ${edgeAlpha})`} strokeWidth={sc.depth === 0 ? 1.6 : 1} />
               <line x1={x2} y1={-spineY} x2={x2} y2={h - spineY} stroke={`hsl(${hue} 55% 55% / ${edgeAlpha})`} strokeWidth={sc.depth === 0 ? 1.6 : 1} />
+              <rect
+                x={Math.max(x1, 0) + 3} y={labelY - sizeAt(sc.depth) - 4}
+                width={Math.min(sc.name.length * sizeAt(sc.depth) * 0.58, 300) + 14}
+                height={sizeAt(sc.depth) + 9} rx={5}
+                fill={C.bg} fillOpacity={0.92} stroke={`hsl(${hue} 55% 55% / 0.45)`} />
               <text x={Math.max(x1, 0) + 10} y={labelY} fontFamily={font} fontSize={sizeAt(sc.depth)}
                 fontWeight={sc.depth === 0 ? 700 : 600} opacity={Math.max(1 - 0.12 * sc.depth, 0.6)}
                 fill={`hsl(${hue} 50% ${theme === 'dark' ? '70%' : '38%'})`}>{sc.name}</text>

@@ -43,11 +43,17 @@ type Drag =
       orig: number; startClientX: number; cands: number[]
       /** Clamp range keeping every participating section at a minimum width. */
       min: number; max: number
+      /** Original bounds of the affected sections (for Shift item redistribution). */
+      origSects: Map<string, { start: number; end: number }>
+      /** Item → its position and innermost affected section at drag start. */
+      itemSec: Map<string, { pos: number; secId: string }>
     }
   | {
       /** Translate every selected section together (label drag). */
       kind: 'sectionMove'; ids: string[]; grabId: string; startClientX: number
       orig: Map<string, { start: number; end: number }>
+      /** Items inside the moved sections; they travel with the sections. */
+      itemOrig: Map<string, number>
       cands: number[]; moved: boolean
     }
   | {
@@ -55,6 +61,8 @@ type Drag =
           opposite extreme (edge drag with a multi-section selection). */
       kind: 'sectionScale'; ids: string[]; startClientX: number
       orig: Map<string, { start: number; end: number }>
+      /** Items inside the scaled sections (spacing rescales while Shift is held). */
+      itemOrig: Map<string, number>
       anchor: number; grabPos: number
       cands: number[]; minFactor: number; moved: boolean
     }
@@ -356,6 +364,45 @@ export function CanvasView() {
   )
   const anySectionSelected = selectedSectionIds.length > 0
 
+  /** Expand a set of section ids with every section geometrically contained in one of them. */
+  const expandContained = (ids: string[]): string[] => {
+    const set = new Set(ids)
+    for (const s0 of proj.sections) {
+      if (set.has(s0.id)) continue
+      if (proj.sections.some(par => set.has(par.id) && par.start <= s0.start + 1e-9 && par.end >= s0.end - 1e-9)) {
+        set.add(s0.id)
+      }
+    }
+    return [...set]
+  }
+
+  /** Items whose position lies inside any of the given section ranges. */
+  const itemsWithin = (sects: Iterable<{ start: number; end: number }>): Map<string, number> => {
+    const list = [...sects]
+    const out = new Map<string, number>()
+    for (const it of proj.items) {
+      if (list.some(s0 => it.pos >= s0.start - 1e-9 && it.pos <= s0.end + 1e-9)) out.set(it.id, it.pos)
+    }
+    return out
+  }
+
+  /** Each contained item mapped to the innermost of the given sections. */
+  const itemSecFor = (sects: Map<string, { start: number; end: number }>): Map<string, { pos: number; secId: string }> => {
+    const out = new Map<string, { pos: number; secId: string }>()
+    for (const it of proj.items) {
+      let bestId: string | null = null
+      let bestSpan = Infinity
+      sects.forEach((b, id) => {
+        if (it.pos >= b.start - 1e-9 && it.pos <= b.end + 1e-9 && b.end - b.start < bestSpan) {
+          bestId = id
+          bestSpan = b.end - b.start
+        }
+      })
+      if (bestId) out.set(it.id, { pos: it.pos, secId: bestId })
+    }
+    return out
+  }
+
   /**
    * Start dragging a section edge. With no section selected (global mode),
    * coincident edges of other sections are picked up too, so a shared border
@@ -370,17 +417,20 @@ export function CanvasView() {
     // Multi-section selection: an edge drag scales the whole selected group
     // proportionally around its opposite extreme.
     if (selectedSectionIds.length > 1 && selectedSectionIds.includes(sc.id)) {
-      const sel = proj.sections.filter(s0 => selectedSectionIds.includes(s0.id))
-      const orig = new Map(sel.map(s0 => [s0.id, { start: s0.start, end: s0.end }]))
+      const selBounds = proj.sections.filter(s0 => selectedSectionIds.includes(s0.id))
+      const allIds = expandContained(selectedSectionIds)
+      const all = proj.sections.filter(s0 => allIds.includes(s0.id))
+      const orig = new Map(all.map(s0 => [s0.id, { start: s0.start, end: s0.end }]))
+      // Anchor on the selected group's extremes (contained children just follow).
       const anchor = side === 'R'
-        ? Math.min(...sel.map(s0 => s0.start))
-        : Math.max(...sel.map(s0 => s0.end))
+        ? Math.min(...selBounds.map(s0 => s0.start))
+        : Math.max(...selBounds.map(s0 => s0.end))
       if (Math.abs(pos - anchor) < 1e-9) return
-      const minW = Math.min(...sel.map(s0 => s0.end - s0.start))
+      const minW = Math.min(...all.map(s0 => s0.end - s0.start))
       setDragBoth({
-        kind: 'sectionScale', ids: selectedSectionIds, startClientX: e.clientX,
-        orig, anchor, grabPos: pos,
-        cands: magnetCands({ sectionIds: new Set(selectedSectionIds) }),
+        kind: 'sectionScale', ids: allIds, startClientX: e.clientX,
+        orig, itemOrig: itemsWithin(orig.values()), anchor, grabPos: pos,
+        cands: magnetCands({ sectionIds: new Set(allIds) }),
         minFactor: minW > 0 ? 0.25 / minW : 0.05, moved: false,
       })
       return
@@ -402,9 +452,16 @@ export function CanvasView() {
       if (ed.side === 'L') max = Math.min(max, s0.end - 0.25)
       else min = Math.max(min, s0.start + 0.25)
     }
+    const origSects = new Map(
+      edges.map(ed => {
+        const s0 = proj.sections.find(x => x.id === ed.id)!
+        return [ed.id, { start: s0.start, end: s0.end }] as const
+      }),
+    )
     setDragBoth({
       kind: 'sectionEdge', edges, orig: pos, startClientX: e.clientX,
       cands: magnetCands({ sectionIds: new Set(edges.map(ed => ed.id)) }), min, max,
+      origSects, itemSec: itemSecFor(origSects),
     })
   }
 
@@ -425,12 +482,15 @@ export function CanvasView() {
       ids = [sc.id]
       sfx.select()
     }
+    // Contained sections and the items inside all of them travel with the move.
+    const allIds = expandContained(ids)
     const orig = new Map(
-      proj.sections.filter(s0 => ids.includes(s0.id)).map(s0 => [s0.id, { start: s0.start, end: s0.end }]),
+      proj.sections.filter(s0 => allIds.includes(s0.id)).map(s0 => [s0.id, { start: s0.start, end: s0.end }]),
     )
+    const itemOrig = itemsWithin(orig.values())
     setDragBoth({
-      kind: 'sectionMove', ids, grabId: sc.id, startClientX: e.clientX, orig,
-      cands: magnetCands({ sectionIds: new Set(ids) }), moved: false,
+      kind: 'sectionMove', ids: allIds, grabId: sc.id, startClientX: e.clientX, orig, itemOrig,
+      cands: magnetCands({ sectionIds: new Set(allIds), items: new Set(itemOrig.keys()) }), moved: false,
     })
   }
 
@@ -512,12 +572,28 @@ export function CanvasView() {
       const du = (e.clientX - d.startClientX) / cam.s
       const np = clamp(snapWorld(d.orig + du, d.cands, e.altKey), d.min, d.max)
       const ovs: { id: string; start: number; end: number }[] = []
+      const ovById = new Map<string, { start: number; end: number }>()
       for (const ed of d.edges) {
-        const sc = proj.sections.find(s0 => s0.id === ed.id)
-        if (!sc) continue
-        ovs.push(ed.side === 'L' ? { id: ed.id, start: np, end: sc.end } : { id: ed.id, start: sc.start, end: np })
+        const os = d.origSects.get(ed.id)
+        if (!os) continue
+        const nb = ed.side === 'L' ? { start: np, end: os.end } : { start: os.start, end: np }
+        ovById.set(ed.id, nb)
+        ovs.push({ id: ed.id, ...nb })
       }
       setSectionOverride(ovs)
+      // Shift: redistribute each section's items linearly into its new span.
+      if (e.shiftKey) {
+        const pv = new Map<string, number>()
+        d.itemSec.forEach(({ pos, secId }, itemId) => {
+          const os = d.origSects.get(secId)
+          const nb = ovById.get(secId)
+          if (!os || !nb || os.end - os.start < 1e-9) return
+          pv.set(itemId, nb.start + ((pos - os.start) / (os.end - os.start)) * (nb.end - nb.start))
+        })
+        setPosOverride(pv)
+      } else {
+        setPosOverride(null)
+      }
     } else if (d.kind === 'sectionMove') {
       if (!d.moved && Math.abs(e.clientX - d.startClientX) <= 3) return
       d.moved = true
@@ -528,6 +604,10 @@ export function CanvasView() {
       const ovs: { id: string; start: number; end: number }[] = []
       d.orig.forEach((o, id) => ovs.push({ id, start: o.start + delta, end: o.end + delta }))
       setSectionOverride(ovs)
+      // Items inside the moved sections travel along.
+      const pv = new Map<string, number>()
+      d.itemOrig.forEach((pos, id) => pv.set(id, pos + delta))
+      setPosOverride(pv)
     } else if (d.kind === 'sectionScale') {
       if (!d.moved && Math.abs(e.clientX - d.startClientX) <= 3) return
       d.moved = true
@@ -541,6 +621,14 @@ export function CanvasView() {
         ovs.push({ id, start: Math.min(a, b), end: Math.max(a, b) })
       })
       setSectionOverride(ovs)
+      // Shift: item spacing scales with the sections; otherwise items stay put.
+      if (e.shiftKey) {
+        const pv = new Map<string, number>()
+        d.itemOrig.forEach((pos, id) => pv.set(id, d.anchor + (pos - d.anchor) * factor))
+        setPosOverride(pv)
+      } else {
+        setPosOverride(null)
+      }
     }
   }
 
@@ -637,7 +725,9 @@ export function CanvasView() {
       }
     } else if (d.kind === 'sectionEdge' || d.kind === 'sectionMove' || d.kind === 'sectionScale') {
       const ov = sectionOverride
+      const pv = posOverride
       setSectionOverride(null)
+      setPosOverride(null)
       const moved = d.kind === 'sectionEdge' || d.moved
       if (ov?.length && moved) {
         mutate(p => {
@@ -645,6 +735,7 @@ export function CanvasView() {
             const sc = p.sections.find(s0 => s0.id === o.id)
             if (sc) { sc.start = o.start; sc.end = o.end }
           }
+          if (pv) for (const it of p.items) if (pv.has(it.id)) it.pos = pv.get(it.id)!
         })
         sfx.snap()
       }
@@ -888,19 +979,33 @@ export function CanvasView() {
                 <line x1={x2} y1={yTop} x2={x2} y2={yTop + hFull} className="band-edge"
                   style={{ stroke: `hsl(${hue} 55% 55% / ${edgeAlpha})`, strokeWidth: edgeW }} pointerEvents="none" />
                 {w > 60 && (
-                  <text
-                    x={labelX} y={labelY}
-                    className={`band-label ${sel ? 'sel' : ''}`}
-                    style={{
-                      fill: `hsl(${hue} 50% var(--band-label-l))`,
-                      fontSize: labelPx,
-                      fontWeight: sc.depth === 0 ? 700 : 600,
-                      opacity: Math.max(1 - 0.12 * sc.depth, 0.6),
-                    }}
+                  <g
+                    className="band-label-g"
+                    style={{ opacity: Math.max(1 - 0.1 * sc.depth, 0.65) }}
                     onPointerDown={e => labelPointerDown(e, sc)}
                   >
-                    {sc.name}
-                  </text>
+                    <rect
+                      x={labelX - 7} y={labelY - labelPx - 4}
+                      width={Math.min(sc.name.length * labelPx * 0.58, 300) + 14}
+                      height={labelPx + 9} rx={5}
+                      className="band-label-box"
+                      style={{
+                        fill: `color-mix(in srgb, hsl(${hue} 60% 55%) 16%, var(--panel))`,
+                        stroke: `hsl(${hue} 55% 55% / ${sel ? 0.95 : 0.45})`,
+                      }}
+                    />
+                    <text
+                      x={labelX} y={labelY}
+                      className={`band-label ${sel ? 'sel' : ''}`}
+                      style={{
+                        fill: `hsl(${hue} 50% var(--band-label-l))`,
+                        fontSize: labelPx,
+                        fontWeight: sc.depth === 0 ? 700 : 600,
+                      }}
+                    >
+                      {sc.name}
+                    </text>
+                  </g>
                 )}
                 {/* Edge handles: with no section selected every edge is live
                     (nearly invisible until hovered) and coincident edges drag
