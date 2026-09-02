@@ -51,7 +51,7 @@ function ExportScene(props: { proj: Project; cam: Camera; w: number; h: number; 
           )
         })}
         {(st.grid.show || st.unit.showRuler) && (() => {
-          const step = rulerStepFor(cam.s)
+          const step = rulerStepFor(cam.s, st.unit.preset)
           const n0 = Math.floor(cam.x / step)
           const n1 = Math.ceil((cam.x + w / cam.s) / step)
           const suffix = unitSuffix(st.unit.preset, st.unit.custom)
@@ -69,7 +69,7 @@ function ExportScene(props: { proj: Project; cam: Camera; w: number; h: number; 
                 {st.unit.showRuler && (
                   <>
                     <line x1={x} y1={-5} x2={x} y2={5} stroke={C.line} strokeWidth={1.5} />
-                    <text x={x + 5} y={16} fontFamily={font} fontSize={10} fill={C.muted}>{formatUnit(v, step, suffix)}</text>
+                    <text x={x + 5} y={16} fontFamily={font} fontSize={10} fill={C.muted}>{formatUnit(v, step, suffix, st.unit.preset)}</text>
                   </>
                 )}
               </g>,

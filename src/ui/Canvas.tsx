@@ -10,7 +10,7 @@ import {
 } from '../model/layout'
 import { useActiveProject, useStore } from '../model/store'
 import type { Camera, Item, Section } from '../model/types'
-import { clamp, formatUnit, rulerStepFor, sectionHue, snapPos, uid, unitSuffix } from '../model/util'
+import { clamp, formatUnit, rulerStepFor, sectionHue, snapPos, timeBaseFor, uid, unitSuffix } from '../model/util'
 import { bindParticleCanvas, burst, puff, ripple, setParticleLevel } from '../fx/particles'
 import { setSoundOn, sfx } from '../fx/sound'
 import { flyCamera, cancelFlight } from '../fx/springs'
@@ -43,6 +43,20 @@ type Drag =
       orig: number; startClientX: number; cands: number[]
       /** Clamp range keeping every participating section at a minimum width. */
       min: number; max: number
+    }
+  | {
+      /** Translate every selected section together (label drag). */
+      kind: 'sectionMove'; ids: string[]; grabId: string; startClientX: number
+      orig: Map<string, { start: number; end: number }>
+      cands: number[]; moved: boolean
+    }
+  | {
+      /** Proportionally scale every selected section around the group's
+          opposite extreme (edge drag with a multi-section selection). */
+      kind: 'sectionScale'; ids: string[]; startClientX: number
+      orig: Map<string, { start: number; end: number }>
+      anchor: number; grabPos: number
+      cands: number[]; minFactor: number; moved: boolean
     }
 
 type CtxTarget = { kind: 'bg'; pos: number } | { kind: 'item'; id: string }
@@ -78,6 +92,9 @@ export function CanvasView() {
 
   const cam = proj.camera
   const st = proj.settings
+  // Time presets can zoom far enough in to read individual seconds.
+  const timeBase = timeBaseFor(st.unit.preset)
+  const maxS = timeBase ? Math.max(MAX_S, timeBase * 400) : MAX_S
   const spineY = Math.round(size.h * 0.42)
   const selection = useMemo(() => new Set(ui.selection), [ui.selection])
 
@@ -184,7 +201,7 @@ export function CanvasView() {
       flyTo: c => flyTo(c),
       fitAll: () => flyTo(fitCamera(proj, size.w)),
       zoomBy: f => {
-        const s = clamp(cam.s * f, MIN_S, MAX_S)
+        const s = clamp(cam.s * f, MIN_S, maxS)
         const cx = size.w / 2
         flyTo({ x: toPos(cx) - cx / s, s }, false)
       },
@@ -199,7 +216,7 @@ export function CanvasView() {
         const sc = proj.sections.find(s0 => s0.id === id)
         if (!sc) return
         const span = Math.max(sc.end - sc.start, 0.5)
-        const s = clamp((size.w * 0.86) / span, MIN_S, MAX_S)
+        const s = clamp((size.w * 0.86) / span, MIN_S, maxS)
         flyTo({ x: sc.start - (size.w - span * s) / 2 / s, s })
       },
       back: () => {
@@ -226,14 +243,17 @@ export function CanvasView() {
       e.preventDefault()
       cancelFlight()
       const st = useStore.getState()
-      const c = (st.projects.find(p => p.id === st.activeId) ?? st.projects[0]).camera
+      const p0 = st.projects.find(p => p.id === st.activeId) ?? st.projects[0]
+      const c = p0.camera
+      const base = timeBaseFor(p0.settings.unit.preset)
+      const wheelMaxS = base ? Math.max(MAX_S, base * 400) : MAX_S
       const rect = el.getBoundingClientRect()
       const mx = e.clientX - rect.left
       if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
         st.setCamera({ x: c.x + e.deltaX / c.s, s: c.s })
       } else {
         const k = Math.exp(-e.deltaY * (e.ctrlKey ? 0.006 : 0.0018))
-        const s = clamp(c.s * k, MIN_S, MAX_S)
+        const s = clamp(c.s * k, MIN_S, wheelMaxS)
         const wx = c.x + mx / c.s
         st.setCamera({ x: wx - mx / s, s })
       }
@@ -330,7 +350,11 @@ export function CanvasView() {
     return ui.snap ? snapPos(np, cam.s) : np
   }
 
-  const anySectionSelected = useMemo(() => ui.selection.some(s => s.startsWith('S:')), [ui.selection])
+  const selectedSectionIds = useMemo(
+    () => ui.selection.filter(s => s.startsWith('S:')).map(s => s.slice(2)),
+    [ui.selection],
+  )
+  const anySectionSelected = selectedSectionIds.length > 0
 
   /**
    * Start dragging a section edge. With no section selected (global mode),
@@ -343,6 +367,24 @@ export function CanvasView() {
     e.stopPropagation()
     ;(e.target as Element).setPointerCapture?.(e.pointerId)
     const pos = side === 'L' ? sc.start : sc.end
+    // Multi-section selection: an edge drag scales the whole selected group
+    // proportionally around its opposite extreme.
+    if (selectedSectionIds.length > 1 && selectedSectionIds.includes(sc.id)) {
+      const sel = proj.sections.filter(s0 => selectedSectionIds.includes(s0.id))
+      const orig = new Map(sel.map(s0 => [s0.id, { start: s0.start, end: s0.end }]))
+      const anchor = side === 'R'
+        ? Math.min(...sel.map(s0 => s0.start))
+        : Math.max(...sel.map(s0 => s0.end))
+      if (Math.abs(pos - anchor) < 1e-9) return
+      const minW = Math.min(...sel.map(s0 => s0.end - s0.start))
+      setDragBoth({
+        kind: 'sectionScale', ids: selectedSectionIds, startClientX: e.clientX,
+        orig, anchor, grabPos: pos,
+        cands: magnetCands({ sectionIds: new Set(selectedSectionIds) }),
+        minFactor: minW > 0 ? 0.25 / minW : 0.05, moved: false,
+      })
+      return
+    }
     const edges: { id: string; side: 'L' | 'R' }[] = [{ id: sc.id, side }]
     if (!anySectionSelected) {
       const tol = 1 / cam.s
@@ -363,6 +405,32 @@ export function CanvasView() {
     setDragBoth({
       kind: 'sectionEdge', edges, orig: pos, startClientX: e.clientX,
       cands: magnetCands({ sectionIds: new Set(edges.map(ed => ed.id)) }), min, max,
+    })
+  }
+
+  /** Label drag: select the section (shift adds) and move all selected together. */
+  const labelPointerDown = (e: React.PointerEvent, sc: Section) => {
+    if (e.button !== 0) return
+    e.stopPropagation()
+    ;(e.target as Element).setPointerCapture?.(e.pointerId)
+    const key = `S:${sc.id}`
+    let ids: string[]
+    if (selection.has(key)) {
+      ids = selectedSectionIds
+    } else if (e.shiftKey) {
+      select([...ui.selection, key])
+      ids = [...selectedSectionIds, sc.id]
+    } else {
+      select([key])
+      ids = [sc.id]
+      sfx.select()
+    }
+    const orig = new Map(
+      proj.sections.filter(s0 => ids.includes(s0.id)).map(s0 => [s0.id, { start: s0.start, end: s0.end }]),
+    )
+    setDragBoth({
+      kind: 'sectionMove', ids, grabId: sc.id, startClientX: e.clientX, orig,
+      cands: magnetCands({ sectionIds: new Set(ids) }), moved: false,
     })
   }
 
@@ -450,6 +518,29 @@ export function CanvasView() {
         ovs.push(ed.side === 'L' ? { id: ed.id, start: np, end: sc.end } : { id: ed.id, start: sc.start, end: np })
       }
       setSectionOverride(ovs)
+    } else if (d.kind === 'sectionMove') {
+      if (!d.moved && Math.abs(e.clientX - d.startClientX) <= 3) return
+      d.moved = true
+      const du = (e.clientX - d.startClientX) / cam.s
+      const grab = d.orig.get(d.grabId) ?? d.orig.values().next().value
+      if (!grab) return
+      const delta = snapWorld(grab.start + du, d.cands, e.altKey) - grab.start
+      const ovs: { id: string; start: number; end: number }[] = []
+      d.orig.forEach((o, id) => ovs.push({ id, start: o.start + delta, end: o.end + delta }))
+      setSectionOverride(ovs)
+    } else if (d.kind === 'sectionScale') {
+      if (!d.moved && Math.abs(e.clientX - d.startClientX) <= 3) return
+      d.moved = true
+      const du = (e.clientX - d.startClientX) / cam.s
+      const np = snapWorld(d.grabPos + du, d.cands, e.altKey)
+      const factor = Math.max((np - d.anchor) / (d.grabPos - d.anchor), d.minFactor)
+      const ovs: { id: string; start: number; end: number }[] = []
+      d.orig.forEach((o, id) => {
+        const a = d.anchor + (o.start - d.anchor) * factor
+        const b = d.anchor + (o.end - d.anchor) * factor
+        ovs.push({ id, start: Math.min(a, b), end: Math.max(a, b) })
+      })
+      setSectionOverride(ovs)
     }
   }
 
@@ -479,6 +570,20 @@ export function CanvasView() {
           const iy = spineY + pi.y
           if (pi.x >= ax && pi.x <= bx && iy >= ay && iy <= by) hits.push(pi.item.id)
         }))
+      }
+      // Sections join the marquee through their labels (same geometry as render).
+      const sizeAt = (d0: number) => Math.max(10, st.sectionStyle.labelSize - 2.5 * d0)
+      for (const sc of proj.sections) {
+        const sx1 = toX(sc.start)
+        const sx2 = toX(sc.end)
+        if (sx2 < -40 || sx1 > size.w + 40 || sx2 - sx1 <= 60) continue
+        const labelX = Math.max(sx1, 0) + 10
+        const px = sizeAt(sc.depth)
+        let baseline = 8
+        for (let d0 = 0; d0 < sc.depth; d0++) baseline += sizeAt(d0) + 6
+        baseline += px
+        const lw = Math.min(sc.name.length * px * 0.6, 280)
+        if (labelX < bx && labelX + lw > ax && baseline - px < by && baseline > ay) hits.push(`S:${sc.id}`)
       }
       select(hits)
     } else if (d.kind === 'branch') {
@@ -530,10 +635,11 @@ export function CanvasView() {
         })
         sfx.snap()
       }
-    } else if (d.kind === 'sectionEdge') {
+    } else if (d.kind === 'sectionEdge' || d.kind === 'sectionMove' || d.kind === 'sectionScale') {
       const ov = sectionOverride
       setSectionOverride(null)
-      if (ov?.length) {
+      const moved = d.kind === 'sectionEdge' || d.moved
+      if (ov?.length && moved) {
         mutate(p => {
           for (const o of ov) {
             const sc = p.sections.find(s0 => s0.id === o.id)
@@ -791,7 +897,7 @@ export function CanvasView() {
                       fontWeight: sc.depth === 0 ? 700 : 600,
                       opacity: Math.max(1 - 0.12 * sc.depth, 0.6),
                     }}
-                    onPointerDown={e => { e.stopPropagation(); select([`S:${sc.id}`]) }}
+                    onPointerDown={e => labelPointerDown(e, sc)}
                   >
                     {sc.name}
                   </text>
@@ -817,7 +923,7 @@ export function CanvasView() {
 
           {/* unit ruler & background grid */}
           {(st.grid.show || st.unit.showRuler) && (() => {
-            const step = rulerStepFor(cam.s)
+            const step = rulerStepFor(cam.s, st.unit.preset)
             const n0 = Math.floor(cam.x / step)
             const n1 = Math.ceil((cam.x + size.w / cam.s) / step)
             const suffix = unitSuffix(st.unit.preset, st.unit.custom)
@@ -838,7 +944,7 @@ export function CanvasView() {
                   {st.unit.showRuler && (
                     <>
                       <line x1={x} y1={-5} x2={x} y2={5} className="ruler-tick" />
-                      <text x={x + 5} y={16} className="ruler-label">{formatUnit(v, step, suffix)}</text>
+                      <text x={x + 5} y={16} className="ruler-label">{formatUnit(v, step, suffix, st.unit.preset)}</text>
                     </>
                   )}
                 </g>,
@@ -877,7 +983,7 @@ export function CanvasView() {
               }}
               zoomIn={() => {
                 const span = bl.branch.joinPos - bl.branch.forkPos
-                const s = clamp((size.w * 0.7) / span, MIN_S, MAX_S)
+                const s = clamp((size.w * 0.7) / span, MIN_S, maxS)
                 flyTo({ x: bl.branch.forkPos - (size.w - span * s) / 2 / s, s })
               }}
             />
@@ -953,7 +1059,7 @@ export function CanvasView() {
                 <g
                   onPointerDown={e => {
                     e.stopPropagation()
-                    const s = clamp(cam.s * 2.4, MIN_S, MAX_S)
+                    const s = clamp(cam.s * 2.4, MIN_S, maxS)
                     const wx = toPos(cl.x)
                     flyTo({ x: wx - size.w / 2 / s, s })
                   }}
