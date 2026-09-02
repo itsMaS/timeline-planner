@@ -45,10 +45,12 @@ type Drag =
       min: number; max: number
       /** Original bounds of the affected sections (for item/sub-section redistribution). */
       origSects: Map<string, { start: number; end: number }>
-      /** Item → its position and innermost affected section at drag start. */
-      itemSec: Map<string, { pos: number; secId: string }>
+      /** Item → its position, duration and innermost affected section at drag start. */
+      itemSec: Map<string, { pos: number; dur: number; secId: string }>
       /** Contained sub-sections; they redistribute with the parent unless Shift is held. */
       subSects: Map<string, { start: number; end: number; parentId: string }>
+      /** Branch → its bounds and innermost affected section; redistributes like items. */
+      branchSec: Map<string, { fork: number; join: number; secId: string }>
     }
   | {
       /** Translate every selected section together (label drag). */
@@ -56,6 +58,8 @@ type Drag =
       orig: Map<string, { start: number; end: number }>
       /** Items inside the moved sections; they travel with the sections. */
       itemOrig: Map<string, number>
+      /** Branches inside the moved sections; they travel too. */
+      branchOrig: Map<string, { fork: number; join: number }>
       cands: number[]; moved: boolean
     }
   | {
@@ -67,6 +71,10 @@ type Drag =
       subOrig: Map<string, { start: number; end: number }>
       /** Items inside the scaled sections (spacing rescales unless Shift is held). */
       itemOrig: Map<string, number>
+      /** Branches inside the scaled sections; they rescale unless Shift is held. */
+      branchOrig: Map<string, { fork: number; join: number }>
+      /** Original durations of contained span items; they rescale unless Shift is held. */
+      itemDur: Map<string, number>
       anchor: number; grabPos: number
       cands: number[]; minFactor: number; moved: boolean
     }
@@ -89,8 +97,8 @@ export function CanvasView() {
   const [drag, setDrag] = useState<Drag | null>(null)
   const dragRef = useRef<Drag | null>(null)
   const [posOverride, setPosOverride] = useState<Map<string, number> | null>(null)
-  const [durOverride, setDurOverride] = useState<{ id: string; pos: number; duration: number } | null>(null)
-  const [branchOverride, setBranchOverride] = useState<{ id: string; forkPos: number; joinPos: number } | null>(null)
+  const [durOverride, setDurOverride] = useState<{ id: string; pos: number; duration: number }[] | null>(null)
+  const [branchOverride, setBranchOverride] = useState<{ id: string; forkPos: number; joinPos: number }[] | null>(null)
   const [sectionOverride, setSectionOverride] = useState<{ id: string; start: number; end: number }[] | null>(null)
   const [hover, setHover] = useState<{ id: string; x: number; y: number } | null>(null)
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
@@ -142,13 +150,16 @@ export function CanvasView() {
       p.items = proj.items.map(it => {
         let out = it
         if (posOverride?.has(it.id)) out = { ...out, pos: posOverride.get(it.id)! }
-        if (durOverride?.id === it.id) out = { ...out, pos: durOverride.pos, duration: durOverride.duration }
+        const dv = durOverride?.find(x => x.id === it.id)
+        if (dv) out = { ...out, pos: dv.pos, duration: dv.duration }
         return out
       })
     }
     if (branchOverride) {
-      p.branches = proj.branches.map(b => b.id === branchOverride.id
-        ? { ...b, forkPos: branchOverride.forkPos, joinPos: branchOverride.joinPos } : b)
+      p.branches = proj.branches.map(b => {
+        const o = branchOverride.find(x => x.id === b.id)
+        return o ? { ...b, forkPos: o.forkPos, joinPos: o.joinPos } : b
+      })
     }
     if (sectionOverride) {
       // Clone every section (depths are recomputed in place) so the live
@@ -407,9 +418,38 @@ export function CanvasView() {
     return out
   }
 
+  /** Branches whose whole span lies inside any of the given section ranges. */
+  const branchesWithin = (sects: Iterable<{ start: number; end: number }>): Map<string, { fork: number; join: number }> => {
+    const list = [...sects]
+    const out = new Map<string, { fork: number; join: number }>()
+    for (const br of proj.branches) {
+      if (list.some(s0 => br.forkPos >= s0.start - 1e-9 && br.joinPos <= s0.end + 1e-9)) {
+        out.set(br.id, { fork: br.forkPos, join: br.joinPos })
+      }
+    }
+    return out
+  }
+
+  /** Each contained branch mapped to the innermost of the given sections. */
+  const branchSecFor = (sects: Map<string, { start: number; end: number }>): Map<string, { fork: number; join: number; secId: string }> => {
+    const out = new Map<string, { fork: number; join: number; secId: string }>()
+    for (const br of proj.branches) {
+      let bestId: string | null = null
+      let bestSpan = Infinity
+      sects.forEach((b, id) => {
+        if (br.forkPos >= b.start - 1e-9 && br.joinPos <= b.end + 1e-9 && b.end - b.start < bestSpan) {
+          bestId = id
+          bestSpan = b.end - b.start
+        }
+      })
+      if (bestId) out.set(br.id, { fork: br.forkPos, join: br.joinPos, secId: bestId })
+    }
+    return out
+  }
+
   /** Each contained item mapped to the innermost of the given sections. */
-  const itemSecFor = (sects: Map<string, { start: number; end: number }>): Map<string, { pos: number; secId: string }> => {
-    const out = new Map<string, { pos: number; secId: string }>()
+  const itemSecFor = (sects: Map<string, { start: number; end: number }>): Map<string, { pos: number; dur: number; secId: string }> => {
+    const out = new Map<string, { pos: number; dur: number; secId: string }>()
     for (const it of proj.items) {
       let bestId: string | null = null
       let bestSpan = Infinity
@@ -419,8 +459,16 @@ export function CanvasView() {
           bestSpan = b.end - b.start
         }
       })
-      if (bestId) out.set(it.id, { pos: it.pos, secId: bestId })
+      if (bestId) out.set(it.id, { pos: it.pos, dur: it.duration, secId: bestId })
     }
+    return out
+  }
+
+  /** Durations of span items among the given ids (points are skipped). */
+  const durationsOf = (ids: Iterable<string>): Map<string, number> => {
+    const set = new Set(ids)
+    const out = new Map<string, number>()
+    for (const it of proj.items) if (set.has(it.id) && it.duration > 0) out.set(it.id, it.duration)
     return out
   }
 
@@ -453,7 +501,9 @@ export function CanvasView() {
       const minW = Math.min(...all.map(s0 => s0.end - s0.start))
       setDragBoth({
         kind: 'sectionScale', ids: selectedSectionIds, startClientX: e.clientX,
-        orig, subOrig, itemOrig: itemsWithin(orig.values()), anchor, grabPos: pos,
+        orig, subOrig, itemOrig: itemsWithin(orig.values()), branchOrig: branchesWithin(orig.values()),
+        itemDur: durationsOf(itemsWithin(orig.values()).keys()),
+        anchor, grabPos: pos,
         cands: magnetCands({ sectionIds: new Set(allIds) }),
         minFactor: minW > 0 ? 0.25 / minW : 0.05, moved: false,
       })
@@ -514,7 +564,7 @@ export function CanvasView() {
     setDragBoth({
       kind: 'sectionEdge', edges, orig: pos, startClientX: e.clientX,
       cands: magnetCands({ sectionIds: new Set(edges.map(ed => ed.id)) }), min, max,
-      origSects, itemSec: itemSecFor(origSects), subSects,
+      origSects, itemSec: itemSecFor(origSects), subSects, branchSec: branchSecFor(origSects),
     })
   }
 
@@ -555,6 +605,8 @@ export function CanvasView() {
       setDragBoth({
         kind: 'sectionMove', ids: [...idMap.values()], grabId: newGrabId,
         startClientX: e.clientX, orig, itemOrig,
+        // Branches are not duplicated, so the copy's drag moves none of them.
+        branchOrig: new Map(),
         cands: magnetCands({ sectionIds: new Set(idMap.values()), items: new Set(newItemIds) }),
         moved: false,
       })
@@ -580,6 +632,7 @@ export function CanvasView() {
     const itemOrig = itemsWithin(orig.values())
     setDragBoth({
       kind: 'sectionMove', ids: allIds, grabId: sc.id, startClientX: e.clientX, orig, itemOrig,
+      branchOrig: branchesWithin(orig.values()),
       cands: magnetCands({ sectionIds: new Set(allIds), items: new Set(itemOrig.keys()) }), moved: false,
     })
   }
@@ -644,20 +697,20 @@ export function CanvasView() {
       const du = (e.clientX - d.startClientX) / cam.s
       if (d.side === 'R') {
         const end = snapWorld(d.origPos + d.origDur + du, d.cands, e.altKey)
-        setDurOverride({ id: d.id, pos: d.origPos, duration: Math.max(0, end - d.origPos) })
+        setDurOverride([{ id: d.id, pos: d.origPos, duration: Math.max(0, end - d.origPos) }])
       } else {
         let start = snapWorld(d.origPos + du, d.cands, e.altKey)
         const end = d.origPos + d.origDur
         start = Math.min(start, end)
-        setDurOverride({ id: d.id, pos: start, duration: end - start })
+        setDurOverride([{ id: d.id, pos: start, duration: end - start }])
       }
     } else if (d.kind === 'branchEnd') {
       const du = (e.clientX - d.startClientX) / cam.s
       const np = snapWorld(d.orig + du, d.cands, e.altKey)
       const br = proj.branches.find(b => b.id === d.id)
       if (!br) return
-      if (d.side === 'fork') setBranchOverride({ id: d.id, forkPos: Math.min(np, br.joinPos - 0.5), joinPos: br.joinPos })
-      else setBranchOverride({ id: d.id, forkPos: br.forkPos, joinPos: Math.max(np, br.forkPos + 0.5) })
+      if (d.side === 'fork') setBranchOverride([{ id: d.id, forkPos: Math.min(np, br.joinPos - 0.5), joinPos: br.joinPos }])
+      else setBranchOverride([{ id: d.id, forkPos: br.forkPos, joinPos: Math.max(np, br.forkPos + 0.5) }])
     } else if (d.kind === 'sectionEdge') {
       const du = (e.clientX - d.startClientX) / cam.s
       const np = clamp(snapWorld(d.orig + du, d.cands, e.altKey), d.min, d.max)
@@ -679,19 +732,39 @@ export function CanvasView() {
           if (!os || !nb || os.end - os.start < 1e-9) return null
           return nb.start + ((v - os.start) / (os.end - os.start)) * (nb.end - nb.start)
         }
+        const ratioOf = (secId: string): number => {
+          const os = d.origSects.get(secId)
+          const nb = ovById.get(secId)
+          if (!os || !nb || os.end - os.start < 1e-9) return 1
+          return (nb.end - nb.start) / (os.end - os.start)
+        }
         d.subSects.forEach((sb, id) => {
           const a = remap(sb.parentId, sb.start)
           const b = remap(sb.parentId, sb.end)
           if (a !== null && b !== null) ovs.push({ id, start: Math.min(a, b), end: Math.max(a, b) })
         })
         const pv = new Map<string, number>()
-        d.itemSec.forEach(({ pos, secId }, itemId) => {
+        const durOvs: { id: string; pos: number; duration: number }[] = []
+        d.itemSec.forEach(({ pos, dur, secId }, itemId) => {
           const npos = remap(secId, pos)
-          if (npos !== null) pv.set(itemId, npos)
+          if (npos === null) return
+          if (dur > 0) durOvs.push({ id: itemId, pos: npos, duration: dur * ratioOf(secId) })
+          else pv.set(itemId, npos)
+        })
+        // Branches redistribute into the new span like items do.
+        const bvs: { id: string; forkPos: number; joinPos: number }[] = []
+        d.branchSec.forEach(({ fork, join, secId }, brId) => {
+          const a = remap(secId, fork)
+          const b = remap(secId, join)
+          if (a !== null && b !== null) bvs.push({ id: brId, forkPos: Math.min(a, b), joinPos: Math.max(a, b) })
         })
         setPosOverride(pv)
+        setDurOverride(durOvs.length ? durOvs : null)
+        setBranchOverride(bvs.length ? bvs : null)
       } else {
         setPosOverride(null)
+        setDurOverride(null)
+        setBranchOverride(null)
       }
       setSectionOverride(ovs)
     } else if (d.kind === 'sectionMove') {
@@ -704,10 +777,13 @@ export function CanvasView() {
       const ovs: { id: string; start: number; end: number }[] = []
       d.orig.forEach((o, id) => ovs.push({ id, start: o.start + delta, end: o.end + delta }))
       setSectionOverride(ovs)
-      // Items inside the moved sections travel along.
+      // Items and branches inside the moved sections travel along.
       const pv = new Map<string, number>()
       d.itemOrig.forEach((pos, id) => pv.set(id, pos + delta))
       setPosOverride(pv)
+      const bvs: { id: string; forkPos: number; joinPos: number }[] = []
+      d.branchOrig.forEach((b, id) => bvs.push({ id, forkPos: b.fork + delta, joinPos: b.join + delta }))
+      setBranchOverride(bvs.length ? bvs : null)
     } else if (d.kind === 'sectionScale') {
       if (!d.moved && Math.abs(e.clientX - d.startClientX) <= 3) return
       d.moved = true
@@ -721,15 +797,32 @@ export function CanvasView() {
         ovs.push({ id, start: Math.min(a, b), end: Math.max(a, b) })
       }
       d.orig.forEach(scaleBounds)
-      // Default: contained sub-sections and item spacing scale along with the
-      // selection; holding Shift leaves them where they are.
+      // Default: contained sub-sections, item spacing, span durations, and
+      // branches all scale along with the selection; holding Shift leaves
+      // them where they are.
       if (!e.shiftKey) {
         d.subOrig.forEach(scaleBounds)
         const pv = new Map<string, number>()
-        d.itemOrig.forEach((pos, id) => pv.set(id, d.anchor + (pos - d.anchor) * factor))
+        const durOvs: { id: string; pos: number; duration: number }[] = []
+        d.itemOrig.forEach((pos, id) => {
+          const npos = d.anchor + (pos - d.anchor) * factor
+          const dur = d.itemDur.get(id)
+          if (dur) durOvs.push({ id, pos: npos, duration: dur * factor })
+          else pv.set(id, npos)
+        })
         setPosOverride(pv)
+        setDurOverride(durOvs.length ? durOvs : null)
+        const bvs: { id: string; forkPos: number; joinPos: number }[] = []
+        d.branchOrig.forEach((b, id) => {
+          const a = d.anchor + (b.fork - d.anchor) * factor
+          const c = d.anchor + (b.join - d.anchor) * factor
+          bvs.push({ id, forkPos: Math.min(a, c), joinPos: Math.max(a, c) })
+        })
+        setBranchOverride(bvs.length ? bvs : null)
       } else {
         setPosOverride(null)
+        setDurOverride(null)
+        setBranchOverride(null)
       }
       setSectionOverride(ovs)
     }
@@ -806,8 +899,10 @@ export function CanvasView() {
       setDurOverride(null)
       if (ov) {
         mutate(p => {
-          const it = p.items.find(i => i.id === ov.id)
-          if (it) { it.pos = ov.pos; it.duration = ov.duration }
+          for (const o of ov) {
+            const it = p.items.find(i => i.id === o.id)
+            if (it) { it.pos = o.pos; it.duration = o.duration }
+          }
         })
         sfx.snap()
       }
@@ -816,16 +911,22 @@ export function CanvasView() {
       setBranchOverride(null)
       if (ov) {
         mutate(p => {
-          const br = p.branches.find(b => b.id === ov.id)
-          if (br) { br.forkPos = ov.forkPos; br.joinPos = ov.joinPos }
+          for (const o of ov) {
+            const br = p.branches.find(b => b.id === o.id)
+            if (br) { br.forkPos = o.forkPos; br.joinPos = o.joinPos }
+          }
         })
         sfx.snap()
       }
     } else if (d.kind === 'sectionEdge' || d.kind === 'sectionMove' || d.kind === 'sectionScale') {
       const ov = sectionOverride
       const pv = posOverride
+      const dv = durOverride
+      const bv = branchOverride
       setSectionOverride(null)
       setPosOverride(null)
+      setDurOverride(null)
+      setBranchOverride(null)
       const moved = d.kind === 'sectionEdge' || d.moved
       if (ov?.length && moved) {
         mutate(p => {
@@ -834,6 +935,14 @@ export function CanvasView() {
             if (sc) { sc.start = o.start; sc.end = o.end }
           }
           if (pv) for (const it of p.items) if (pv.has(it.id)) it.pos = pv.get(it.id)!
+          if (dv) for (const o of dv) {
+            const it = p.items.find(i => i.id === o.id)
+            if (it) { it.pos = o.pos; it.duration = o.duration }
+          }
+          if (bv) for (const o of bv) {
+            const br = p.branches.find(b => b.id === o.id)
+            if (br) { br.forkPos = o.forkPos; br.joinPos = o.joinPos }
+          }
         })
         sfx.snap()
       }
