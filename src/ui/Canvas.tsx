@@ -980,14 +980,25 @@ export function CanvasView() {
     if (x2 < -40 || x1 > size.w + 40 || w < 2) return []
     const sel = selection.has(`S:${sc.id}`)
     const labelPx = sizeAtDepth(sc.depth)
+    // The label renders only when it fits fully inside the (visible part of
+    // the) bar — otherwise the colored bar alone marks the section. The faint
+    // duration follows only if it fits too.
+    const avail = x2 - (Math.max(x1, 0) + 8)
+    const nameW = sc.name.length * labelPx * 0.62
+    const dur = sc.end - sc.start
+    const durText = st.sectionStyle.showDuration
+      ? formatUnit(dur, dur, unitSuffix(st.unit.preset, st.unit.custom), st.unit.preset)
+      : ''
+    const durPx = Math.max(labelPx - 2.5, 9)
     return [{
       sc, x1, x2, w, sel, labelPx,
       hue: sectionHue(depthIndex.get(sc.id) ?? 0),
       barTop: -spineY + barTopFor(sc.depth),
       barH: labelPx + 10,
-      // The label renders only when it fits fully inside the (visible part of
-      // the) bar — otherwise the colored bar alone marks the section.
-      showText: x2 - (Math.max(x1, 0) + 8) >= sc.name.length * labelPx * 0.62 + 8,
+      showText: avail >= nameW + 8,
+      durText, durPx,
+      durX: Math.max(x1, 0) + 8 + nameW + 8,
+      showDur: !!durText && avail >= nameW + 8 + durText.length * durPx * 0.62 + 10,
       edgeAlpha: sel ? 0.8 : clamp(st.sectionStyle.edgeStrength * Math.max(1 - 0.3 * sc.depth, 0.25), 0, 1),
       edgeW: sc.depth === 0 ? 1.6 : 1,
     }]
@@ -1077,7 +1088,7 @@ export function CanvasView() {
           {/* section header bars — a padding-free, fully opaque strip spanning
               the whole section at its depth row, drawn above everything else in
               the band so nothing cuts through it. Also the section's drag target. */}
-          {bandGeo.map(({ sc, x1, w, hue, sel, labelPx, barTop, barH, showText }) => (
+          {bandGeo.map(({ sc, x1, w, hue, sel, labelPx, barTop, barH, showText, showDur, durText, durX, durPx }) => (
             <g
               key={`hdr-${sc.id}`}
               className="band-label-g"
@@ -1102,6 +1113,15 @@ export function CanvasView() {
                   }}
                 >
                   {sc.name}
+                </text>
+              )}
+              {showDur && (
+                <text
+                  x={durX} y={barTop + labelPx + 3}
+                  className="band-dur"
+                  style={{ fill: `hsl(${hue} 45% var(--band-label-l) / 0.55)`, fontSize: durPx }}
+                >
+                  {durText}
                 </text>
               )}
             </g>

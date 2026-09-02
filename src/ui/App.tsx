@@ -552,6 +552,13 @@ function SettingsModal() {
               onChange={e => patch(s => { s.sectionStyle.edgeStrength = Number(e.target.value) })}
             />
           </label>
+          <label className="check-row">
+            <input
+              type="checkbox" checked={st.sectionStyle.showDuration}
+              onChange={e => patch(s => { s.sectionStyle.showDuration = e.target.checked })}
+            />
+            Show section durations (faint, after the name)
+          </label>
           <p className="muted" style={{ margin: '4px 0 0', fontSize: 11 }}>
             Top-level sections render biggest and strongest; each nesting level shrinks and fades.
             Nesting is automatic: a section inside another becomes its child.

@@ -126,6 +126,8 @@ export interface TimelineSettings {
     labelSize: number
     /** Border opacity for top-level sections; fades with depth. */
     edgeStrength: number
+    /** Show the section's duration in faint text after its name. */
+    showDuration: boolean
   }
 }
 

@@ -11,7 +11,7 @@ export const defaultSettings = (): TimelineSettings => ({
   grid: { show: false, style: 'solid', opacity: 0.35 },
   spine: { width: 2, opacity: 1 },
   bandStrength: 1,
-  sectionStyle: { labelSize: 14, edgeStrength: 0.5 },
+  sectionStyle: { labelSize: 14, edgeStrength: 0.5, showDuration: false },
 })
 
 /** Fill in fields missing from projects saved by older versions. */

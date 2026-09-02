@@ -64,7 +64,15 @@ function ExportScene(props: { proj: Project; cam: Camera; w: number; h: number; 
             const hue = sectionHue(i)
             const labelPx = sizeAt(sc.depth)
             const barTop = -spineY + barTopFor(sc.depth)
-            const showText = x2 - (Math.max(x1, 0) + 8) >= sc.name.length * labelPx * 0.62 + 8
+            const avail = x2 - (Math.max(x1, 0) + 8)
+            const nameW = sc.name.length * labelPx * 0.62
+            const showText = avail >= nameW + 8
+            const dur = sc.end - sc.start
+            const durText = st.sectionStyle.showDuration
+              ? formatUnit(dur, dur, unitSuffix(st.unit.preset, st.unit.custom), st.unit.preset)
+              : ''
+            const durPx = Math.max(labelPx - 2.5, 9)
+            const showDur = !!durText && avail >= nameW + 8 + durText.length * durPx * 0.62 + 10
             return (
               <g key={`hdr-${sc.id}`}>
                 <rect x={x1} y={barTop} width={x2 - x1} height={labelPx + 10}
@@ -73,6 +81,10 @@ function ExportScene(props: { proj: Project; cam: Camera; w: number; h: number; 
                   <text x={Math.max(x1, 0) + 8} y={barTop + labelPx + 3} fontFamily={font} fontSize={labelPx}
                     fontWeight={sc.depth === 0 ? 700 : 600}
                     fill={`hsl(${hue} 50% ${theme === 'dark' ? '70%' : '38%'})`}>{sc.name}</text>
+                )}
+                {showDur && (
+                  <text x={Math.max(x1, 0) + 8 + nameW + 8} y={barTop + labelPx + 3} fontFamily={font} fontSize={durPx}
+                    fill={`hsl(${hue} 45% ${theme === 'dark' ? '70%' : '38%'} / 0.55)`}>{durText}</text>
                 )}
               </g>
             )
