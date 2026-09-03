@@ -480,6 +480,7 @@ export function CanvasView() {
    */
   const startSectionEdge = (e: React.PointerEvent, sc: Section, side: 'L' | 'R') => {
     if (e.button !== 0) return
+    if (ui.readOnly) { e.stopPropagation(); select([`S:${sc.id}`]); return }
     e.stopPropagation()
     ;(e.target as Element).setPointerCapture?.(e.pointerId)
     const pos = side === 'L' ? sc.start : sc.end
@@ -573,6 +574,7 @@ export function CanvasView() {
       items) and drags the copy instead. */
   const labelPointerDown = (e: React.PointerEvent, sc: Section) => {
     if (e.button !== 0) return
+    if (ui.readOnly) { e.stopPropagation(); select([`S:${sc.id}`]); return }
     e.stopPropagation()
     ;(e.target as Element).setPointerCapture?.(e.pointerId)
     if (e.altKey) {
@@ -638,7 +640,12 @@ export function CanvasView() {
   }
 
   // ---- pointer interactions
-  const setDragBoth = (d: Drag | null) => { dragRef.current = d; setDrag(d) }
+  const setDragBoth = (d: Drag | null) => {
+    // Viewer mode: only camera gestures and selection may start a drag.
+    if (d && ui.readOnly && d.kind !== 'pan' && d.kind !== 'marquee') return
+    dragRef.current = d
+    setDrag(d)
+  }
 
   const bgPointerDown = (e: React.PointerEvent) => {
     const rect = wrapRef.current!.getBoundingClientRect()
@@ -654,7 +661,7 @@ export function CanvasView() {
     }
     if (e.button !== 0) return
     ;(e.target as Element).setPointerCapture?.(e.pointerId)
-    if (ui.tool === 'branch') {
+    if (ui.tool === 'branch' && !ui.readOnly) {
       const pos = ui.snap ? snapPos(toPos(x), cam.s) : toPos(x)
       setDragBoth({ kind: 'branch', startPos: pos, curPos: pos })
     } else {
@@ -950,7 +957,7 @@ export function CanvasView() {
   }
 
   const bgDoubleClick = (e: React.MouseEvent) => {
-    if (ui.tool !== 'select') return
+    if (ui.tool !== 'select' || ui.readOnly) return
     const rect = wrapRef.current!.getBoundingClientRect()
     const x = e.clientX - rect.left
     const pos = ui.snap ? snapPos(toPos(x), cam.s) : toPos(x)
@@ -960,6 +967,11 @@ export function CanvasView() {
 
   const itemPointerDown = (e: React.PointerEvent, item: Item) => {
     if (e.button !== 0) return
+    if (ui.readOnly) {
+      e.stopPropagation()
+      select(e.shiftKey ? [...ui.selection.filter(s0 => !s0.includes(':')), item.id] : [item.id])
+      return
+    }
     e.stopPropagation()
     ;(e.currentTarget as Element).setPointerCapture?.(e.pointerId)
     const rect = wrapRef.current!.getBoundingClientRect()
@@ -1051,6 +1063,7 @@ export function CanvasView() {
 
   const basePointerDown = (e: React.PointerEvent, col: { x: number; ids: string[]; color: string }) => {
     if (e.button !== 0) return
+    if (ui.readOnly) { e.stopPropagation(); select(col.ids); return }
     e.stopPropagation()
     ;(e.target as Element).setPointerCapture?.(e.pointerId)
     const orig = new Map<string, number>()
@@ -1070,6 +1083,7 @@ export function CanvasView() {
   // ---- context menu
   const bgContextMenu = (e: React.MouseEvent) => {
     e.preventDefault()
+    if (ui.readOnly) return
     if (suppressMenuRef.current) { suppressMenuRef.current = false; return }
     const rect = wrapRef.current!.getBoundingClientRect()
     const x = e.clientX - rect.left
@@ -1082,6 +1096,7 @@ export function CanvasView() {
   const itemContextMenu = (e: React.MouseEvent, item: Item) => {
     e.preventDefault()
     e.stopPropagation()
+    if (ui.readOnly) { select([item.id]); return }
     if (suppressMenuRef.current) { suppressMenuRef.current = false; return }
     if (!selection.has(item.id)) select([item.id])
     const rect = wrapRef.current!.getBoundingClientRect()
@@ -1422,6 +1437,7 @@ export function CanvasView() {
               onHoverStart={e => itemHoverStart(e, pl.item.id)}
               onHoverEnd={itemHoverEnd}
               startHandle={(side, e) => {
+                if (ui.readOnly) return
                 e.stopPropagation()
                 ;(e.target as Element).setPointerCapture?.(e.pointerId)
                 const cur = effective.items.find(i => i.id === pl.item.id) ?? pl.item

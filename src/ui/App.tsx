@@ -1,11 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react'
 import {
   Download, Eye, EyeOff, GitBranch, Grid3x3, HelpCircle, Link, Magnet, Maximize2, Minus, Moon, Plus,
-  Redo2, Search, Settings2, Sun, Undo2, Upload, Volume2, VolumeX, X, ZoomIn,
+  Redo2, Search, Settings2, Share2, Sun, Undo2, Upload, Volume2, VolumeX, X, ZoomIn,
 } from 'lucide-react'
 import { iconByName } from '../model/icons'
 import { itemMatchesFilters } from '../model/layout'
-import { blankProject, emptyFilters, useActiveProject, useStore } from '../model/store'
+import { blankProject, emptyFilters, useActiveProject, useActiveShare, useStore } from '../model/store'
 import { TEMPLATES } from '../model/templates'
 import type { TimelineSettings, UnitPreset } from '../model/types'
 import { uid } from '../model/util'
@@ -13,6 +13,7 @@ import { exportCSV, exportFullSVG, exportJSON, exportPNG } from './export'
 import { CanvasView } from './Canvas'
 import { getClipboard, setClipboard } from './clipboard'
 import { Inspector } from './Inspector'
+import { PresenceBar, ShareModal, TabSyncIcon } from './Share'
 import { Sidebar } from './Sidebar'
 import { TypeEditor } from './TypeEditor'
 import { nav } from './nav'
@@ -114,11 +115,12 @@ export function App() {
       }
       if (e.key.toLowerCase() === 'b') { setUI({ tool: s.ui.tool === 'branch' ? 'select' : 'branch' }); return }
       if (e.key.toLowerCase() === 'n') {
-        const typeId = s.ui.lastTypeId ?? p.types[0]?.id
-        if (!typeId) return
+        // lastTypeId may belong to another tab (e.g. a freshly joined shared one).
+        const type = p.types.find(x => x.id === s.ui.lastTypeId) ?? p.types[0]
+        if (!type) return
+        const typeId = type.id
         const center = p.camera.x + (window.innerWidth * 0.5) / p.camera.s
         const id = uid()
-        const type = p.types.find(x => x.id === typeId)!
         s.mutate(pr => pr.items.push({
           id, typeId, layerId: null, pathId: null, pos: center, duration: 0,
           title: `New ${type.name.toLowerCase()}`, description: '', tags: [], link: '', images: [], fieldValues: {},
@@ -181,6 +183,7 @@ export function App() {
       {ui.overlay === 'templates' && <TemplateModal />}
       {ui.overlay === 'cheatsheet' && <Cheatsheet />}
       {ui.overlay === 'settings' && <SettingsModal />}
+      {ui.overlay === 'share' && <ShareModal />}
       <ToastView />
       <DragGhost />
     </div>
@@ -193,6 +196,8 @@ function Toolbar({ applyView }: { applyView: (id: string | null) => void }) {
   const proj = useActiveProject()
   const projects = useStore(s => s.projects)
   const activeId = useStore(s => s.activeId)
+  const shares = useStore(s => s.shares)
+  const share = useActiveShare()
   const ui = useStore(s => s.ui)
   const setUI = useStore(s => s.setUI)
   const setActive = useStore(s => s.setActive)
@@ -223,13 +228,17 @@ function Toolbar({ applyView }: { applyView: (id: string | null) => void }) {
                 if (name) renameProject(p.id, name)
               }}
             >
+              <TabSyncIcon projectId={p.id} />
               <span>{p.name}</span>
               {projects.length > 1 && (
                 <button
                   className="tab-x"
                   onClick={e => {
                     e.stopPropagation()
-                    if (window.confirm(`Close and delete “${p.name}”? Export it first if you want to keep it.`)) closeProject(p.id)
+                    const msg = shares[p.id]
+                      ? `Close “${p.name}”? The shared timeline stays online — keep your link to reopen it here.`
+                      : `Close and delete “${p.name}”? Export it first if you want to keep it.`
+                    if (window.confirm(msg)) closeProject(p.id)
                   }}
                 ><X width={11} height={11} /></button>
               )}
@@ -239,6 +248,7 @@ function Toolbar({ applyView }: { applyView: (id: string | null) => void }) {
             <Plus width={15} height={15} />
           </button>
         </div>
+        <PresenceBar />
 
         <div className="search-box">
           <Search width={13} height={13} />
@@ -301,6 +311,10 @@ function Toolbar({ applyView }: { applyView: (id: string | null) => void }) {
           <button className="ghost-btn" title="Theme"
             onClick={() => setUI({ theme: ui.theme === 'dark' ? 'light' : 'dark' })}>
             {ui.theme === 'dark' ? <Sun width={15} height={15} /> : <Moon width={15} height={15} />}
+          </button>
+          <button className={`ghost-btn ${share ? 'on' : ''}`} title={share ? 'Sharing — links, people, status' : 'Share this timeline…'}
+            onClick={() => setUI({ overlay: 'share' })}>
+            <Share2 width={15} height={15} />
           </button>
           <div className="export-wrap">
             <button className="ghost-btn" title="Export / import" onClick={() => setExportOpen(v => !v)}>

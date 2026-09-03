@@ -7,6 +7,7 @@ import type { Branch, Item, Section } from '../model/types'
 import { formatUnit, uid, unitSuffix } from '../model/util'
 import { Markdown } from './Markdown'
 import { nav } from './nav'
+import { uploadImage } from '../sync/share'
 
 export function Inspector() {
   const proj = useActiveProject()
@@ -183,7 +184,15 @@ function ItemPanel({ id }: { id: string }) {
                 e.preventDefault()
                 for (const f of files) {
                   const reader = new FileReader()
-                  reader.onload = () => edit(it => { it.images = [...it.images, String(reader.result)] })
+                  reader.onload = async () => {
+                    let src = String(reader.result)
+                    // Shared tabs keep images in Storage so patches stay small.
+                    const share = useStore.getState().shares[proj.id]
+                    if (share) {
+                      try { src = await uploadImage(share.id, src) } catch { showToast('Image upload failed — kept inline (it may be too large to sync).') }
+                    }
+                    edit(it => { it.images = [...it.images, src] })
+                  }
                   reader.readAsDataURL(f)
                 }
               }}
