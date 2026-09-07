@@ -36,7 +36,9 @@ To ship an update: `npm run build`, commit the regenerated
   type from the sidebar onto the line, double-clicking the line, or `N`.
 - **Types** — user-defined, each with a vector icon (Lucide library, searchable
   picker), a color, a default layer, and optional custom fields (e.g. a
-  "How the player dies" field on *Death opportunity*).
+  "How the player dies" field on *Death opportunity*). Types can be filed into
+  sidebar folders, and folders nest inside each other (drag a type or a folder
+  onto a folder to file it); hide/solo on a folder applies to everything inside.
 - **Layers** — an ordered significance list. What's visible at each zoom is
   decided automatically by density (the *detail* dial in the toolbar); each
   layer also has hide-always (eye) and show-always (pin) overrides. Items that
@@ -73,7 +75,11 @@ by stable random ids; positions are floats on an unbounded abstract axis.
   "hierarchyLevels": ["Chapter", "Level", "Section"],   // section depth names
   "types":    [{ "id": "…", "name": "Death opportunity", "icon": "Skull",
                  "color": "#ef4444", "defaultLayerId": "…",
+                 "folderId": null,       // sidebar folder, null = top level
                  "fields": [{ "id": "…", "name": "How the player dies" }] }],
+  "typeFolders": [{ "id": "…", "name": "Story", "icon": "Folder", "color": "#f59e0b",
+                    "collapsed": false,
+                    "parentId": null }],  // folders nest: id of the parent folder
   "layers":   [{ "id": "…", "name": "Critical", "eye": false, "pin": false }],
                  // array order = significance, index 0 = most significant
   "sections": [{ "id": "…", "name": "Chapter 1", "depth": 0,

@@ -655,20 +655,24 @@ function ToastView() {
 function DragGhost() {
   const proj = useActiveProject()
   const dragTypeId = useStore(s => s.ui.dragTypeId)
+  const dragFolderId = useStore(s => s.ui.dragFolderId)
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null)
+  const active = dragTypeId ?? dragFolderId
   useEffect(() => {
-    if (!dragTypeId) { setPos(null); return }
+    if (!active) { setPos(null); return }
     const onMove = (e: PointerEvent) => setPos({ x: e.clientX, y: e.clientY })
     window.addEventListener('pointermove', onMove)
     return () => window.removeEventListener('pointermove', onMove)
-  }, [dragTypeId])
-  if (!dragTypeId || !pos) return null
-  const type = proj.types.find(t => t.id === dragTypeId)
-  if (!type) return null
-  const Icon = iconByName(type.icon)
+  }, [active])
+  if (!active || !pos) return null
+  const what = dragTypeId
+    ? proj.types.find(t => t.id === dragTypeId)
+    : proj.typeFolders.find(f => f.id === dragFolderId)
+  if (!what) return null
+  const Icon = iconByName(what.icon)
   return (
-    <div className="drag-ghost" style={{ left: pos.x + 10, top: pos.y + 8, borderColor: type.color, color: type.color }}>
-      <Icon width={14} height={14} /> {type.name}
+    <div className="drag-ghost" style={{ left: pos.x + 10, top: pos.y + 8, borderColor: what.color, color: what.color }}>
+      <Icon width={14} height={14} /> {what.name}
     </div>
   )
 }

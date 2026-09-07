@@ -36,4 +36,10 @@
 - Images on shared tabs go to the public `timeline-images` bucket; inline
   base64 is migrated on share.
 - `ui.readOnly` (viewer) and a `view` share role block `mutate` in the store and
-  drag/create handlers in `Canvas.tsx`.
+  drag/create handlers in `Canvas.tsx`. `useCanEdit()` exposes the same check to
+  components: `Sidebar` and `Inspector` render read-only variants from it (the
+  `Viewer` page mounts both), using per-user `filters` (never the shared doc)
+  for anything a viewer toggles.
+- Type folders nest via `TypeFolder.parentId`; helpers live in
+  `src/model/folders.ts` and `repairFolders` runs on load/mutate/remote patch to
+  cut cycles and dangling links.

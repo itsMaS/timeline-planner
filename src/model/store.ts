@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { repairFolders } from './folders'
 import { refreshSectionDepths } from './layout'
 import { applyPatch, diffProject, type Patch } from './patch'
 import type { Camera, Filters, Id, Project, TimelineSettings } from './types'
@@ -43,7 +44,9 @@ export function normalizeProject(p: Project): Project {
   }
   for (const sc of p.sections) sc.description ??= ''
   p.typeFolders ??= []
+  for (const f of p.typeFolders) f.parentId ??= null
   for (const t of p.types) t.folderId ??= null
+  repairFolders(p)
   refreshSectionDepths(p)
   return p
 }
@@ -141,6 +144,8 @@ interface UIState {
   overlay: 'templates' | 'cheatsheet' | 'settings' | 'share' | null
   editTypeId: Id | null
   dragTypeId: Id | null
+  /** A sidebar folder being dragged onto another folder (or out to the top level). */
+  dragFolderId: Id | null
   lastTypeId: Id | null
   toast: Toast | null
   sidebarOpen: boolean
@@ -282,6 +287,7 @@ export const useStore = create<Store>((set, get) => ({
     overlay: init.fresh ? 'templates' : null,
     editTypeId: null,
     dragTypeId: null,
+    dragFolderId: null,
     lastTypeId: init.projects[0]?.types[0]?.id ?? null,
     toast: null,
     sidebarOpen: true,
@@ -301,6 +307,7 @@ export const useStore = create<Store>((set, get) => ({
     if (!cur || !canEdit(s, cur.id)) return
     const draft = structuredClone(cur)
     recipe(draft)
+    repairFolders(draft)
     refreshSectionDepths(draft)
     const fwd = diffProject(cur, draft)
     if (fwd) {
@@ -450,6 +457,7 @@ export const useStore = create<Store>((set, get) => ({
     if (!cur) return
     const draft = structuredClone(cur)
     applyPatch(draft, patch)
+    repairFolders(draft)
     refreshSectionDepths(draft)
     set({ projects: s.projects.map(p => (p.id === projectId ? draft : p)) })
     persistSoon(get)
@@ -495,4 +503,9 @@ export function useActiveShare(): ShareInfo | undefined {
 
 export function useActiveSync(): SyncState | undefined {
   return useStore(s => s.sync[s.activeId])
+}
+
+/** False in viewer mode and on tabs joined through a view link: the UI should render read-only. */
+export function useCanEdit(): boolean {
+  return useStore(s => canEdit(s, s.activeId))
 }

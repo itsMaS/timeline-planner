@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react'
 import { ArrowDown, ArrowUp, Copy, Trash2, X } from 'lucide-react'
 import { iconByName } from '../model/icons'
 import { typeOf } from '../model/layout'
-import { useActiveProject, useStore } from '../model/store'
+import { useActiveProject, useCanEdit, useStore } from '../model/store'
 import type { Branch, Item, Section } from '../model/types'
 import { formatUnit, uid, unitSuffix } from '../model/util'
 import { Markdown } from './Markdown'
@@ -12,6 +12,7 @@ import { uploadImage } from '../sync/share'
 export function Inspector() {
   const proj = useActiveProject()
   const ui = useStore(s => s.ui)
+  const canEdit = useCanEdit()
   const sel = ui.selection
   if (sel.length === 0) return null
   const branchId = sel.length === 1 && sel[0].startsWith('B:') ? sel[0].slice(2) : null
@@ -19,6 +20,17 @@ export function Inspector() {
   const itemIds = sel.filter(s => !s.includes(':'))
   const branch = branchId ? proj.branches.find(b => b.id === branchId) : null
   const section = sectionId ? proj.sections.find(s => s.id === sectionId) : null
+  if (!canEdit) {
+    // View mode: everything is readable, nothing is editable.
+    return (
+      <aside className="inspector readonly">
+        {branch && <ReadBranchPanel branch={branch} />}
+        {section && <ReadSectionPanel section={section} />}
+        {itemIds.length === 1 && <ReadItemPanel id={itemIds[0]} />}
+        {itemIds.length > 1 && <ReadBulkPanel ids={itemIds} />}
+      </aside>
+    )
+  }
   return (
     <aside className="inspector">
       {branch && <BranchPanel branch={branch} />}
@@ -38,6 +50,197 @@ function Head(props: { title: string; children?: React.ReactNode }) {
       {props.children}
       <button className="ghost-btn" onClick={() => select([])}><X width={15} height={15} /></button>
     </div>
+  )
+}
+
+// ------------------------------------------------------------------ read-only panels
+
+function ReadField({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="field">
+      <label>{label}</label>
+      <div className="read-value">{children}</div>
+    </div>
+  )
+}
+
+/** Compact "title · position" row that flies the camera to an item. */
+function ItemJumpRow({ item }: { item: Item }) {
+  const proj = useActiveProject()
+  const t = typeOf(proj, item)
+  const Icon = iconByName(t?.icon ?? 'Circle')
+  const suffix = unitSuffix(proj.settings.unit.preset, proj.settings.unit.custom)
+  return (
+    <button className="insp-item-row" title="Jump to item" onClick={() => nav.current?.flyToItem(item.id)}>
+      <Icon width={13} height={13} color={t?.color} strokeWidth={2} />
+      <span className="insp-item-title">{item.title || '…'}</span>
+      <span className="insp-item-pos">
+        {formatUnit(item.pos, Math.max(Math.abs(item.pos), 0.01), suffix, proj.settings.unit.preset)}
+      </span>
+    </button>
+  )
+}
+
+function ReadItemPanel({ id }: { id: string }) {
+  const proj = useActiveProject()
+  const item = proj.items.find(i => i.id === id)
+  if (!item) return null
+  const type = typeOf(proj, item)
+  const Icon = iconByName(type?.icon ?? 'Circle')
+  const layer = proj.layers.find(l => l.id === (item.layerId ?? type?.defaultLayerId))
+  const path = item.pathId
+    ? proj.branches.flatMap(b => b.paths.map((p, i) => ({ p, b, i }))).find(x => x.p.id === item.pathId)
+    : null
+  const suffix = unitSuffix(proj.settings.unit.preset, proj.settings.unit.custom)
+  const fmt = (v: number) => formatUnit(v, Math.max(Math.abs(v), 0.01), suffix, proj.settings.unit.preset)
+  const fields = (type?.fields ?? []).filter(f => (item.fieldValues[f.id] ?? '').trim())
+  return (
+    <>
+      <Head title={type?.name ?? 'Item'} />
+      <div className="insp-body">
+        <div className="read-title">
+          <span className="type-swatch" style={{ background: `${type?.color ?? '#888'}26`, color: type?.color }}>
+            <Icon width={15} height={15} />
+          </span>
+          <h3>{item.title || <span className="muted">Untitled</span>}</h3>
+        </div>
+        <div className="row gap">
+          <ReadField label="Position">{fmt(item.pos)}</ReadField>
+          <ReadField label="Span">{item.duration > 0 ? `${fmt(item.duration)} → ${fmt(item.pos + item.duration)}` : 'point'}</ReadField>
+        </div>
+        <div className="row gap">
+          <ReadField label="Layer">{layer?.name ?? <span className="muted">none</span>}</ReadField>
+          {path && (
+            <ReadField label="Branch path">{path.p.label || `${path.b.mode.toUpperCase()} branch · path ${path.i + 1}`}</ReadField>
+          )}
+        </div>
+        {item.tags.length > 0 && (
+          <div className="field">
+            <label>Tags</label>
+            <div className="tt-tags">{item.tags.map(t => <span key={t} className="tag">{t}</span>)}</div>
+          </div>
+        )}
+        {item.link && (
+          <ReadField label="Link">
+            <a className="link-btn" href={item.link} target="_blank" rel="noreferrer noopener">{item.link} ↗</a>
+          </ReadField>
+        )}
+        {fields.map(f => (
+          <ReadField key={f.id} label={f.name}>{item.fieldValues[f.id]}</ReadField>
+        ))}
+        <div className="field">
+          <label>Description</label>
+          <div className="md-preview"><Markdown text={item.description || '*no description*'} /></div>
+        </div>
+        {item.images.length > 0 && (
+          <div className="img-strip read">
+            {item.images.map((src, i) => (
+              <a key={i} className="img-thumb" href={src} target="_blank" rel="noreferrer noopener" title="Open full size">
+                <img src={src} alt="" />
+              </a>
+            ))}
+          </div>
+        )}
+      </div>
+    </>
+  )
+}
+
+function ReadBulkPanel({ ids }: { ids: string[] }) {
+  const proj = useActiveProject()
+  const items = useMemo(
+    () => proj.items.filter(it => ids.includes(it.id)).sort((a, b) => a.pos - b.pos || a.title.localeCompare(b.title)),
+    [proj.items, ids],
+  )
+  return (
+    <>
+      <Head title={`${items.length} items`} />
+      <div className="insp-body">
+        <div className="sb-hint">click one on the timeline to read its details</div>
+        <div className="insp-items">
+          {items.map(it => <ItemJumpRow key={it.id} item={it} />)}
+        </div>
+      </div>
+    </>
+  )
+}
+
+function ReadBranchPanel({ branch }: { branch: Branch }) {
+  const proj = useActiveProject()
+  const suffix = unitSuffix(proj.settings.unit.preset, proj.settings.unit.custom)
+  const fmt = (v: number) => formatUnit(v, Math.max(Math.abs(v), 0.01), suffix, proj.settings.unit.preset)
+  return (
+    <>
+      <Head title="Branch" />
+      <div className="insp-body">
+        <ReadField label="Mode">
+          {branch.mode === 'any' ? 'ANY — pick one path' : 'ALL — every path, any order'}
+        </ReadField>
+        <div className="row gap">
+          <ReadField label="Forks at">{fmt(branch.forkPos)}</ReadField>
+          <ReadField label="Joins at">{fmt(branch.joinPos)}</ReadField>
+        </div>
+        <div className="field">
+          <label>Paths</label>
+          {branch.paths.map((path, i) => {
+            const inside = proj.items
+              .filter(it => it.pathId === path.id)
+              .sort((a, b) => a.pos - b.pos || a.title.localeCompare(b.title))
+            return (
+              <div key={path.id} className="read-path">
+                <div className="read-path-head">
+                  <span>{path.label || <span className="muted">Path {i + 1}</span>}</span>
+                  {path.terminal && <span className="tag">dead end</span>}
+                  <span className="grow" />
+                  <span className="count">{inside.length}</span>
+                </div>
+                {inside.length > 0 && (
+                  <div className="insp-items">
+                    {inside.map(it => <ItemJumpRow key={it.id} item={it} />)}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    </>
+  )
+}
+
+function ReadSectionPanel({ section }: { section: Section }) {
+  const proj = useActiveProject()
+  const contained = useMemo(
+    () => proj.items
+      .filter(it => it.pos >= section.start - 1e-9 && it.pos <= section.end + 1e-9)
+      .sort((a, b) => a.pos - b.pos || a.title.localeCompare(b.title)),
+    [proj.items, section.start, section.end],
+  )
+  const suffix = unitSuffix(proj.settings.unit.preset, proj.settings.unit.custom)
+  const fmt = (v: number) => formatUnit(v, Math.max(Math.abs(v), 0.01), suffix, proj.settings.unit.preset)
+  return (
+    <>
+      <Head title={proj.hierarchyLevels[section.depth] ?? 'Section'} />
+      <div className="insp-body">
+        <div className="read-title"><h3>{section.name || <span className="muted">Untitled</span>}</h3></div>
+        <div className="row gap">
+          <ReadField label="Starts">{fmt(section.start)}</ReadField>
+          <ReadField label="Ends">{fmt(section.end)}</ReadField>
+          <ReadField label="Length">{fmt(section.end - section.start)}</ReadField>
+        </div>
+        <div className="field">
+          <label>Description</label>
+          <div className="md-preview"><Markdown text={section.description || '*no description*'} /></div>
+        </div>
+        <div className="field">
+          <label>Items inside <span className="muted">({contained.length})</span></label>
+          {contained.length === 0 && <div className="sb-hint">no items inside this section</div>}
+          <div className="insp-items">
+            {contained.map(it => <ItemJumpRow key={it.id} item={it} />)}
+          </div>
+        </div>
+      </div>
+    </>
   )
 }
 

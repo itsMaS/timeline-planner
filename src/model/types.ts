@@ -16,13 +16,15 @@ export interface ItemType {
   folderId?: Id | null
 }
 
-/** A loose sidebar folder for organizing item types. */
+/** A loose sidebar folder for organizing item types. Folders nest via parentId. */
 export interface TypeFolder {
   id: Id
   name: string
   color: string
   icon: string
   collapsed: boolean
+  /** Parent folder; null/undefined = top level. */
+  parentId?: Id | null
 }
 
 /** Order in Project.layers = significance (index 0 is most significant). */

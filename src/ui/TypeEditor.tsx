@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Trash2, X } from 'lucide-react'
+import { folderTree } from '../model/folders'
 import { iconByName } from '../model/icons'
 import { useActiveProject, useStore } from '../model/store'
 import type { ItemType } from '../model/types'
@@ -91,7 +92,9 @@ export function TypeEditor() {
               onChange={e => edit(t => { t.folderId = e.target.value || null })}
             >
               <option value="">(none)</option>
-              {proj.typeFolders.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
+              {folderTree(proj).map(({ folder, depth }) => (
+                <option key={folder.id} value={folder.id}>{'  '.repeat(depth)}{folder.name}</option>
+              ))}
             </select>
           </div>
         )}
