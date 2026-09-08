@@ -5,7 +5,8 @@ films, courses, project plans. Built for planning a linear game (every story
 beat, death opportunity and mechanic on one line), but nothing in it is
 game-specific.
 
-The full design rationale lives in [DESIGN.md](DESIGN.md).
+The full design rationale lives in [DESIGN.md](DESIGN.md). The plugin platform
+and the Behavioral Analytics plugin are specified in [PLUGINS.md](PLUGINS.md).
 
 ## Running it
 
