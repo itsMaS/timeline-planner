@@ -328,8 +328,6 @@ input, select, textarea { font: inherit; color: inherit; }
 .all-check { fill: none; stroke: var(--muted); stroke-width: 1.4; }
 .terminal-cap { fill: var(--muted); }
 .path-label { font-size: 10px; font-style: italic; fill: var(--muted); cursor: pointer; }
-.braid-lens { fill: color-mix(in srgb, var(--line) 30%, transparent); stroke: var(--line); stroke-width: 1.6; cursor: pointer; }
-.braid-lens.sel, .braid-lens:hover { stroke: var(--accent); }
 .branch-preview line { stroke: var(--accent); stroke-width: 3; stroke-dasharray: 8 6; }
 .branch-preview circle { fill: var(--accent); }
 

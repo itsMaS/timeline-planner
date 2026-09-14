@@ -5,8 +5,8 @@ import {
 } from 'lucide-react'
 import { iconByName } from '../model/icons'
 import {
-  BranchLayout, PlacedItem, ROW_H, contentExtent, displayLabel, fitCamera, itemMatchesFilters,
-  layoutTimeline, minZoomFor, refreshSectionDepths, rowY, typeOf,
+  BranchLayout, PATH_LIFT, PlacedItem, ROW_H, branchPathD, contentExtent, displayLabel, fitCamera, itemMatchesFilters,
+  layoutTimeline, minZoomFor, refreshSectionDepths, rowY, spineD, terminalEndX, typeOf,
 } from '../model/layout'
 import { useActiveProject, useStore } from '../model/store'
 import type { Camera, Item, Section } from '../model/types'
@@ -197,13 +197,13 @@ export function CanvasView() {
 
   // ---- exit animations
   const prevPlaced = useRef<Map<string, PlacedItem>>(new Map())
-  const [leaving, setLeaving] = useState<Map<string, { item: Item; row: number }>>(new Map())
+  const [leaving, setLeaving] = useState<Map<string, { item: Item; ny: number }>>(new Map())
   useEffect(() => {
     const cur = new Map(layout.placed.map(pl => [pl.item.id, pl]))
     if (ui.animLevel !== 'off') {
-      const gone = new Map<string, { item: Item; row: number }>()
+      const gone = new Map<string, { item: Item; ny: number }>()
       prevPlaced.current.forEach((pl, id) => {
-        if (!cur.has(id) && gone.size < 40) gone.set(id, { item: pl.item, row: pl.row })
+        if (!cur.has(id) && gone.size < 40) gone.set(id, { item: pl.item, ny: pl.ny })
       })
       if (gone.size) {
         setLeaving(l => {
@@ -313,9 +313,15 @@ export function CanvasView() {
       const y = clientY - rect.top - spineY
       let pathId: string | null = null
       for (const bl of layout.branches) {
-        if (bl.collapsed) continue
+        if (x <= bl.forkX + 8 || x >= bl.joinX - 8) continue
+        // Each path owns the band from its row of items down to the line itself.
+        const top = Math.min(...bl.pathYs) - PATH_LIFT - 20
+        const bottom = Math.max(...bl.pathYs) + 20
+        if (y < top || y > bottom) continue
+        let best = Infinity
         bl.pathYs.forEach((py, i) => {
-          if (Math.abs(y - py) < 26 && x > bl.forkX + 20 && x < bl.joinX - 20) pathId = bl.branch.paths[i].id
+          const d = Math.abs(y - (py - PATH_LIFT / 2))
+          if (d < best) { best = d; pathId = bl.branch.paths[i].id }
         })
       }
       const pos = ui.snap ? snapPos(toPos(x), cam.s) : toPos(x)
@@ -853,14 +859,8 @@ export function CanvasView() {
       }
       const hits: string[] = []
       for (const pl of layout.placed) {
-        const iy = spineY + rowY(pl.row)
+        const iy = spineY + pl.ny
         if (pl.x >= ax && pl.x <= bx && iy >= ay && iy <= by) hits.push(pl.item.id)
-      }
-      for (const bl of layout.branches) {
-        bl.items.forEach(list => list.forEach(pi => {
-          const iy = spineY + pi.y
-          if (pi.x >= ax && pi.x <= bx && iy >= ay && iy <= by) hits.push(pi.item.id)
-        }))
       }
       // Sections join the marquee through their header bars (same geometry as render).
       for (const sc of proj.sections) {
@@ -1045,17 +1045,17 @@ export function CanvasView() {
   // ---- base dots: one per stack of placed items sharing a position; dragging
   // the dot moves every item in that stack together.
   const columns = useMemo(() => {
-    const sorted = [...layout.placed].sort((a, b) => a.x - b.x)
-    const cols: { x: number; ids: string[]; color: string; ghost: boolean }[] = []
+    const sorted = [...layout.placed].sort((a, b) => a.y - b.y || a.x - b.x)
+    const cols: { x: number; y: number; ids: string[]; color: string; ghost: boolean }[] = []
     for (const pl of sorted) {
       const last = cols[cols.length - 1]
-      if (last && Math.abs(pl.x - last.x) < 5) {
+      if (last && last.y === pl.y && Math.abs(pl.x - last.x) < 5) {
         last.ids.push(pl.item.id)
         // The dot fades with its stack: it stays solid while any item in the
         // stack survives the current filters.
         last.ghost = last.ghost && pl.ghost
       } else {
-        cols.push({ x: pl.x, ids: [pl.item.id], color: typeOf(proj, pl.item)?.color ?? '#888', ghost: pl.ghost })
+        cols.push({ x: pl.x, y: pl.y, ids: [pl.item.id], color: typeOf(proj, pl.item)?.color ?? '#888', ghost: pl.ghost })
       }
     }
     return cols
@@ -1357,9 +1357,9 @@ export function CanvasView() {
             </g>
           ))}
 
-          {/* spine */}
-          <line
-            x1={0} y1={0} x2={size.w} y2={0} className="spine"
+          {/* spine — broken where a branch splits it into paths */}
+          <path
+            d={spineD(size.w, layout.branches)} className="spine"
             style={{ strokeWidth: st.spine.width, opacity: st.spine.opacity }}
           />
 
@@ -1368,12 +1368,11 @@ export function CanvasView() {
           <g pointerEvents="none">
             {layout.placed.map(pl => {
               const t = typeOf(proj, pl.item)
-              const y = rowY(pl.row)
               const z = pl.size || 1
               return (
                 <line
                   key={`stem-${pl.item.id}`} className="stem"
-                  x1={pl.x} y1={y + (y < 0 ? 14 * z : -14 * z)} x2={pl.x} y2={0}
+                  x1={pl.x} y1={pl.ny + (pl.ny < pl.y ? 14 * z : -14 * z)} x2={pl.x} y2={pl.y}
                   style={{ stroke: t?.color }}
                 />
               )
@@ -1387,12 +1386,6 @@ export function CanvasView() {
               bl={bl}
               selected={selection.has(`B:${bl.branch.id}`)}
               selectBranch={() => { select([`B:${bl.branch.id}`]); sfx.select() }}
-              itemSelection={selection}
-              proj={proj}
-              itemPointerDown={itemPointerDown}
-              itemContextMenu={itemContextMenu}
-              itemHoverStart={itemHoverStart}
-              itemHoverEnd={itemHoverEnd}
               startEndDrag={(side, e) => {
                 e.stopPropagation()
                 ;(e.target as Element).setPointerCapture?.(e.pointerId)
@@ -1416,7 +1409,7 @@ export function CanvasView() {
             const x = toX(l.item.pos)
             if (x < -60 || x > size.w + 60) return null
             return (
-              <g key={`leave-${id}`} className="node" transform={`translate(${x}, ${rowY(l.row)})`} pointerEvents="none">
+              <g key={`leave-${id}`} className="node" transform={`translate(${x}, ${l.ny})`} pointerEvents="none">
                 <g className="node-inner out">
                   <circle r={13} style={{ fill: `${type?.color}22`, stroke: type?.color }} />
                 </g>
@@ -1454,7 +1447,7 @@ export function CanvasView() {
             <g
               key={dot.item.id}
               className={`layer-dot ${dot.ghost ? 'ghost' : ''}`}
-              transform={`translate(${dot.x}, 0)`}
+              transform={`translate(${dot.x}, ${dot.y})`}
               onPointerDown={e => itemPointerDown(e, dot.item)}
               onContextMenu={e => itemContextMenu(e, dot.item)}
               onPointerEnter={e => itemHoverStart(e, dot.item.id)}
@@ -1469,7 +1462,7 @@ export function CanvasView() {
           {layout.clusters.map(cl => (
             <g
               key={cl.key}
-              transform={`translate(${cl.x}, 0)`}
+              transform={`translate(${cl.x}, ${cl.y})`}
               className="cluster"
               onPointerEnter={() => setExpandedCluster(cl.key)}
               onPointerLeave={() => setExpandedCluster(c => (c === cl.key ? null : c))}
@@ -1517,7 +1510,7 @@ export function CanvasView() {
           {!drag && columns.map(col => (
             <circle
               key={`base-${col.ids[0]}`}
-              cx={col.x} cy={0} r={4}
+              cx={col.x} cy={col.y} r={4}
               className={`base-dot ${col.ghost ? 'ghost' : ''}`}
               style={{ stroke: col.color }}
               onPointerDown={e => basePointerDown(e, col)}
@@ -1656,14 +1649,13 @@ function ItemG(props: {
   const { pl, proj, selected } = props
   const type = typeOf(proj, pl.item)
   const Icon = iconByName(type?.icon ?? 'Circle')
-  const y = rowY(pl.row)
   const color = type?.color ?? '#888'
   const z = pl.size || 1
   const barY = 3 + 14 * z
   return (
     <g
       className={`node ${pl.ghost ? 'ghost' : ''} ${selected ? 'sel' : ''}`}
-      transform={`translate(${pl.x}, ${y})`}
+      transform={`translate(${pl.x}, ${pl.ny})`}
       onPointerDown={props.onPointerDown}
       onContextMenu={props.onContextMenu}
       onPointerEnter={props.onHoverStart}
@@ -1706,95 +1698,51 @@ function BranchG(props: {
   bl: BranchLayout
   selected: boolean
   selectBranch: () => void
-  itemSelection: Set<string>
-  proj: ReturnType<typeof useActiveProject>
-  itemPointerDown: (e: React.PointerEvent, item: Item) => void
-  itemContextMenu: (e: React.MouseEvent, item: Item) => void
-  itemHoverStart: (e: React.PointerEvent, id: string) => void
-  itemHoverEnd: () => void
   startEndDrag: (side: 'fork' | 'join', e: React.PointerEvent) => void
   zoomIn: () => void
 }) {
-  const { bl, selected, proj } = props
+  const { bl, selected } = props
   const { branch } = bl
   const GateIcon = branch.mode === 'any' ? Shuffle : ListChecks
-  if (bl.collapsed) {
-    const cx = (bl.forkX + bl.joinX) / 2
-    return (
-      <g className="braid" onPointerDown={e => { e.stopPropagation(); props.selectBranch() }} onDoubleClick={props.zoomIn}>
-        <path
-          d={`M ${bl.forkX} 0 C ${cx} -14, ${cx} -14, ${bl.joinX} 0 C ${cx} 14, ${cx} 14, ${bl.forkX} 0 Z`}
-          className={`braid-lens ${selected ? 'sel' : ''}`}
-        />
-        <rect x={cx - 14} y={8} width={28} height={16} rx={8} className="cluster-pill" />
-        <text x={cx} y={20} textAnchor="middle" className="cluster-count">{branch.paths.length}⑂</text>
-      </g>
-    )
-  }
   const dash = branch.mode === 'any' ? '7 5' : undefined
+  const pick = (e: React.PointerEvent) => { e.stopPropagation(); props.selectBranch() }
+  // Labels and the ALL checkboxes sit just under each path's straight run; they
+  // get out of the way when the branch is squeezed too narrow to read them.
+  const labelX = bl.forkX + bl.curveW + 6
+  const roomy = bl.joinX - bl.forkX > 2 * bl.curveW + 40
   return (
     <g className={`branch ${selected ? 'sel' : ''}`}>
       {branch.paths.map((path, i) => {
-        const yOff = bl.pathYs[i]
-        const endX = path.terminal ? bl.joinX - 74 : bl.joinX
-        const enter = `M ${bl.forkX} 0 C ${bl.forkX + 30} 0, ${bl.forkX + 26} ${yOff}, ${bl.forkX + 58} ${yOff}`
-        const mid = `L ${Math.max(bl.forkX + 58, endX - 58)} ${yOff}`
-        const exit = path.terminal ? '' : `C ${endX - 26} ${yOff}, ${endX - 30} 0, ${endX} 0`
+        const y = bl.pathYs[i]
         return (
           <g key={path.id}>
             <path
-              d={`${enter} ${mid} ${exit}`}
+              d={branchPathD(bl, y, path.terminal)}
               className="branch-path"
               strokeDasharray={dash}
-              onPointerDown={e => { e.stopPropagation(); props.selectBranch() }}
+              onPointerDown={pick}
+              onDoubleClick={props.zoomIn}
             />
             {path.terminal && (
-              <rect x={Math.max(bl.forkX + 58, endX - 58) - 2} y={yOff - 8} width={4} height={16} rx={2} className="terminal-cap" />
+              <rect x={terminalEndX(bl) - 2} y={y - 8} width={4} height={16} rx={2} className="terminal-cap" />
             )}
-            {branch.mode === 'all' && (
-              <rect x={bl.forkX + 52} y={yOff - 22} width={9} height={9} rx={2} className="all-check" />
+            {roomy && branch.mode === 'all' && (
+              <rect x={labelX} y={y + 5} width={9} height={9} rx={2} className="all-check" />
             )}
-            {path.label && (
-              <text x={bl.forkX + 68} y={yOff - 10} className="path-label"
-                onPointerDown={e => { e.stopPropagation(); props.selectBranch() }}>
+            {roomy && path.label && (
+              <text x={labelX + (branch.mode === 'all' ? 14 : 0)} y={y + 13} className="path-label" onPointerDown={pick}>
                 {path.label}
               </text>
             )}
-            {bl.items[i].map(pi => {
-              const t = typeOf(proj, pi.item)
-              const Icon = iconByName(t?.icon ?? 'Circle')
-              const sel = props.itemSelection.has(pi.item.id)
-              const z = pi.size || 1
-              return (
-                <g
-                  key={pi.item.id}
-                  className={`node ${pi.ghost ? 'ghost' : ''} ${sel ? 'sel' : ''}`}
-                  transform={`translate(${pi.x}, ${pi.y})`}
-                  onPointerDown={e => props.itemPointerDown(e, pi.item)}
-                  onContextMenu={e => props.itemContextMenu(e, pi.item)}
-                  onPointerEnter={e => props.itemHoverStart(e, pi.item.id)}
-                  onPointerLeave={props.itemHoverEnd}
-                >
-                  <g className="node-inner pop">
-                    {sel && <circle r={16 * z} className="sel-ring" style={{ stroke: t?.color }} />}
-                    <circle r={11 * z} className="node-under" />
-                    <circle r={11 * z} className="node-bg" style={{ fill: `${t?.color}26`, stroke: t?.color }} />
-                    <Icon x={-6.5 * z} y={-6.5 * z} width={13 * z} height={13 * z} color={t?.color} strokeWidth={2} />
-                    {pi.labelShown && <text x={16 * z} y={16 + 5 * z} className="node-label sm">{pi.item.title}</text>}
-                  </g>
-                </g>
-              )
-            })}
           </g>
         )
       })}
       {/* gate + join */}
-      <g className="gate" onPointerDown={e => { e.stopPropagation(); props.selectBranch() }}>
+      <g className="gate" onPointerDown={pick}>
         <circle cx={bl.forkX} r={12} className="gate-bg" />
         <GateIcon x={bl.forkX - 7} y={-7} width={14} height={14} className="gate-icon" />
       </g>
-      <circle cx={bl.joinX} r={5} className="join-dot"
-        onPointerDown={e => { e.stopPropagation(); props.selectBranch() }} />
+      <circle cx={bl.joinX} r={5} className="join-dot" onPointerDown={pick} />
       {selected && (
         <>
           <circle cx={bl.forkX} r={17} className="end-handle" onPointerDown={e => props.startEndDrag('fork', e)} />
