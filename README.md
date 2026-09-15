@@ -59,7 +59,16 @@ To ship an update: `npm run build`, commit the regenerated
   `prefers-reduced-motion` support, dark and light themes.
 - **Data** — multiple timelines as tabs, continuous autosave + periodic
   rollback snapshots, JSON import/export, PNG export of the current view, SVG
-  export of the whole timeline. Everything is undoable (`Ctrl+Z`).
+  export of the whole timeline, CSV of all items. Everything is undoable
+  (`Ctrl+Z`).
+- **Document export (PDF)** — *Export → Document PDF* renders the timeline as
+  a printable outline: sections become headings (outermost level H1, next H2,
+  …), items are sub-headings one level below their section with the type's
+  icon and name beside the title, and descriptions, custom fields, tags, links
+  and images follow as body text — readable by people and AI agents alike. It
+  opens in a new tab with the print dialog up; pick *Save as PDF*. With a
+  section selected (or via the section inspector's document button) only that
+  section and everything inside it is exported, starting at H1.
 
 Press `?` in the app for the full shortcut list.
 

@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import {
-  Download, Eye, EyeOff, GitBranch, Grid3x3, HelpCircle, Link, Magnet, Maximize2, Minus, Moon, Plus,
+  Download, Eye, EyeOff, FileText, GitBranch, Grid3x3, HelpCircle, Link, Magnet, Maximize2, Minus, Moon, Plus,
   Redo2, Search, Settings2, Share2, Sun, Undo2, Upload, Volume2, VolumeX, X, ZoomIn,
 } from 'lucide-react'
 import { iconByName } from '../model/icons'
@@ -10,6 +10,7 @@ import { TEMPLATES } from '../model/templates'
 import type { TimelineSettings, UnitPreset } from '../model/types'
 import { uid } from '../model/util'
 import { exportCSV, exportFullSVG, exportJSON, exportPNG } from './export'
+import { exportDocPDF } from './exportDoc'
 import { CanvasView } from './Canvas'
 import { creatorStamp } from '../sync/client'
 import { getClipboard, setClipboard } from './clipboard'
@@ -216,6 +217,14 @@ function Toolbar({ applyView }: { applyView: (id: string | null) => void }) {
   const tweak = useStore(s => s.tweak)
   const [exportOpen, setExportOpen] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
+  // Selected sections narrow the document export to just those sub-trees.
+  const docSections = ui.selection.filter(x => x.startsWith('S:')).map(x => x.slice(2))
+    .map(id => proj.sections.find(sc => sc.id === id)).filter((sc): sc is NonNullable<typeof sc> => !!sc)
+  const docLabel = docSections.length === 0
+    ? 'Document PDF of whole timeline'
+    : docSections.length === 1
+      ? `Document PDF of “${docSections[0].name || 'Untitled'}”`
+      : `Document PDF of ${docSections.length} selected sections`
 
   return (
     <>
@@ -335,6 +344,17 @@ function Toolbar({ applyView }: { applyView: (id: string | null) => void }) {
                 </button>
                 <button onClick={() => { exportCSV(proj); setExportOpen(false) }}>
                   <Download width={13} height={13} /> CSV of all items
+                </button>
+                <button
+                  title="Sections become headings, items sub-headings with their type and icon. Opens the print dialog — choose “Save as PDF”."
+                  onClick={() => {
+                    if (!exportDocPDF(proj, docSections.length ? docSections.map(sc => sc.id) : null)) {
+                      showToast('Pop-up blocked — allow pop-ups for this site to export the document.')
+                    }
+                    setExportOpen(false)
+                  }}
+                >
+                  <FileText width={13} height={13} /> {docLabel}
                 </button>
                 <button onClick={() => { fileRef.current?.click(); setExportOpen(false) }}>
                   <Upload width={13} height={13} /> Import JSON…

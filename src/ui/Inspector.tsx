@@ -1,10 +1,11 @@
 import React, { useMemo, useState } from 'react'
-import { ArrowDown, ArrowUp, Copy, Trash2, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, Copy, FileText, Trash2, X } from 'lucide-react'
 import { iconByName } from '../model/icons'
 import { typeOf } from '../model/layout'
 import { useActiveProject, useCanEdit, useStore } from '../model/store'
 import type { Branch, Item, Section } from '../model/types'
 import { formatUnit, uid, unitSuffix } from '../model/util'
+import { exportDocPDF } from './exportDoc'
 import { Markdown } from './Markdown'
 import { nav } from './nav'
 import { creatorStamp } from '../sync/client'
@@ -51,6 +52,20 @@ function Head(props: { title: string; children?: React.ReactNode }) {
       {props.children}
       <button className="ghost-btn" onClick={() => select([])}><X width={15} height={15} /></button>
     </div>
+  )
+}
+
+/** Opens the printable outline of one section (headings + items) for saving as PDF. */
+function SectionDocButton({ section }: { section: Section }) {
+  const proj = useActiveProject()
+  const showToast = useStore(s => s.showToast)
+  return (
+    <button
+      className="ghost-btn" title="Export this section as a document (PDF)"
+      onClick={() => {
+        if (!exportDocPDF(proj, [section.id])) showToast('Pop-up blocked — allow pop-ups for this site to export the document.')
+      }}
+    ><FileText width={14} height={14} /></button>
   )
 }
 
@@ -234,7 +249,9 @@ function ReadSectionPanel({ section }: { section: Section }) {
   const fmt = (v: number) => formatUnit(v, Math.max(Math.abs(v), 0.01), suffix, proj.settings.unit.preset)
   return (
     <>
-      <Head title={proj.hierarchyLevels[section.depth] ?? 'Section'} />
+      <Head title={proj.hierarchyLevels[section.depth] ?? 'Section'}>
+        <SectionDocButton section={section} />
+      </Head>
       <div className="insp-body">
         <div className="read-title"><h3>{section.name || <span className="muted">Untitled</span>}</h3></div>
         <div className="row gap">
@@ -602,6 +619,7 @@ function SectionPanel({ section }: { section: Section }) {
   return (
     <>
       <Head title={proj.hierarchyLevels[section.depth] ?? 'Section'}>
+        <SectionDocButton section={section} />
         <button
           className="ghost-btn danger" title="Delete section"
           onClick={() => { mutate(p => { p.sections = p.sections.filter(s => s.id !== section.id) }); select([]); showToast('Section deleted.', true) }}
