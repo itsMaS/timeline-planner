@@ -6,20 +6,23 @@ import {
 import { allowsTarget, attachmentsFor, backlinks, effectiveValue, formatValue, ownerOf } from '../model/fields'
 import { iconByName } from '../model/icons'
 import {
-  BranchLayout, PlacedItem, ROW_H, contentExtent, displayLabel, fitCamera, itemMatchesFilters,
-  layoutTimeline, minZoomFor, refreshSectionDepths, rowY, typeOf,
+  BranchLayout, PATH_LIFT, PlacedItem, ROW_H, branchPathD, contentExtent, fitCamera, itemMatchesFilters, splitLabel,
+  layoutTimeline, minZoomFor, refreshSectionDepths, rowY, spineD, spineYFor, terminalEndX, typeOf,
 } from '../model/layout'
 import { bandBadge } from '../model/processors'
+import { proposalItemIds } from '../model/proposal'
 import { useActiveProject, useStore } from '../model/store'
 import type { Camera, Item, Section } from '../model/types'
-import { clamp, formatUnit, rulerStepFor, sectionHue, snapPos, timeBaseFor, uid, unitSuffix } from '../model/util'
+import { PALETTE, clamp, formatUnit, rulerStepFor, sectionHue, snapPos, timeBaseFor, uid, unitSuffix } from '../model/util'
 import { bindParticleCanvas, burst, puff, ripple, setParticleLevel } from '../fx/particles'
 import { setSoundOn, sfx } from '../fx/sound'
 import { flyCamera, cancelFlight } from '../fx/springs'
+import { creatorStamp } from '../sync/client'
 import { getClipboard, setClipboard } from './clipboard'
 import { requestDelete } from './deletion'
 import { Markdown } from './Markdown'
 import { chipDrop, nav } from './nav'
+import { TypeSearch } from './TypeSearch'
 
 const MIN_S = 0.4
 const MAX_S = 700
@@ -35,9 +38,22 @@ type Drag =
       allOrig: Map<string, number>
       /** Ripple mode was on (or Shift held) when the drag started. */
       ripple: boolean
+      /** Span items whose END (not start) travels with the drag — a base-dot
+          drag picks up every span ending at that position, so the dragged
+          delta stretches their duration instead of moving them. */
+      endOrig: Map<string, { pos: number; dur: number }>
       moved: boolean; color: string; cands: number[]
     }
   | { kind: 'handle'; id: string; side: 'L' | 'R'; origPos: number; origDur: number; startClientX: number; cands: number[] }
+  | {
+      /** Proportionally scale every selected item (positions and span
+          durations) around the group's opposite extreme — the handles on
+          the first and last selected item. */
+      kind: 'itemScale'; ids: string[]; side: 'L' | 'R'; startClientX: number
+      orig: Map<string, { pos: number; dur: number }>
+      anchor: number; grabPos: number
+      cands: number[]; minFactor: number; moved: boolean; color: string
+    }
   | { kind: 'branchEnd'; id: string; side: 'fork' | 'join'; orig: number; startClientX: number; cands: number[] }
   | {
       /** One or more section edges sharing the grabbed position (coincident
@@ -83,7 +99,13 @@ type Drag =
     }
 
 type CtxTarget = { kind: 'bg'; pos: number; rawPos: number } | { kind: 'item'; id: string }
-interface CtxMenu { x: number; y: number; target: CtxTarget }
+interface CtxMenu {
+  x: number; y: number; target: CtxTarget
+  /** Background menu switched to the "new item" type search. */
+  search?: boolean
+  /** Prompting for the title of a just-created item (in place of the picker). */
+  name?: { itemId: string; placeholder: string }
+}
 
 export function CanvasView() {
   const proj = useActiveProject()
@@ -112,6 +134,10 @@ export function CanvasView() {
   const menuRef = useRef<HTMLDivElement>(null)
   /** Set after a right-drag pan so the browser's contextmenu event doesn't open the menu. */
   const suppressMenuRef = useRef(false)
+  /** Last pointer position over the canvas (null once it leaves) — where Space places the picker. */
+  const pointerRef = useRef<{ x: number; y: number } | null>(null)
+  /** Text typed so far into the new-item name prompt; committed when the prompt closes. */
+  const pendingNameRef = useRef('')
 
   const cam = proj.camera
   const st = proj.settings
@@ -120,8 +146,11 @@ export function CanvasView() {
   const maxS = timeBase ? Math.max(MAX_S, timeBase * 400) : MAX_S
   // Zoom-out limit follows the content extent so large scopes stay reachable.
   const minS = Math.min(MIN_S, minZoomFor(proj, size.w))
-  const spineY = Math.round(size.h * 0.42)
+  const spineY = spineYFor(proj, size.h)
   const selection = useMemo(() => new Set(ui.selection), [ui.selection])
+  // Items touched by the proposal open in the review panel get a dashed ring.
+  const reviewProposal = useStore(s => (s.ui.reviewProposalId ? s.proposals[s.activeId]?.find(p => p.id === s.ui.reviewProposalId) : undefined))
+  const proposed = useMemo(() => new Set(reviewProposal ? proposalItemIds(reviewProposal) : []), [reviewProposal])
 
   useEffect(() => { setParticleLevel(ui.animLevel) }, [ui.animLevel])
   useEffect(() => { setSoundOn(ui.soundOn) }, [ui.soundOn])
@@ -191,8 +220,8 @@ export function CanvasView() {
   const maxUpRows = Math.max(1, Math.floor((spineY - headerH - 76) / ROW_H) + 1)
 
   const layout = useMemo(
-    () => layoutTimeline(effective, cam, size.w, proj.filters, ui.density, ui.ghostHidden, stickyRef.current, selection, st.placement, maxUpRows),
-    [effective, cam, size.w, proj.filters, ui.density, ui.ghostHidden, selection, st.placement, maxUpRows],
+    () => layoutTimeline(effective, cam, size.w, proj.filters, ui.density, ui.ghostHidden, stickyRef.current, selection, st.placement, maxUpRows, ui.showFields),
+    [effective, cam, size.w, proj.filters, ui.density, ui.ghostHidden, selection, st.placement, maxUpRows, ui.showFields],
   )
   useEffect(() => {
     stickyRef.current = new Set(layout.placed.map(pl => pl.item.id))
@@ -200,13 +229,13 @@ export function CanvasView() {
 
   // ---- exit animations
   const prevPlaced = useRef<Map<string, PlacedItem>>(new Map())
-  const [leaving, setLeaving] = useState<Map<string, { item: Item; row: number }>>(new Map())
+  const [leaving, setLeaving] = useState<Map<string, { item: Item; ny: number }>>(new Map())
   useEffect(() => {
     const cur = new Map(layout.placed.map(pl => [pl.item.id, pl]))
     if (ui.animLevel !== 'off') {
-      const gone = new Map<string, { item: Item; row: number }>()
+      const gone = new Map<string, { item: Item; ny: number }>()
       prevPlaced.current.forEach((pl, id) => {
-        if (!cur.has(id) && gone.size < 40) gone.set(id, { item: pl.item, row: pl.row })
+        if (!cur.has(id) && gone.size < 40) gone.set(id, { item: pl.item, ny: pl.ny })
       })
       if (gone.size) {
         setLeaving(l => {
@@ -273,6 +302,14 @@ export function CanvasView() {
         historyRef.current.past.push({ ...cam })
         flyCamera(cam, nxt, c => setCamera(c), undefined, animate)
       },
+      addItem: typeId => {
+        if (ui.readOnly) return null
+        const raw = toPos(size.w / 2)
+        const pos = ui.snap ? snapPos(raw, cam.s) : raw
+        const id = createItem(typeId, pos, null, size.w / 2, spineY)
+        if (id) promptName(id, size.w / 2, spineY + 14, pos)
+        return id
+      },
     }
     return () => { nav.current = null }
   })
@@ -316,9 +353,15 @@ export function CanvasView() {
       const y = clientY - rect.top - spineY
       let pathId: string | null = null
       for (const bl of layout.branches) {
-        if (bl.collapsed) continue
+        if (x <= bl.forkX + 8 || x >= bl.joinX - 8) continue
+        // Each path owns the band from its row of items down to the line itself.
+        const top = Math.min(...bl.pathYs) - PATH_LIFT - 20
+        const bottom = Math.max(...bl.pathYs) + 20
+        if (y < top || y > bottom) continue
+        let best = Infinity
         bl.pathYs.forEach((py, i) => {
-          if (Math.abs(y - py) < 26 && x > bl.forkX + 20 && x < bl.joinX - 20) pathId = bl.branch.paths[i].id
+          const d = Math.abs(y - (py - PATH_LIFT / 2))
+          if (d < best) { best = d; pathId = bl.branch.paths[i].id }
         })
       }
       const pos = ui.snap ? snapPos(toPos(x), cam.s) : toPos(x)
@@ -327,29 +370,86 @@ export function CanvasView() {
     return () => { chipDrop.current = null }
   })
 
-  const createItem = (typeId: string, pos: number, pathId: string | null, fxX: number, fxY: number) => {
-    const type = proj.types.find(t => t.id === typeId) ?? proj.types[0]
-    if (!type) return
+  const createItem = (typeId: string, pos: number, pathId: string | null, fxX: number, fxY: number): string | null => {
+    const type = useStore.getState().projects.find(p => p.id === proj.id)?.types.find(t => t.id === typeId)
+      ?? proj.types.find(t => t.id === typeId) ?? proj.types[0]
+    if (!type) return null
     const id = uid()
     mutate(p => {
       p.items.push({
         id, typeId: type.id, layerId: null, pathId, pos, duration: 0,
         title: `New ${type.name.toLowerCase()}`, description: '', tags: [], link: '', images: [], fieldValues: {},
+        createdBy: creatorStamp(),
       })
     })
     setUI({ lastTypeId: type.id })
     select([id])
     burst(fxX, fxY, type.color)
     sfx.create()
+    return id
   }
+
+  /**
+   * Ask for a just-created item's title in a small prompt at (x, y): Enter or
+   * clicking anywhere else commits what was typed (empty keeps the default
+   * title), Escape keeps the default.
+   */
+  const promptName = (itemId: string, x: number, y: number, pos: number) => {
+    const it = useStore.getState().projects.find(p => p.id === proj.id)?.items.find(i => i.id === itemId)
+    pendingNameRef.current = ''
+    setMenu({ x, y, target: { kind: 'bg', pos, rawPos: pos }, name: { itemId, placeholder: it?.title ?? 'Name…' } })
+  }
+
+  /** Close the context menu / picker / name prompt, committing a pending name unless cancelled. */
+  const closeMenu = (commit = true) => {
+    const m = menu
+    const text = pendingNameRef.current.trim()
+    pendingNameRef.current = ''
+    if (m?.name && commit && text) {
+      const { itemId } = m.name
+      mutate(p => { const it = p.items.find(i => i.id === itemId); if (it) it.title = text })
+    }
+    setMenu(null)
+  }
+
+  /** New type under the given name (next palette colour), for the "new type" row of a type search. */
+  const createType = (name: string): string => {
+    const id = uid()
+    mutate(p => p.types.push({
+      id, name, icon: 'Circle', color: PALETTE[p.types.length % PALETTE.length], folderId: null,
+      defaultLayerId: p.layers[Math.min(1, p.layers.length - 1)]?.id ?? null, fields: [],
+    }))
+    return id
+  }
+
+  // ---- Space: open the "new item" type search at the pointer (or the view
+  // centre when the pointer is elsewhere), like the context menu's entry.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== ' ' || e.repeat || e.ctrlKey || e.metaKey || e.altKey) return
+      const t = e.target as HTMLElement
+      if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable) return
+      const st = useStore.getState()
+      if (st.ui.readOnly || st.ui.overlay || st.ui.editTypeId || dragRef.current) return
+      e.preventDefault()
+      // A focused toolbar button would also "click" on Space — drop its focus.
+      if (t.tagName === 'BUTTON' || t.tagName === 'A') t.blur()
+      const at = pointerRef.current ?? { x: size.w / 2, y: spineY - 40 }
+      const rawPos = toPos(at.x)
+      const pos = st.ui.snap ? snapPos(rawPos, cam.s) : rawPos
+      setMenu({ x: at.x, y: at.y, target: { kind: 'bg', pos, rawPos }, search: true })
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  })
 
   // ---- context menu close (outside click / Escape)
   useEffect(() => {
     if (!menu) return
     const onDown = (e: PointerEvent) => {
-      if (!menuRef.current?.contains(e.target as Node)) setMenu(null)
+      if (!menuRef.current?.contains(e.target as Node)) closeMenu()
     }
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setMenu(null) }
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') closeMenu(false) }
     window.addEventListener('pointerdown', onDown, true)
     window.addEventListener('keydown', onKey)
     return () => {
@@ -360,12 +460,12 @@ export function CanvasView() {
 
   // ---- snapping
   /** World positions dragged edges/items stick to while the magnet is on. */
-  const magnetCands = (exclude: { items?: Set<string>; sectionIds?: Set<string>; branchId?: string }): number[] => {
+  const magnetCands = (exclude: { items?: Set<string>; itemEnds?: Set<string>; sectionIds?: Set<string>; branchId?: string }): number[] => {
     const out: number[] = []
     for (const it of proj.items) {
       if (exclude.items?.has(it.id)) continue
       out.push(it.pos)
-      if (it.duration > 0) out.push(it.pos + it.duration)
+      if (it.duration > 0 && !exclude.itemEnds?.has(it.id)) out.push(it.pos + it.duration)
     }
     for (const sc of proj.sections) {
       if (exclude.sectionIds?.has(sc.id)) continue
@@ -630,6 +730,7 @@ export function CanvasView() {
           if (!srcItems.has(it.id)) continue
           const cp = structuredClone(it)
           cp.id = uid()
+          cp.createdBy = creatorStamp()
           newItemIds.push(cp.id)
           itemOrig.set(cp.id, cp.pos)
           p.items.push(cp)
@@ -703,11 +804,12 @@ export function CanvasView() {
   }
 
   const onPointerMove = (e: React.PointerEvent) => {
-    const d = dragRef.current
-    if (!d) return
     const rect = wrapRef.current!.getBoundingClientRect()
     const x = e.clientX - rect.left
     const y = e.clientY - rect.top
+    pointerRef.current = { x, y }
+    const d = dragRef.current
+    if (!d) return
     if (d.kind === 'pan') {
       const dx = e.clientX - d.startClientX
       if (Math.abs(dx) + Math.abs(e.clientY - d.startClientY) > 3) {
@@ -733,6 +835,28 @@ export function CanvasView() {
       const src = rippleOn ? d.allOrig : d.orig
       src.forEach((op, id) => next.set(id, op + delta))
       setPosOverride(next)
+      // Spans ending at the grabbed position stretch with the drag (in ripple
+      // mode they translate whole, like everything else).
+      if (rippleOn || !d.endOrig.size) {
+        setDurOverride(null)
+      } else {
+        const durOvs: { id: string; pos: number; duration: number }[] = []
+        d.endOrig.forEach(({ pos, dur }, id) => {
+          durOvs.push({ id, pos, duration: Math.max(0, dur + delta) })
+        })
+        setDurOverride(durOvs)
+      }
+    } else if (d.kind === 'itemScale') {
+      if (!d.moved && Math.abs(e.clientX - d.startClientX) <= 3) return
+      d.moved = true
+      const du = (e.clientX - d.startClientX) / cam.s
+      const np = snapWorld(d.grabPos + du, d.cands, e.altKey)
+      const factor = Math.max((np - d.anchor) / (d.grabPos - d.anchor), d.minFactor)
+      const durOvs: { id: string; pos: number; duration: number }[] = []
+      d.orig.forEach(({ pos, dur }, id) => {
+        durOvs.push({ id, pos: d.anchor + (pos - d.anchor) * factor, duration: dur * factor })
+      })
+      setDurOverride(durOvs)
     } else if (d.kind === 'handle') {
       const du = (e.clientX - d.startClientX) / cam.s
       if (d.side === 'R') {
@@ -886,14 +1010,8 @@ export function CanvasView() {
       }
       const hits: string[] = []
       for (const pl of layout.placed) {
-        const iy = spineY + rowY(pl.row)
+        const iy = spineY + pl.ny
         if (pl.x >= ax && pl.x <= bx && iy >= ay && iy <= by) hits.push(pl.item.id)
-      }
-      for (const bl of layout.branches) {
-        bl.items.forEach(list => list.forEach(pi => {
-          const iy = spineY + pi.y
-          if (pi.x >= ax && pi.x <= bx && iy >= ay && iy <= by) hits.push(pi.item.id)
-        }))
       }
       // Sections join the marquee through their header bars (same geometry as render).
       for (const sc of proj.sections) {
@@ -926,10 +1044,29 @@ export function CanvasView() {
       }
     } else if (d.kind === 'item') {
       const ov = posOverride
+      const dv = durOverride
       setPosOverride(null)
-      if (d.moved && ov) {
+      setDurOverride(null)
+      if (d.moved && (ov || dv)) {
         mutate(p => {
-          for (const it of p.items) if (ov.has(it.id)) it.pos = ov.get(it.id)!
+          if (ov) for (const it of p.items) if (ov.has(it.id)) it.pos = ov.get(it.id)!
+          if (dv) for (const o of dv) {
+            const it = p.items.find(i => i.id === o.id)
+            if (it) { it.pos = o.pos; it.duration = o.duration }
+          }
+        })
+        puff(e.clientX - rect.left, e.clientY - rect.top, d.color)
+        sfx.snap()
+      }
+    } else if (d.kind === 'itemScale') {
+      const dv = durOverride
+      setDurOverride(null)
+      if (d.moved && dv) {
+        mutate(p => {
+          for (const o of dv) {
+            const it = p.items.find(i => i.id === o.id)
+            if (it) { it.pos = o.pos; it.duration = o.duration }
+          }
         })
         puff(e.clientX - rect.left, e.clientY - rect.top, d.color)
         sfx.snap()
@@ -1031,6 +1168,7 @@ export function CanvasView() {
           if (!src) continue
           const cp = structuredClone(src)
           cp.id = uid()
+          cp.createdBy = creatorStamp()
           cloneIds.push(cp.id)
           p.items.push(cp)
         }
@@ -1059,7 +1197,7 @@ export function CanvasView() {
     const type = typeOf(proj, item)
     setDragBoth({
       kind: 'item', ids, grabId: ids.includes(item.id) ? item.id : ids[0], startClientX: e.clientX,
-      orig, allOrig, ripple: ui.ripple || e.shiftKey, moved: false, color: type?.color ?? '#888',
+      orig, allOrig, endOrig: new Map(), ripple: ui.ripple || e.shiftKey, moved: false, color: type?.color ?? '#888',
       cands: magnetCands({ items: new Set(ids) }),
     })
   }
@@ -1077,25 +1215,34 @@ export function CanvasView() {
   }
 
   // ---- base dots: one per stack of placed items sharing a position; dragging
-  // the dot moves every item in that stack together.
+  // the dot moves every item in that stack together. A span whose END lands
+  // on such a position joins the stack too (as `endIds`): the drag then
+  // stretches that span so its end keeps following the stack.
+  type Column = { x: number; y: number; ids: string[]; endIds: string[]; color: string; ghost: boolean }
   const columns = useMemo(() => {
-    const sorted = [...layout.placed].sort((a, b) => a.x - b.x)
-    const cols: { x: number; ids: string[]; color: string; ghost: boolean }[] = []
+    const sorted = [...layout.placed].sort((a, b) => a.y - b.y || a.x - b.x)
+    const cols: Column[] = []
     for (const pl of sorted) {
       const last = cols[cols.length - 1]
-      if (last && Math.abs(pl.x - last.x) < 5) {
+      if (last && last.y === pl.y && Math.abs(pl.x - last.x) < 5) {
         last.ids.push(pl.item.id)
         // The dot fades with its stack: it stays solid while any item in the
         // stack survives the current filters.
         last.ghost = last.ghost && pl.ghost
       } else {
-        cols.push({ x: pl.x, ids: [pl.item.id], color: typeOf(proj, pl.item)?.color ?? '#888', ghost: pl.ghost })
+        cols.push({ x: pl.x, y: pl.y, ids: [pl.item.id], endIds: [], color: typeOf(proj, pl.item)?.color ?? '#888', ghost: pl.ghost })
       }
     }
+    for (const pl of layout.placed) {
+      if (pl.item.duration <= 0) continue
+      const ex = toX(pl.item.pos + pl.item.duration)
+      const col = cols.find(c => c.y === pl.y && Math.abs(c.x - ex) < 5 && !c.ids.includes(pl.item.id))
+      if (col) col.endIds.push(pl.item.id)
+    }
     return cols
-  }, [layout, proj])
+  }, [layout, proj, cam])
 
-  const basePointerDown = (e: React.PointerEvent, col: { x: number; ids: string[]; color: string }) => {
+  const basePointerDown = (e: React.PointerEvent, col: Column) => {
     if (e.button !== 0) return
     if (ui.readOnly) { e.stopPropagation(); select(col.ids); return }
     e.stopPropagation()
@@ -1105,12 +1252,51 @@ export function CanvasView() {
       const it = proj.items.find(i => i.id === id)
       if (it) orig.set(id, it.pos)
     }
+    const endOrig = new Map<string, { pos: number; dur: number }>()
+    for (const id of col.endIds) {
+      const it = proj.items.find(i => i.id === id)
+      if (it) endOrig.set(id, { pos: it.pos, dur: it.duration })
+    }
     const allOrig = new Map<string, number>()
     for (const it of proj.items) allOrig.set(it.id, it.pos)
     setDragBoth({
       kind: 'item', ids: col.ids, grabId: col.ids[0], startClientX: e.clientX,
-      orig, allOrig, ripple: ui.ripple || e.shiftKey, moved: false, color: col.color,
-      cands: magnetCands({ items: new Set(col.ids) }),
+      orig, allOrig, endOrig, ripple: ui.ripple || e.shiftKey, moved: false, color: col.color,
+      cands: magnetCands({ items: new Set(col.ids), itemEnds: new Set(col.endIds) }),
+    })
+  }
+
+  // ---- group scale: with several items selected, the first (leftmost start)
+  // and last (rightmost end) selected item carry handles that scale the whole
+  // selection — positions and span durations — around the opposite extreme.
+  const groupScale = useMemo(() => {
+    const sel = proj.items.filter(it => selection.has(it.id))
+    if (sel.length < 2) return null
+    let first = sel[0]
+    let last = sel[0]
+    for (const it of sel) {
+      if (it.pos < first.pos) first = it
+      if (it.pos + it.duration > last.pos + last.duration) last = it
+    }
+    const minPos = first.pos
+    const maxEnd = last.pos + last.duration
+    if (maxEnd - minPos < 1e-9) return null
+    return { ids: sel.map(it => it.id), firstId: first.id, lastId: last.id, minPos, maxEnd }
+  }, [proj.items, selection])
+
+  const startGroupScale = (e: React.PointerEvent, side: 'L' | 'R', color: string) => {
+    if (e.button !== 0 || ui.readOnly || !groupScale) return
+    e.stopPropagation()
+    ;(e.target as Element).setPointerCapture?.(e.pointerId)
+    const orig = new Map<string, { pos: number; dur: number }>()
+    for (const it of proj.items) if (selection.has(it.id)) orig.set(it.id, { pos: it.pos, dur: it.duration })
+    const grabPos = side === 'L' ? groupScale.minPos : groupScale.maxEnd
+    const anchor = side === 'L' ? groupScale.maxEnd : groupScale.minPos
+    // Keep the group from collapsing below a hair's width on screen.
+    const minFactor = Math.min(0.5, (8 / cam.s) / (groupScale.maxEnd - groupScale.minPos))
+    setDragBoth({
+      kind: 'itemScale', ids: groupScale.ids, side, startClientX: e.clientX, orig, anchor, grabPos,
+      cands: magnetCands({ items: new Set(groupScale.ids) }), minFactor, moved: false, color,
     })
   }
 
@@ -1159,6 +1345,7 @@ export function CanvasView() {
         const cp = structuredClone(src)
         cp.id = uid()
         cp.pos += Math.max(0.5, cp.duration)
+        cp.createdBy = creatorStamp()
         nids.push(cp.id)
         p.items.push(cp)
       }
@@ -1197,6 +1384,7 @@ export function CanvasView() {
         cp.id = uid()
         cp.pos = pos + (src.pos - base)
         cp.pathId = null
+        cp.createdBy = creatorStamp()
         nids.push(cp.id)
         p.items.push(cp)
       }
@@ -1311,6 +1499,7 @@ export function CanvasView() {
       className={`canvas-wrap tool-${ui.tool} ${drag?.kind === 'pan' ? 'panning' : ''} ${ui.pickRef ? 'picking' : ''}`}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
+      onPointerLeave={() => { pointerRef.current = null }}
       onContextMenu={bgContextMenu}
       onMouseDown={e => { if (e.button === 1) e.preventDefault() }}
     >
@@ -1438,9 +1627,9 @@ export function CanvasView() {
             </g>
           ))}
 
-          {/* spine */}
-          <line
-            x1={0} y1={0} x2={size.w} y2={0} className="spine"
+          {/* spine — broken where a branch splits it into paths */}
+          <path
+            d={spineD(size.w, layout.branches)} className="spine"
             style={{ strokeWidth: st.spine.width, opacity: st.spine.opacity }}
           />
 
@@ -1449,12 +1638,11 @@ export function CanvasView() {
           <g pointerEvents="none">
             {layout.placed.map(pl => {
               const t = typeOf(proj, pl.item)
-              const y = rowY(pl.row)
               const z = pl.size || 1
               return (
                 <line
                   key={`stem-${pl.item.id}`} className="stem"
-                  x1={pl.x} y1={y + (y < 0 ? 14 * z : -14 * z)} x2={pl.x} y2={0}
+                  x1={pl.x} y1={pl.ny + (pl.ny < pl.y ? 14 * z : -14 * z)} x2={pl.x} y2={pl.y}
                   style={{ stroke: t?.color }}
                 />
               )
@@ -1465,13 +1653,9 @@ export function CanvasView() {
           {links.length > 0 && (() => {
             const anchor = (id: string): { x: number; y: number } | null => {
               const pl = layout.placed.find(x => x.item.id === id)
-              if (pl) return { x: pl.x, y: rowY(pl.row) }
+              if (pl) return { x: pl.x, y: pl.ny }
               const dot = layout.dots.find(x => x.item.id === id)
-              if (dot) return { x: dot.x, y: 0 }
-              for (const bl of layout.branches) {
-                if (bl.collapsed) continue
-                for (const list of bl.items) for (const pi of list) if (pi.item.id === id) return { x: pi.x, y: pi.y }
-              }
+              if (dot) return { x: dot.x, y: dot.y }
               const bg = bandGeo.find(g => g.sc.id === id)
               if (bg) return { x: (Math.max(bg.x1, 0) + Math.min(bg.x2, size.w)) / 2, y: bg.barTop + bg.barH / 2 }
               return null
@@ -1503,13 +1687,6 @@ export function CanvasView() {
               bl={bl}
               selected={selection.has(`B:${bl.branch.id}`)}
               selectBranch={() => { select([`B:${bl.branch.id}`]); sfx.select() }}
-              itemSelection={selection}
-              highlightId={highlightId}
-              proj={proj}
-              itemPointerDown={itemPointerDown}
-              itemContextMenu={itemContextMenu}
-              itemHoverStart={itemHoverStart}
-              itemHoverEnd={itemHoverEnd}
               startEndDrag={(side, e) => {
                 e.stopPropagation()
                 ;(e.target as Element).setPointerCapture?.(e.pointerId)
@@ -1533,7 +1710,7 @@ export function CanvasView() {
             const x = toX(l.item.pos)
             if (x < -60 || x > size.w + 60) return null
             return (
-              <g key={`leave-${id}`} className="node" transform={`translate(${x}, ${rowY(l.row)})`} pointerEvents="none">
+              <g key={`leave-${id}`} className="node" transform={`translate(${x}, ${l.ny})`} pointerEvents="none">
                 <g className="node-inner out">
                   <circle r={13} style={{ fill: `${type?.color}22`, stroke: type?.color }} />
                 </g>
@@ -1549,6 +1726,10 @@ export function CanvasView() {
               proj={proj}
               selected={selection.has(pl.item.id)}
               highlight={highlightId === pl.item.id}
+              proposed={proposed.has(pl.item.id)}
+              showFields={ui.showFields}
+              scaleL={!ui.readOnly && groupScale?.firstId === pl.item.id}
+              scaleR={!ui.readOnly && groupScale?.lastId === pl.item.id}
               anim={ui.animLevel !== 'off'}
               onPointerDown={e => itemPointerDown(e, pl.item)}
               onContextMenu={e => itemContextMenu(e, pl.item)}
@@ -1564,6 +1745,7 @@ export function CanvasView() {
                   startClientX: e.clientX, cands: magnetCands({ items: new Set([pl.item.id]) }),
                 })
               }}
+              startScale={(side, e) => startGroupScale(e, side, typeOf(proj, pl.item)?.color ?? '#888')}
             />
           ))}
 
@@ -1572,7 +1754,7 @@ export function CanvasView() {
             <g
               key={dot.item.id}
               className={`layer-dot ${dot.ghost ? 'ghost' : ''} ${highlightId === dot.item.id ? 'hl' : ''}`}
-              transform={`translate(${dot.x}, 0)`}
+              transform={`translate(${dot.x}, ${dot.y})`}
               onPointerDown={e => itemPointerDown(e, dot.item)}
               onContextMenu={e => itemContextMenu(e, dot.item)}
               onPointerEnter={e => itemHoverStart(e, dot.item.id)}
@@ -1587,7 +1769,7 @@ export function CanvasView() {
           {layout.clusters.map(cl => (
             <g
               key={cl.key}
-              transform={`translate(${cl.x}, 0)`}
+              transform={`translate(${cl.x}, ${cl.y})`}
               className="cluster"
               onPointerEnter={() => setExpandedCluster(cl.key)}
               onPointerLeave={() => setExpandedCluster(c => (c === cl.key ? null : c))}
@@ -1635,12 +1817,12 @@ export function CanvasView() {
           {!drag && columns.map(col => (
             <circle
               key={`base-${col.ids[0]}`}
-              cx={col.x} cy={0} r={4}
+              cx={col.x} cy={col.y} r={4}
               className={`base-dot ${col.ghost ? 'ghost' : ''}`}
               style={{ stroke: col.color }}
               onPointerDown={e => basePointerDown(e, col)}
             >
-              <title>{col.ids.length > 1 ? `Move ${col.ids.length} items` : 'Move item'}</title>
+              <title>{col.ids.length + col.endIds.length > 1 ? `Move ${col.ids.length + col.endIds.length} items` : 'Move item'}</title>
             </circle>
           ))}
 
@@ -1692,6 +1874,12 @@ export function CanvasView() {
             <strong>{hoverItem.title}</strong>
           </div>
           <div className="tt-type">{hoverType.name}{hoverItem.duration > 0 ? ` · span ${hoverItem.duration.toFixed(1)}` : ''}</div>
+          {hoverItem.createdBy && (
+            <div className="tt-type creator">
+              <span className="creator-dot" style={{ background: hoverItem.createdBy.color }} />
+              {hoverItem.createdBy.name}
+            </div>
+          )}
           {hoverItem.tags.length > 0 && (
             <div className="tt-tags">{hoverItem.tags.map(t => <span key={t} className="tag">{t}</span>)}</div>
           )}
@@ -1710,18 +1898,50 @@ export function CanvasView() {
         <div
           ref={menuRef}
           className="menu ctx"
-          style={{ left: clamp(menu.x, 0, size.w - 200), top: clamp(menu.y, 0, size.h - 200) }}
+          style={menu.search || menu.name
+            // The in-place type search is wider and taller than the menu; keep it on the canvas.
+            ? { left: clamp(menu.x, 0, size.w - 250), top: clamp(menu.y, 0, size.h - (menu.name ? 60 : 340)) }
+            : { left: clamp(menu.x, 0, size.w - 200), top: clamp(menu.y, 0, size.h - 200) }}
           onContextMenu={e => e.preventDefault()}
         >
-          {menu.target.kind === 'bg' ? (() => {
+          {menu.target.kind === 'bg' && menu.search ? (() => {
+            // "New item here": a type search in place of the menu — type to
+            // filter, Enter/click to place an item of that type at the click.
+            const { pos } = menu.target
+            return (
+              <TypeSearch
+                proj={proj}
+                placeholder="New item here…"
+                autoFocus
+                listWhenEmpty
+                onPick={typeId => {
+                  const id = createItem(typeId, pos, null, menu.x, menu.y)
+                  if (id) promptName(id, menu.x, menu.y, pos); else setMenu(null)
+                }}
+                onCreateType={name => {
+                  const id = createItem(createType(name), pos, null, menu.x, menu.y)
+                  if (id) promptName(id, menu.x, menu.y, pos); else setMenu(null)
+                }}
+                onClose={() => setMenu(null)}
+              />
+            )
+          })() : menu.name ? (
+            // Name the item just created from the picker: Enter or a click
+            // elsewhere keeps what's typed; Escape keeps the default title.
+            <NamePrompt
+              key={menu.name.itemId}
+              placeholder={menu.name.placeholder}
+              onChange={t => { pendingNameRef.current = t }}
+              onCommit={() => closeMenu()}
+              onCancel={() => closeMenu(false)}
+            />
+          ) : menu.target.kind === 'bg' ? (() => {
             const { pos, rawPos } = menu.target
             return (
               <>
-                <button onClick={() => {
-                  const typeId = ui.lastTypeId ?? proj.types[0]?.id
-                  if (typeId) createItem(typeId, pos, null, menu.x, menu.y)
-                  setMenu(null)
-                }}><Plus width={13} height={13} /> New item here</button>
+                <button onClick={() => setMenu({ ...menu, search: true })}>
+                  <Plus width={13} height={13} /> New item here…
+                </button>
                 <button onClick={() => {
                   const levelName = proj.hierarchyLevels[0]?.name ?? 'Section'
                   const span = (size.w * 0.25) / cam.s
@@ -1764,6 +1984,36 @@ export function CanvasView() {
   )
 }
 
+// ------------------------------------------------------------------ NamePrompt
+
+/** Single-line title prompt: Enter or blur commits, Escape cancels. */
+function NamePrompt(props: {
+  placeholder: string
+  onChange: (text: string) => void
+  onCommit: () => void
+  onCancel: () => void
+}) {
+  const [text, setText] = useState('')
+  return (
+    <div className="type-search name-prompt">
+      <div className="search-box type-search-box">
+        <input
+          className="search-input"
+          placeholder={props.placeholder}
+          value={text}
+          autoFocus
+          onChange={e => { setText(e.target.value); props.onChange(e.target.value) }}
+          onBlur={props.onCommit}
+          onKeyDown={e => {
+            if (e.key === 'Enter') { e.preventDefault(); props.onCommit() }
+            else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); props.onCancel() }
+          }}
+        />
+      </div>
+    </div>
+  )
+}
+
 // ------------------------------------------------------------------ ItemG
 
 function ItemG(props: {
@@ -1771,24 +2021,32 @@ function ItemG(props: {
   proj: ReturnType<typeof useActiveProject>
   selected: boolean
   highlight: boolean
+  /** Part of the proposal being reviewed. */
+  proposed: boolean
+  /** This item is the first of a multi-selection: its start carries the group scale handle. */
+  scaleL: boolean
+  /** This item is the last of a multi-selection: its end carries the group scale handle. */
+  scaleR: boolean
   anim: boolean
   onPointerDown: (e: React.PointerEvent) => void
   onContextMenu: (e: React.MouseEvent) => void
   onHoverStart: (e: React.PointerEvent) => void
   onHoverEnd: () => void
   startHandle: (side: 'L' | 'R', e: React.PointerEvent) => void
+  startScale: (side: 'L' | 'R', e: React.PointerEvent) => void
+  showFields: boolean
 }) {
-  const { pl, proj, selected } = props
+  const { pl, proj, selected, scaleL, scaleR } = props
   const type = typeOf(proj, pl.item)
   const Icon = iconByName(type?.icon ?? 'Circle')
-  const y = rowY(pl.row)
+  const label = splitLabel(proj, pl.item, props.showFields)
   const color = type?.color ?? '#888'
   const z = pl.size || 1
   const barY = 3 + 14 * z
   return (
     <g
       className={`node ${pl.ghost ? 'ghost' : ''} ${selected ? 'sel' : ''} ${props.highlight ? 'hl' : ''}`}
-      transform={`translate(${pl.x}, ${y})`}
+      transform={`translate(${pl.x}, ${pl.ny})`}
       onPointerDown={props.onPointerDown}
       onContextMenu={props.onContextMenu}
       onPointerEnter={props.onHoverStart}
@@ -1800,16 +2058,37 @@ function ItemG(props: {
             <rect x={0} y={barY} width={pl.spanW} height={6} rx={3} style={{ fill: `${color}55`, stroke: `${color}88` }} />
             {selected && (
               <>
-                <circle cx={0} cy={barY + 3} r={6} className="dur-handle" style={{ stroke: color }}
-                  onPointerDown={e => props.startHandle('L', e)} />
-                <circle cx={pl.spanW} cy={barY + 3} r={6} className="dur-handle" style={{ stroke: color }}
-                  onPointerDown={e => props.startHandle('R', e)} />
+                {!scaleL && (
+                  <circle cx={0} cy={barY + 3} r={6} className="dur-handle" style={{ stroke: color }}
+                    onPointerDown={e => props.startHandle('L', e)} />
+                )}
+                {!scaleR && (
+                  <circle cx={pl.spanW} cy={barY + 3} r={6} className="dur-handle" style={{ stroke: color }}
+                    onPointerDown={e => props.startHandle('R', e)} />
+                )}
               </>
             )}
           </g>
         )}
+        {/* Group scale handles: a bracket at the selection's first start and
+            last end (a span's own duration handle steps aside for it). */}
+        {scaleL && (
+          <g className="scale-handle" transform={`translate(0, ${barY + 3})`} onPointerDown={e => props.startScale('L', e)}>
+            <rect x={-5} y={-9} width={10} height={18} rx={3} style={{ stroke: color }} />
+            <path d="M 1.5 -4 L -1.5 0 L 1.5 4" style={{ stroke: color }} />
+            <title>Scale selection</title>
+          </g>
+        )}
+        {scaleR && (
+          <g className="scale-handle" transform={`translate(${pl.spanW}, ${barY + 3})`} onPointerDown={e => props.startScale('R', e)}>
+            <rect x={-5} y={-9} width={10} height={18} rx={3} style={{ stroke: color }} />
+            <path d="M -1.5 -4 L 1.5 0 L -1.5 4" style={{ stroke: color }} />
+            <title>Scale selection</title>
+          </g>
+        )}
         {selected && <circle r={19 * z} className="sel-ring" style={{ stroke: color }} />}
         {props.highlight && <circle r={22 * z} className="hl-ring" />}
+        {props.proposed && <circle r={(selected ? 24 : 20) * z} className="prop-ring" />}
         <circle r={14 * z} className="node-under" />
         <circle r={14 * z} className="node-bg" style={{ fill: `${color}26`, stroke: color }} />
         <Icon x={-8 * z} y={-8 * z} width={16 * z} height={16 * z} color={color} strokeWidth={2} />
@@ -1818,7 +2097,8 @@ function ItemG(props: {
             x={20 * z} y={4 * z} className="node-label"
             style={{ fill: `color-mix(in srgb, ${color} 30%, var(--text))`, fontSize: 11.5 * clamp(z, 0.8, 1.35) }}
           >
-            {displayLabel(pl.item.title)}
+            {label.title}
+            {label.fields && <tspan className="node-fields">{' · '}{label.fields}</tspan>}
           </text>
         )}
       </g>
@@ -1832,97 +2112,51 @@ function BranchG(props: {
   bl: BranchLayout
   selected: boolean
   selectBranch: () => void
-  itemSelection: Set<string>
-  highlightId: string | null
-  proj: ReturnType<typeof useActiveProject>
-  itemPointerDown: (e: React.PointerEvent, item: Item) => void
-  itemContextMenu: (e: React.MouseEvent, item: Item) => void
-  itemHoverStart: (e: React.PointerEvent, id: string) => void
-  itemHoverEnd: () => void
   startEndDrag: (side: 'fork' | 'join', e: React.PointerEvent) => void
   zoomIn: () => void
 }) {
-  const { bl, selected, proj } = props
+  const { bl, selected } = props
   const { branch } = bl
   const GateIcon = branch.mode === 'any' ? Shuffle : ListChecks
-  if (bl.collapsed) {
-    const cx = (bl.forkX + bl.joinX) / 2
-    return (
-      <g className="braid" onPointerDown={e => { e.stopPropagation(); props.selectBranch() }} onDoubleClick={props.zoomIn}>
-        <path
-          d={`M ${bl.forkX} 0 C ${cx} -14, ${cx} -14, ${bl.joinX} 0 C ${cx} 14, ${cx} 14, ${bl.forkX} 0 Z`}
-          className={`braid-lens ${selected ? 'sel' : ''}`}
-        />
-        <rect x={cx - 14} y={8} width={28} height={16} rx={8} className="cluster-pill" />
-        <text x={cx} y={20} textAnchor="middle" className="cluster-count">{branch.paths.length}⑂</text>
-      </g>
-    )
-  }
   const dash = branch.mode === 'any' ? '7 5' : undefined
+  const pick = (e: React.PointerEvent) => { e.stopPropagation(); props.selectBranch() }
+  // Labels and the ALL checkboxes sit just under each path's straight run; they
+  // get out of the way when the branch is squeezed too narrow to read them.
+  const labelX = bl.forkX + bl.curveW + 6
+  const roomy = bl.joinX - bl.forkX > 2 * bl.curveW + 40
   return (
     <g className={`branch ${selected ? 'sel' : ''}`}>
       {branch.paths.map((path, i) => {
-        const yOff = bl.pathYs[i]
-        const endX = path.terminal ? bl.joinX - 74 : bl.joinX
-        const enter = `M ${bl.forkX} 0 C ${bl.forkX + 30} 0, ${bl.forkX + 26} ${yOff}, ${bl.forkX + 58} ${yOff}`
-        const mid = `L ${Math.max(bl.forkX + 58, endX - 58)} ${yOff}`
-        const exit = path.terminal ? '' : `C ${endX - 26} ${yOff}, ${endX - 30} 0, ${endX} 0`
+        const y = bl.pathYs[i]
         return (
           <g key={path.id}>
             <path
-              d={`${enter} ${mid} ${exit}`}
+              d={branchPathD(bl, y, path.terminal)}
               className="branch-path"
               strokeDasharray={dash}
-              onPointerDown={e => { e.stopPropagation(); props.selectBranch() }}
+              onPointerDown={pick}
+              onDoubleClick={props.zoomIn}
             />
             {path.terminal && (
-              <rect x={Math.max(bl.forkX + 58, endX - 58) - 2} y={yOff - 8} width={4} height={16} rx={2} className="terminal-cap" />
+              <rect x={terminalEndX(bl) - 2} y={y - 8} width={4} height={16} rx={2} className="terminal-cap" />
             )}
-            {branch.mode === 'all' && (
-              <rect x={bl.forkX + 52} y={yOff - 22} width={9} height={9} rx={2} className="all-check" />
+            {roomy && branch.mode === 'all' && (
+              <rect x={labelX} y={y + 5} width={9} height={9} rx={2} className="all-check" />
             )}
-            {path.label && (
-              <text x={bl.forkX + 68} y={yOff - 10} className="path-label"
-                onPointerDown={e => { e.stopPropagation(); props.selectBranch() }}>
+            {roomy && path.label && (
+              <text x={labelX + (branch.mode === 'all' ? 14 : 0)} y={y + 13} className="path-label" onPointerDown={pick}>
                 {path.label}
               </text>
             )}
-            {bl.items[i].map(pi => {
-              const t = typeOf(proj, pi.item)
-              const Icon = iconByName(t?.icon ?? 'Circle')
-              const sel = props.itemSelection.has(pi.item.id)
-              const z = pi.size || 1
-              return (
-                <g
-                  key={pi.item.id}
-                  className={`node ${pi.ghost ? 'ghost' : ''} ${sel ? 'sel' : ''} ${props.highlightId === pi.item.id ? 'hl' : ''}`}
-                  transform={`translate(${pi.x}, ${pi.y})`}
-                  onPointerDown={e => props.itemPointerDown(e, pi.item)}
-                  onContextMenu={e => props.itemContextMenu(e, pi.item)}
-                  onPointerEnter={e => props.itemHoverStart(e, pi.item.id)}
-                  onPointerLeave={props.itemHoverEnd}
-                >
-                  <g className="node-inner pop">
-                    {sel && <circle r={16 * z} className="sel-ring" style={{ stroke: t?.color }} />}
-                    {props.highlightId === pi.item.id && <circle r={18 * z} className="hl-ring" />}
-                    <circle r={11 * z} className="node-under" />
-                    <circle r={11 * z} className="node-bg" style={{ fill: `${t?.color}26`, stroke: t?.color }} />
-                    <Icon x={-6.5 * z} y={-6.5 * z} width={13 * z} height={13 * z} color={t?.color} strokeWidth={2} />
-                    {pi.labelShown && <text x={16 * z} y={16 + 5 * z} className="node-label sm">{pi.item.title}</text>}
-                  </g>
-                </g>
-              )
-            })}
           </g>
         )
       })}
       {/* gate + join */}
-      <g className="gate" onPointerDown={e => { e.stopPropagation(); props.selectBranch() }}>
+      <g className="gate" onPointerDown={pick}>
         <circle cx={bl.forkX} r={12} className="gate-bg" />
         <GateIcon x={bl.forkX - 7} y={-7} width={14} height={14} className="gate-icon" />
       </g>
-      <circle cx={bl.joinX} r={5} className="join-dot"
-        onPointerDown={e => { e.stopPropagation(); props.selectBranch() }} />
+      <circle cx={bl.joinX} r={5} className="join-dot" onPointerDown={pick} />
       {selected && (
         <>
           <circle cx={bl.forkX} r={17} className="end-handle" onPointerDown={e => props.startEndDrag('fork', e)} />

@@ -17,6 +17,15 @@ export function supabase(): SupabaseClient {
   return client
 }
 
+type RpcResult<T> = { data: T | null; error: { message: string } | null }
+
+/** Call a Postgres RPC; throws with the server message on error. */
+export async function rpc<T>(fn: string, args: Record<string, unknown>): Promise<T> {
+  const { data, error } = (await supabase().rpc(fn, args)) as RpcResult<T>
+  if (error) throw new Error(error.message)
+  return data as T
+}
+
 let sessionPromise: Promise<boolean> | null = null
 
 /**
@@ -68,6 +77,12 @@ export function getIdentity(): Identity {
   const id = { name: `${pick(ADJ)} ${pick(ANIMAL)}`, color: pick(COLORS) }
   try { localStorage.setItem(LS_ID, JSON.stringify(id)) } catch { /* ok */ }
   return id
+}
+
+/** The creator stamp for a new item: this browser's current display identity. */
+export function creatorStamp(): Identity {
+  const { name, color } = getIdentity()
+  return { name, color }
 }
 
 export function setIdentity(id: Identity) {

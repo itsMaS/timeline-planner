@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { ListChecks, Shuffle } from 'lucide-react'
 import { iconByName } from '../model/icons'
-import { contentExtent, displayLabel, layoutTimeline, rowY, typeOf } from '../model/layout'
+import { branchPathD, contentExtent, layoutTimeline, rowY, spineD, spineYFor, splitLabel, terminalEndX, typeOf } from '../model/layout'
 import type { Camera, Project } from '../model/types'
 import { clamp, download, formatUnit, rulerStepFor, sectionHue, unitSuffix } from '../model/util'
 import { attachmentsFor, effectiveValue, formatValue } from '../model/fields'
@@ -12,11 +12,11 @@ const DARK: Colors = { bg: '#111318', text: '#e6e8ee', line: '#3a3f4d', muted: '
 const LIGHT: Colors = { bg: '#f6f7f9', text: '#23262e', line: '#c3c8d4', muted: '#6b7180' }
 
 /** Pure, style-free SVG scene used for PNG/SVG export. */
-function ExportScene(props: { proj: Project; cam: Camera; w: number; h: number; density: number; theme: 'dark' | 'light' }) {
-  const { proj, cam, w, h, density, theme } = props
+function ExportScene(props: { proj: Project; cam: Camera; w: number; h: number; density: number; theme: 'dark' | 'light'; showFields: boolean }) {
+  const { proj, cam, w, h, density, theme, showFields } = props
   const C = theme === 'dark' ? DARK : LIGHT
   const st = proj.settings
-  const spineY = Math.round(h * 0.42)
+  const spineY = spineYFor(proj, h)
   const sizeAt = (d0: number) => Math.max(10, st.sectionStyle.labelSize - 2.5 * d0)
   const barTopFor = (depth: number) => {
     let y = 0
@@ -26,7 +26,7 @@ function ExportScene(props: { proj: Project; cam: Camera; w: number; h: number; 
   const maxDepth = proj.sections.length ? Math.max(...proj.sections.map(s => s.depth)) : -1
   const headerH = maxDepth >= 0 ? barTopFor(maxDepth + 1) : 0
   const maxUpRows = Math.max(1, Math.floor((spineY - headerH - 76) / 46) + 1)
-  const layout = layoutTimeline(proj, cam, w, proj.filters, density, false, new Set(), new Set(), st.placement, maxUpRows)
+  const layout = layoutTimeline(proj, cam, w, proj.filters, density, false, new Set(), new Set(), st.placement, maxUpRows, showFields)
   const toX = (pos: number) => (pos - cam.x) * cam.s
   const font = 'ui-sans-serif, system-ui, sans-serif'
 
@@ -127,40 +127,29 @@ function ExportScene(props: { proj: Project; cam: Camera; w: number; h: number; 
           }
           return <g>{ticks}</g>
         })()}
-        <line x1={0} y1={0} x2={w} y2={0} stroke={C.line} strokeWidth={st.spine.width} opacity={st.spine.opacity} />
+        <path d={spineD(w, layout.branches)} fill="none" stroke={C.line} strokeWidth={st.spine.width} opacity={st.spine.opacity} />
         {layout.branches.map(bl => {
           const { branch } = bl
           const dash = branch.mode === 'any' ? '7 5' : undefined
           const GateIcon = branch.mode === 'any' ? Shuffle : ListChecks
+          const labelX = bl.forkX + bl.curveW + 6
+          const roomy = bl.joinX - bl.forkX > 2 * bl.curveW + 40
           return (
             <g key={branch.id}>
               {branch.paths.map((path, i) => {
-                const yOff = bl.pathYs[i]
-                const endX = path.terminal ? bl.joinX - 74 : bl.joinX
-                const d = `M ${bl.forkX} 0 C ${bl.forkX + 30} 0, ${bl.forkX + 26} ${yOff}, ${bl.forkX + 58} ${yOff}` +
-                  ` L ${Math.max(bl.forkX + 58, endX - 58)} ${yOff}` +
-                  (path.terminal ? '' : ` C ${endX - 26} ${yOff}, ${endX - 30} 0, ${endX} 0`)
+                const y = bl.pathYs[i]
                 return (
                   <g key={path.id}>
-                    <path d={d} fill="none" stroke={C.line} strokeWidth={2} strokeDasharray={dash} />
-                    {path.label && (
-                      <text x={bl.forkX + 68} y={yOff - 10} fontFamily={font} fontSize={10} fontStyle="italic" fill={C.muted}>
+                    <path d={branchPathD(bl, y, path.terminal)} fill="none" stroke={C.line} strokeWidth={2} strokeDasharray={dash} />
+                    {path.terminal && <rect x={terminalEndX(bl) - 2} y={y - 8} width={4} height={16} rx={2} fill={C.muted} />}
+                    {roomy && branch.mode === 'all' && (
+                      <rect x={labelX} y={y + 5} width={9} height={9} rx={2} fill="none" stroke={C.muted} strokeWidth={1.4} />
+                    )}
+                    {roomy && path.label && (
+                      <text x={labelX + (branch.mode === 'all' ? 14 : 0)} y={y + 13} fontFamily={font} fontSize={10} fontStyle="italic" fill={C.muted}>
                         {path.label}
                       </text>
                     )}
-                    {bl.items[i].map(pi => {
-                      const t = typeOf(proj, pi.item)
-                      const Icon = iconByName(t?.icon ?? 'Circle')
-                      return (
-                        <g key={pi.item.id} transform={`translate(${pi.x}, ${pi.y})`} opacity={pi.ghost ? 0.2 : 1}>
-                          <circle r={11} fill={C.bg} stroke={t?.color} strokeWidth={1.5} />
-                          <Icon x={-6.5} y={-6.5} width={13} height={13} color={t?.color} strokeWidth={2} />
-                          {pi.labelShown && (
-                            <text x={16} y={21} fontFamily={font} fontSize={10} fill={C.muted}>{pi.item.title}</text>
-                          )}
-                        </g>
-                      )
-                    })}
                   </g>
                 )
               })}
@@ -171,37 +160,41 @@ function ExportScene(props: { proj: Project; cam: Camera; w: number; h: number; 
           )
         })}
         {layout.dots.map(dot => (
-          <circle key={dot.item.id} cx={dot.x} r={3.5} fill={dot.color} opacity={dot.ghost ? 0.2 : 1} />
+          <circle key={dot.item.id} cx={dot.x} cy={dot.y} r={3.5} fill={dot.color} opacity={dot.ghost ? 0.2 : 1} />
         ))}
         {layout.placed.map(pl => {
           const t = typeOf(proj, pl.item)
-          const y = rowY(pl.row)
           const z = pl.size || 1
           return (
-            <line key={`stem-${pl.item.id}`} x1={pl.x} y1={y + (y < 0 ? 14 * z : -14 * z)} x2={pl.x} y2={0}
+            <line key={`stem-${pl.item.id}`} x1={pl.x} y1={pl.ny + (pl.ny < pl.y ? 14 * z : -14 * z)} x2={pl.x} y2={pl.y}
               stroke={t?.color} strokeWidth={1} opacity={pl.ghost ? 0.1 : 0.35} />
           )
         })}
         {layout.placed.map(pl => {
           const t = typeOf(proj, pl.item)
           const Icon = iconByName(t?.icon ?? 'Circle')
-          const y = rowY(pl.row)
           const z = pl.size || 1
           return (
-            <g key={pl.item.id} transform={`translate(${pl.x}, ${y})`} opacity={pl.ghost ? 0.18 : 1}>
+            <g key={pl.item.id} transform={`translate(${pl.x}, ${pl.ny})`} opacity={pl.ghost ? 0.18 : 1}>
               {pl.spanW > 0 && (
                 <rect x={0} y={3 + 14 * z} width={pl.spanW} height={6} rx={3} fill={`${t?.color}55`} stroke={`${t?.color}88`} />
               )}
               <circle r={14 * z} fill={C.bg} stroke={t?.color} strokeWidth={1.5} />
               <Icon x={-8 * z} y={-8 * z} width={16 * z} height={16 * z} color={t?.color} strokeWidth={2} />
-              {pl.labelShown && (
-                <text x={20 * z} y={4 * z} fontFamily={font} fontSize={11.5 * clamp(z, 0.8, 1.35)} fill={C.text}>{displayLabel(pl.item.title)}</text>
-              )}
+              {pl.labelShown && (() => {
+                const label = splitLabel(proj, pl.item, showFields)
+                return (
+                  <text x={20 * z} y={4 * z} fontFamily={font} fontSize={11.5 * clamp(z, 0.8, 1.35)} fill={C.text}>
+                    {label.title}
+                    {label.fields && <tspan fill={C.muted} fontSize={10.5 * clamp(z, 0.8, 1.35)}>{` · ${label.fields}`}</tspan>}
+                  </text>
+                )
+              })()}
             </g>
           )
         })}
         {layout.clusters.map(cl => (
-          <g key={cl.key} transform={`translate(${cl.x}, 0)`}>
+          <g key={cl.key} transform={`translate(${cl.x}, ${cl.y})`}>
             {cl.count === 1
               ? <circle r={4.5} fill={cl.color} />
               : (
@@ -245,7 +238,7 @@ export function exportCSV(proj: Project) {
     { length: maxDepth + 1 },
     (_, d) => proj.hierarchyLevels[d]?.name ?? `Level ${d + 1}`,
   )
-  const header = [...levels, 'Title', 'Type', 'Position', 'Duration', 'Branch path', 'Tags', 'Description', 'Link', ...proj.fields.map(f => f.name)]
+  const header = [...levels, 'Title', 'Type', 'Position', 'Duration', 'Branch path', 'Tags', 'Description', 'Link', 'Created by', ...proj.fields.map(f => f.name)]
   const rows = [...proj.items]
     .sort((a, b) => a.pos - b.pos)
     .map(it => {
@@ -260,6 +253,7 @@ export function exportCSV(proj: Project) {
         it.tags.join('; '),
         it.description,
         it.link,
+        it.createdBy?.name ?? '',
         ...proj.fields.map(f => {
           const a = atts.find(x => x.field.id === f.id)
           return a ? formatValue(proj, f, effectiveValue(f, a.att, it.fieldValues[f.id])) : ''
@@ -276,9 +270,9 @@ export function exportJSON(proj: Project) {
     new Blob([JSON.stringify(proj, null, 2)], { type: 'application/json' }))
 }
 
-export function exportPNG(proj: Project, w: number, h: number, density: number, theme: 'dark' | 'light') {
+export function exportPNG(proj: Project, w: number, h: number, density: number, theme: 'dark' | 'light', showFields = true) {
   const markup = renderToStaticMarkup(
-    <ExportScene proj={proj} cam={proj.camera} w={w} h={h} density={density} theme={theme} />,
+    <ExportScene proj={proj} cam={proj.camera} w={w} h={h} density={density} theme={theme} showFields={showFields} />,
   )
   const svgBlob = new Blob([markup], { type: 'image/svg+xml' })
   const url = URL.createObjectURL(svgBlob)
@@ -299,14 +293,14 @@ export function exportPNG(proj: Project, w: number, h: number, density: number, 
   img.src = url
 }
 
-export function exportFullSVG(proj: Project, density: number, theme: 'dark' | 'light') {
+export function exportFullSVG(proj: Project, density: number, theme: 'dark' | 'light', showFields = true) {
   const { min, max } = contentExtent(proj)
   const span = max - min
   const s = clamp(6000 / span, 12, 80)
   const w = Math.ceil(span * s)
   const h = 760
   const markup = renderToStaticMarkup(
-    <ExportScene proj={proj} cam={{ x: min, s }} w={w} h={h} density={1} theme={theme} />,
+    <ExportScene proj={proj} cam={{ x: min, s }} w={w} h={h} density={1} theme={theme} showFields={showFields} />,
   )
   download(`${proj.name.replace(/\s+/g, '-').toLowerCase()}.svg`,
     new Blob([markup], { type: 'image/svg+xml' }))

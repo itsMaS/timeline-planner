@@ -1,6 +1,5 @@
 import React, { useMemo, useState } from 'react'
-import { ArrowDown, ArrowUp, Copy, Trash2, X } from 'lucide-react'
-import { ChevronDown, ChevronRight } from 'lucide-react'
+import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Copy, FileText, Trash2, X } from 'lucide-react'
 import { attachmentsFor, effectiveValue, levelOf, type Owner } from '../model/fields'
 import { iconByName } from '../model/icons'
 import { typeOf } from '../model/layout'
@@ -10,8 +9,10 @@ import type { Branch, Item, Section } from '../model/types'
 import { formatUnit, uid, unitSuffix } from '../model/util'
 import { requestDelete } from './deletion'
 import { entityLook, FieldRow, jumpTo, ReadFieldValue, ReferencedBy } from './FieldInputs'
+import { exportDocPDF } from './exportDoc'
 import { Markdown } from './Markdown'
 import { nav } from './nav'
+import { creatorStamp } from '../sync/client'
 import { uploadImage } from '../sync/share'
 
 export function Inspector() {
@@ -58,7 +59,31 @@ function Head(props: { title: string; children?: React.ReactNode }) {
   )
 }
 
+/** Opens the printable outline of one section (headings + items) for saving as PDF. */
+function SectionDocButton({ section }: { section: Section }) {
+  const proj = useActiveProject()
+  const showToast = useStore(s => s.showToast)
+  return (
+    <button
+      className="ghost-btn" title="Export this section as a document (PDF)"
+      onClick={() => {
+        if (!exportDocPDF(proj, [section.id])) showToast('Pop-up blocked — allow pop-ups for this site to export the document.')
+      }}
+    ><FileText width={14} height={14} /></button>
+  )
+}
+
 // ------------------------------------------------------------------ read-only panels
+
+/** Creator chip: the collaborator's colour dot and display name. */
+function Creator({ who }: { who: { name: string; color: string } }) {
+  return (
+    <span className="creator">
+      <span className="creator-dot" style={{ background: who.color }} />
+      {who.name}
+    </span>
+  )
+}
 
 function ReadField({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -136,6 +161,9 @@ function ReadItemPanel({ id }: { id: string }) {
         {fields.map(f => (
           <ReadField key={f.field.id} label={f.field.name}><ReadFieldValue field={f.field} value={f.value} /></ReadField>
         ))}
+        {item.createdBy && (
+          <ReadField label="Created by"><Creator who={item.createdBy} /></ReadField>
+        )}
         <ReferencedBy id={item.id} />
         <div className="field">
           <label>Description</label>
@@ -233,7 +261,9 @@ function ReadSectionPanel({ section }: { section: Section }) {
     .filter(a => a.value !== null)
   return (
     <>
-      <Head title={levelOf(proj, section)?.name ?? 'Section'} />
+      <Head title={levelOf(proj, section)?.name ?? 'Section'}>
+        <SectionDocButton section={section} />
+      </Head>
       <div className="insp-body">
         <div className="read-title"><h3>{section.name || <span className="muted">Untitled</span>}</h3></div>
         <div className="row gap">
@@ -296,6 +326,7 @@ function ItemPanel({ id }: { id: string }) {
               const cp = structuredClone(src)
               cp.id = nid
               cp.pos += Math.max(0.5, cp.duration)
+              cp.createdBy = creatorStamp()
               p.items.push(cp)
             })
             select([nid])
@@ -377,6 +408,12 @@ function ItemPanel({ id }: { id: string }) {
           />
           {item.link && <a className="link-btn" href={item.link} target="_blank" rel="noreferrer noopener">open ↗</a>}
         </div>
+        {item.createdBy && (
+          <div className="field">
+            <label>Created by</label>
+            <Creator who={item.createdBy} />
+          </div>
+        )}
         {attachmentsFor(proj, { kind: 'item', entity: item }).map(({ att, field }) => (
           <FieldRow
             key={field.id} field={field} att={att} ownerId={item.id}
@@ -592,6 +629,7 @@ function SectionPanel({ section }: { section: Section }) {
   return (
     <>
       <Head title={levelOf(proj, section)?.name ?? 'Section'}>
+        <SectionDocButton section={section} />
         <button
           className="ghost-btn danger" title="Delete section"
           onClick={() => requestDelete({ sectionIds: [section.id] }, () => { select([]); showToast('Section deleted.', true) })}

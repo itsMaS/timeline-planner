@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import {
-  Download, Eye, EyeOff, GitBranch, Grid3x3, HelpCircle, Link, Magnet, Maximize2, Minus, Moon, Plus,
-  Redo2, Search, Settings2, Share2, Sun, Undo2, Upload, Volume2, VolumeX, X, ZoomIn,
+  Download, Eye, EyeOff, FileText, GitBranch, Grid3x3, HelpCircle, Link, Magnet, Maximize2, Minus, Moon, Plus,
+  Redo2, Search, Settings2, Share2, Sun, TableProperties, Undo2, Upload, Volume2, VolumeX, X, ZoomIn,
 } from 'lucide-react'
 import { iconByName } from '../model/icons'
 import { itemMatchesFilters } from '../model/layout'
@@ -10,7 +10,9 @@ import { TEMPLATES } from '../model/templates'
 import type { TimelineSettings, UnitPreset } from '../model/types'
 import { uid } from '../model/util'
 import { exportCSV, exportFullSVG, exportJSON, exportPNG } from './export'
+import { exportDocPDF } from './exportDoc'
 import { CanvasView } from './Canvas'
+import { creatorStamp } from '../sync/client'
 import { getClipboard, setClipboard } from './clipboard'
 import { ConfirmDialog } from './Confirm'
 import { requestDelete } from './deletion'
@@ -74,6 +76,7 @@ export function App() {
             const cp = structuredClone(src)
             cp.id = uid()
             cp.pos += Math.max(0.5, cp.duration)
+            cp.createdBy = creatorStamp()
             nids.push(cp.id)
             pr.items.push(cp)
           }
@@ -99,6 +102,7 @@ export function App() {
             cp.id = uid()
             cp.pos = center + (src.pos - base)
             cp.pathId = null
+            cp.createdBy = creatorStamp()
             nids.push(cp.id)
             pr.items.push(cp)
           }
@@ -133,6 +137,7 @@ export function App() {
         s.mutate(pr => pr.items.push({
           id, typeId, layerId: null, pathId: null, pos: center, duration: 0,
           title: `New ${type.name.toLowerCase()}`, description: '', tags: [], link: '', images: [], fieldValues: {},
+          createdBy: creatorStamp(),
         }))
         s.select([id])
         return
@@ -218,6 +223,14 @@ function Toolbar({ applyView }: { applyView: (id: string | null) => void }) {
   const tweak = useStore(s => s.tweak)
   const [exportOpen, setExportOpen] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
+  // Selected sections narrow the document export to just those sub-trees.
+  const docSections = ui.selection.filter(x => x.startsWith('S:')).map(x => x.slice(2))
+    .map(id => proj.sections.find(sc => sc.id === id)).filter((sc): sc is NonNullable<typeof sc> => !!sc)
+  const docLabel = docSections.length === 0
+    ? 'Document PDF of whole timeline'
+    : docSections.length === 1
+      ? `Document PDF of “${docSections[0].name || 'Untitled'}”`
+      : `Document PDF of ${docSections.length} selected sections`
 
   return (
     <>
@@ -298,6 +311,8 @@ function Toolbar({ applyView }: { applyView: (id: string | null) => void }) {
             onClick={() => setUI({ ghostHidden: !ui.ghostHidden })}>
             {ui.ghostHidden ? <EyeOff width={15} height={15} /> : <Eye width={15} height={15} />}
           </button>
+          <button className={`ghost-btn ${ui.showFields ? 'on' : ''}`} title="Show custom field values next to item titles"
+            onClick={() => setUI({ showFields: !ui.showFields })}><TableProperties width={15} height={15} /></button>
           <button className={`ghost-btn ${ui.tool === 'branch' ? 'on' : ''}`} title="Branch tool (B) — drag along the line"
             onClick={() => setUI({ tool: ui.tool === 'branch' ? 'select' : 'branch' })}>
             <GitBranch width={15} height={15} />
@@ -329,14 +344,25 @@ function Toolbar({ applyView }: { applyView: (id: string | null) => void }) {
             {exportOpen && (
               <div className="menu" onPointerLeave={() => setExportOpen(false)}>
                 <button onClick={() => { exportJSON(proj); setExportOpen(false) }}><Download width={13} height={13} /> Project JSON</button>
-                <button onClick={() => { exportPNG(proj, window.innerWidth, window.innerHeight - 90, ui.density, ui.theme); setExportOpen(false) }}>
+                <button onClick={() => { exportPNG(proj, window.innerWidth, window.innerHeight - 90, ui.density, ui.theme, ui.showFields); setExportOpen(false) }}>
                   <Download width={13} height={13} /> PNG of current view
                 </button>
-                <button onClick={() => { exportFullSVG(proj, ui.density, ui.theme); setExportOpen(false) }}>
+                <button onClick={() => { exportFullSVG(proj, ui.density, ui.theme, ui.showFields); setExportOpen(false) }}>
                   <Download width={13} height={13} /> SVG of full timeline
                 </button>
                 <button onClick={() => { exportCSV(proj); setExportOpen(false) }}>
                   <Download width={13} height={13} /> CSV of all items
+                </button>
+                <button
+                  title="Sections become headings, items sub-headings with their type and icon. Only currently visible items are included. Opens the print dialog — choose “Save as PDF”."
+                  onClick={() => {
+                    if (!exportDocPDF(proj, docSections.length ? docSections.map(sc => sc.id) : null)) {
+                      showToast('Pop-up blocked — allow pop-ups for this site to export the document.')
+                    }
+                    setExportOpen(false)
+                  }}
+                >
+                  <FileText width={13} height={13} /> {docLabel}
                 </button>
                 <button onClick={() => { fileRef.current?.click(); setExportOpen(false) }}>
                   <Upload width={13} height={13} /> Import JSON…
@@ -598,6 +624,7 @@ function Cheatsheet() {
     ['Drag type from sidebar', 'Create an item on the line (or on a branch path)'],
     ['Double-click the line', 'Quick-create an item of the last-used type'],
     ['N', 'New item at the view center'],
+    ['Space', 'Search for a type and add an item under the cursor'],
     ['Drag item', 'Move (Alt = no snap · Alt at start = clone)'],
     ['Shift+drag item', 'Move ALL items together (or toggle the link button)'],
     ['Drag span edge circles', 'Stretch an item into a span'],

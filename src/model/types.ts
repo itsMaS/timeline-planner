@@ -151,6 +151,12 @@ export interface Item {
   link: string
   images: string[]
   fieldValues: Record<Id, FieldValue>
+  /**
+   * Collaborator who created the item: a snapshot of their display name and
+   * colour (the identity shown to others in the Share dialog) taken when the
+   * item was made. Absent on items from before this was recorded.
+   */
+  createdBy?: { name: string; color: string }
 }
 
 export interface Filters {

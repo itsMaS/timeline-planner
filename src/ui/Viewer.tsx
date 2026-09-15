@@ -1,6 +1,6 @@
 import React, { useEffect } from 'react'
 import {
-  Eye, EyeOff, ExternalLink, Maximize2, Minus, Moon, PanelLeft, Search, Sun, X, ZoomIn,
+  Eye, EyeOff, ExternalLink, FileText, Maximize2, Minus, Moon, PanelLeft, Search, Sun, TableProperties, X, ZoomIn,
 } from 'lucide-react'
 import { itemMatchesFilters } from '../model/layout'
 import { useActiveProject, useActiveShare, useActiveSync, useStore } from '../model/store'
@@ -8,6 +8,7 @@ import { CanvasView } from './Canvas'
 import { Inspector } from './Inspector'
 import { nav } from './nav'
 import { PanelDivider } from './Panels'
+import { exportDocPDF } from './exportDoc'
 import { PresenceBar } from './Share'
 import { Sidebar } from './Sidebar'
 
@@ -24,6 +25,7 @@ export function Viewer() {
   const setUI = useStore(s => s.setUI)
   const tweak = useStore(s => s.tweak)
   const select = useStore(s => s.select)
+  const showToast = useStore(s => s.showToast)
 
   useEffect(() => { document.documentElement.dataset.theme = ui.theme }, [ui.theme])
   useEffect(() => { document.title = `${proj.name} — Timeline Planner` }, [proj.name])
@@ -98,6 +100,8 @@ export function Viewer() {
             onClick={() => setUI({ ghostHidden: !ui.ghostHidden })}>
             {ui.ghostHidden ? <EyeOff width={15} height={15} /> : <Eye width={15} height={15} />}
           </button>
+          <button className={`ghost-btn ${ui.showFields ? 'on' : ''}`} title="Show custom field values next to item titles"
+            onClick={() => setUI({ showFields: !ui.showFields })}><TableProperties width={15} height={15} /></button>
           <span className="sep" />
           <button className="ghost-btn" title="Zoom out (-)" onClick={() => nav.current?.zoomBy(0.74)}><Minus width={15} height={15} /></button>
           <button className="ghost-btn" title="Zoom in (+)" onClick={() => nav.current?.zoomBy(1.35)}><ZoomIn width={15} height={15} /></button>
@@ -106,6 +110,12 @@ export function Viewer() {
           <button className="ghost-btn" title="Theme" onClick={() => setUI({ theme: ui.theme === 'dark' ? 'light' : 'dark' })}>
             {ui.theme === 'dark' ? <Sun width={15} height={15} /> : <Moon width={15} height={15} />}
           </button>
+          <button
+            className="ghost-btn" title="Export as document (PDF) — sections as headings, items as sub-headings"
+            onClick={() => {
+              if (!exportDocPDF(proj, null)) showToast('Pop-up blocked — allow pop-ups for this site to export the document.')
+            }}
+          ><FileText width={15} height={15} /></button>
           <a className="ghost-btn" title="Open Timeline Planner" href={appUrl} target="_blank" rel="noreferrer">
             <ExternalLink width={15} height={15} />
           </a>

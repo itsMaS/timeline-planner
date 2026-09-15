@@ -59,7 +59,18 @@ To ship an update: `npm run build`, commit the regenerated
   `prefers-reduced-motion` support, dark and light themes.
 - **Data** — multiple timelines as tabs, continuous autosave + periodic
   rollback snapshots, JSON import/export, PNG export of the current view, SVG
-  export of the whole timeline. Everything is undoable (`Ctrl+Z`).
+  export of the whole timeline, CSV of all items. Everything is undoable
+  (`Ctrl+Z`).
+- **Document export (PDF)** — *Export → Document PDF* renders the timeline as
+  a printable outline: sections become headings (outermost level H1, next H2,
+  …), items are sub-headings one level below their section with the type's
+  icon and name beside the title, and descriptions, custom fields, tags, links
+  and images follow as body text — readable by people and AI agents alike.
+  Only items currently visible on the canvas are included (filtered-out and
+  hidden-layer items are skipped, so a saved view doubles as an export
+  preset). It opens in a new tab with the print dialog up; pick *Save as PDF*. With a
+  section selected (or via the section inspector's document button) only that
+  section and everything inside it is exported, starting at H1.
 
 Press `?` in the app for the full shortcut list.
 
@@ -72,18 +83,26 @@ by stable random ids; positions are floats on an unbounded abstract axis.
 {
   "schemaVersion": 1,
   "id": "…", "name": "Linear game",
-  "hierarchyLevels": ["Chapter", "Level", "Section"],   // section depth names
+  "hierarchyLevels": [{ "id": "…", "name": "Chapter",   // section depth names
+                        "fields": [],                  // FieldAttachment[] like on types
+                        "processors": [{ "processorId": "…", "showOnBand": true }] }],
+  "fields":     [{ "id": "…", "name": "Coins", "kind": "int", // "text" | "int" | "float" | "ref"
+                   "min": 0, "max": null, "decimals": null, "unit": "coins", "maxLength": null,
+                   "refTargets": [], "refMultiple": false, "refShowLinks": false,
+                   "defaultValue": null, "help": "", "required": false, "showInTooltip": false }],
+  "processors": [{ "id": "…", "name": "Coin total", "op": "sum", // sum|count|avg|min|max|distinct
+                   "fieldId": "…", "targets": [] }],       // type/level ids to include, [] = all
   "types":    [{ "id": "…", "name": "Death opportunity", "icon": "Skull",
                  "color": "#ef4444", "defaultLayerId": "…",
                  "folderId": null,       // sidebar folder, null = top level
-                 "fields": [{ "id": "…", "name": "How the player dies" }] }],
+                 "fields": [{ "fieldId": "…", "defaultValue": 3 }] }], // attached global fields
   "typeFolders": [{ "id": "…", "name": "Story", "icon": "Folder", "color": "#f59e0b",
                     "collapsed": false,
                     "parentId": null }],  // folders nest: id of the parent folder
   "layers":   [{ "id": "…", "name": "Critical", "eye": false, "pin": false }],
                  // array order = significance, index 0 = most significant
   "sections": [{ "id": "…", "name": "Chapter 1", "depth": 0,
-                 "start": 0, "end": 25 }],
+                 "start": 0, "end": 25, "fieldValues": {} }],
   "branches": [{ "id": "…", "mode": "any" /* or "all" */,
                  "forkPos": 27, "joinPos": 36,
                  "paths": [{ "id": "…", "label": "Stealth route",
@@ -95,7 +114,7 @@ by stable random ids; positions are floats on an unbounded abstract axis.
                  "title": "…", "description": "markdown…",
                  "tags": ["…"], "link": "https://…",
                  "images": ["data:image/…"],
-                 "fieldValues": { "<fieldId>": "…" } }],
+                 "fieldValues": { "<fieldId>": "…" } }], // string | number | id[] by field kind
   "views":    [{ "id": "…", "name": "Story beats",
                  "filters": { "offTypes": ["…"], "offLayers": [],
                               "tags": [], "text": "" } }],
@@ -114,3 +133,24 @@ Vite + React + TypeScript. SVG scene with a canvas overlay for particles;
 Zustand store where every change goes through a single mutate action (which is
 what powers undo/redo, autosave snapshots, and keeps the door open for a
 CRDT-backed realtime mode later).
+
+## Agents and proposals
+
+Install the `timeline-agent` plugin in Claude Code, then paste a project's edit
+link into the chat and ask for what you want:
+
+```
+/plugin marketplace add itsMaS/timeline-planner
+/plugin install timeline-agent@timeline-planner
+```
+
+Suggested changes don't touch the timeline: they show up under **Sidebar →
+Proposals** in every edit tab, with a per-change diff. Tick the ones you want
+and press **Apply selected** — a single undoable edit that syncs like any other.
+Asking to "apply directly" saves straight away (refusing if the timeline changed
+since it was read). PDF exports use the app's document export, printed by the
+Chrome already on your machine.
+
+The CLI behind the skill is `agent/timeline.ts` (`npx tsx agent/timeline.ts`
+inside this repo); `npm run build:skill` regenerates the bundled copy shipped in
+the plugin.

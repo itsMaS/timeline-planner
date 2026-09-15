@@ -9,6 +9,8 @@ export interface Nav {
   flyToSection: (id: string) => void
   back: () => void
   forward: () => void
+  /** Create an item of the given type at the centre of the visible timeline; returns its id. */
+  addItem: (typeId: string) => string | null
 }
 
 export const nav: { current: Nav | null } = { current: null }

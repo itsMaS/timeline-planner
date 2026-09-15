@@ -7,12 +7,14 @@ import { iconByName } from '../model/icons'
 import { attachedToNames, fieldUsage, kindGlyph, kindLabel, newFieldDef } from '../model/fields'
 import { itemMatchesFilters, typeOf } from '../model/layout'
 import { processorUsage } from '../model/processors'
-import { newLevel, useActiveProject, useCanEdit, useStore } from '../model/store'
+import { newLevel, useActiveProject, useActiveShare, useCanEdit, useStore } from '../model/store'
 import type { ItemType, TypeFolder } from '../model/types'
 import { PALETTE, uid } from '../model/util'
 import { IconPicker } from './IconPicker'
 import { chipDrop, nav } from './nav'
+import { ProposalsPanel } from './Proposals'
 import { describeProcessor } from './SchemaEditors'
+import { TypeSearch } from './TypeSearch'
 
 // The min-zoom slider is logarithmic: camera zoom spans several orders of
 // magnitude depending on the project's scope (a 4-hour plan in hours sits in
@@ -46,7 +48,10 @@ export function Sidebar() {
   const tweak = useStore(s => s.tweak)
   const select = useStore(s => s.select)
   const canEdit = useCanEdit()
-  const [open, setOpen] = useState({ types: true, layers: true, structure: false, schema: false, tags: false })
+  const share = useActiveShare()
+  const openProposals = useStore(s => (s.proposals[s.activeId] ?? []).filter(p => p.status === 'open').length)
+  const reviewing = useStore(s => s.ui.reviewProposalId !== null)
+  const [open, setOpen] = useState({ proposals: true, types: true, layers: true, structure: false, schema: false, tags: false })
   const toggle = (k: keyof typeof open) => setOpen(o => ({ ...o, [k]: !o[k] }))
   const [openLayerId, setOpenLayerId] = useState<string | null>(null)
   const [openFolderId, setOpenFolderId] = useState<string | null>(null)
@@ -67,11 +72,27 @@ export function Sidebar() {
     p.filters.offTypes = [...set]
     p.activeViewId = null
   })
-  /** Show only the given types; if they are already the only ones on, show all. */
+  /**
+   * Show only the given types; if they are already the only ones on, go back
+   * to the type visibility (and active view) from before the solo. Falls back
+   * to showing all when there is nothing remembered (e.g. after a reload).
+   */
+  const preSolo = useRef<{ offTypes: string[]; activeViewId: string | null; soloOff: string[] } | null>(null)
+  const sameSet = (a: string[], b: string[]) => a.length === b.length && b.every(id => a.includes(id))
   const soloTypes = (ids: string[]) => {
     const others = proj.types.filter(t => !ids.includes(t.id)).map(t => t.id)
-    const isSolo = proj.filters.offTypes.length === others.length && others.every(id => proj.filters.offTypes.includes(id))
-    tweak(p => { p.filters.offTypes = isSolo ? [] : others; p.activeViewId = null })
+    if (sameSet(proj.filters.offTypes, others)) {
+      const prev = preSolo.current
+      preSolo.current = null
+      tweak(p => { p.filters.offTypes = prev ? [...prev.offTypes] : []; p.activeViewId = prev ? prev.activeViewId : null })
+      return
+    }
+    // Hopping between solos keeps the original pre-solo state; anything else
+    // (filters changed by hand since) snapshots the current one.
+    if (!preSolo.current || !sameSet(proj.filters.offTypes, preSolo.current.soloOff)) {
+      preSolo.current = { offTypes: [...proj.filters.offTypes], activeViewId: proj.activeViewId, soloOff: others }
+    } else preSolo.current.soloOff = others
+    tweak(p => { p.filters.offTypes = others; p.activeViewId = null })
   }
   /** Viewer-side layer hiding goes through the per-user filter, never the shared layer flag. */
   const toggleLayerFilter = (id: string) => tweak(p => {
@@ -225,14 +246,17 @@ export function Sidebar() {
     window.addEventListener('pointerup', onUp)
   }
 
-  const newType = (folderId: string | null, color?: string) => {
+  const newType = (folderId: string | null, color?: string, name?: string) => {
     const id = uid()
     mutate(p => p.types.push({
-      id, name: 'New type', icon: 'Circle', color: color ?? '#8b5cf6', folderId,
+      id, name: name ?? 'New type', icon: 'Circle',
+      color: color ?? (name ? PALETTE[p.types.length % PALETTE.length] : '#8b5cf6'), folderId,
       defaultLayerId: p.layers[Math.min(1, p.layers.length - 1)]?.id ?? null, fields: [],
     }))
     if (folderId) tweak(p => { const x = p.typeFolders.find(y => y.id === folderId); if (x) x.collapsed = false })
-    setUI({ editTypeId: id })
+    // A named type (from the add-item search) is ready to use; a blank one opens its editor.
+    if (!name) setUI({ editTypeId: id })
+    return id
   }
 
   const newFolder = (parentId: string | null, color?: string) => {
@@ -269,7 +293,7 @@ export function Sidebar() {
         >{off ? <EyeOff width={13} height={13} /> : <Eye width={13} height={13} />}</button>
         <button
           className="ghost-btn row-act"
-          title="Solo — show only this type (again to show all)"
+          title="Solo — show only this type (again to go back)"
           onPointerDown={e => e.stopPropagation()}
           onClick={() => soloTypes([t.id])}
         ><Target width={13} height={13} /></button>
@@ -339,7 +363,7 @@ export function Sidebar() {
           >{allOff ? <EyeOff width={13} height={13} /> : <Eye width={13} height={13} />}</button>
           <button
             className="ghost-btn row-act"
-            title="Solo — show only this folder's types (again to show all)"
+            title="Solo — show only this folder's types (again to go back)"
             onClick={() => soloTypes(all.map(t => t.id))}
             disabled={all.length === 0}
           ><Target width={13} height={13} /></button>
@@ -416,6 +440,17 @@ export function Sidebar() {
       className={`sidebar ${ui.dragTypeId || ui.dragFolderId ? 'dragging' : ''} ${canEdit ? '' : 'readonly'}`}
       style={{ width: ui.sidebarW, minWidth: ui.sidebarW }}
     >
+      {/* -------- proposals (suggested changes awaiting review; edit shares only) */}
+      {canEdit && share?.role === 'edit' && share.editToken && (
+        <>
+          <SectionHeader
+            title="Proposals" open={open.proposals || reviewing} toggle={() => toggle('proposals')}
+            action={openProposals > 0 && <span className="badge accent">{openProposals}</span>}
+          />
+          {(open.proposals || reviewing) && <ProposalsPanel />}
+        </>
+      )}
+
       {/* -------- types */}
       <SectionHeader
         title="Types" open={open.types} toggle={() => toggle('types')}
@@ -432,6 +467,14 @@ export function Sidebar() {
       />
       {open.types && (
         <div className="sb-body" data-type-folder="">
+          {canEdit && proj.types.length > 0 && (
+            <TypeSearch
+              proj={proj}
+              placeholder="Add item… (search types)"
+              onPick={typeId => { nav.current?.addItem(typeId) }}
+              onCreateType={name => { nav.current?.addItem(newType(null, undefined, name)) }}
+            />
+          )}
           {childFolders(proj, null).map(folderNode)}
           {typesInFolder(proj, null).map(typeRow)}
           {proj.types.length === 0 && <div className="sb-hint">no types yet</div>}
