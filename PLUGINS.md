@@ -10,11 +10,13 @@ Companion to [DESIGN.md](DESIGN.md). Two parts:
   and see median timings, reach rates, drop-off, deaths and pacing directly on
   the timeline.
 
-Part C is the decision log: every design choice that was made by assumption,
-with the alternatives, so it can be flipped before implementation starts.
+Part C is the decision log: every design choice, the alternatives that were
+offered, and which one was picked in the 2026-09-08/15 review.
 
-Written 2026-09-08 against the codebase at commit `6a80a7a` (schema v1,
-Vite + React 18 + TypeScript + Zustand, single-file build into `docs/`).
+Written against the codebase at commit `6a80a7a` (schema v1, Vite + React 18 +
+TypeScript + Zustand, single-file build into `docs/`). All a/b/c decisions
+below were confirmed by the project owner; sections marked *confirmed* are
+final for v1.
 
 ---
 
@@ -44,8 +46,8 @@ Goals
 
 Non-goals (v1)
 
-- No sandboxing of external plugins beyond a permissions manifest shown at
-  install. A plugin runs with the same rights as the app (see A9).
+- No sandboxing and no permission prompts for external plugins. A plugin runs
+  with the same rights as the app, classic modding style (see A9).
 - No plugin-to-plugin dependencies.
 - No remote plugin registry service. A static JSON index on GitHub Pages is
   enough (A8).
@@ -119,10 +121,11 @@ parsers) is only instantiated on activation.
 }
 ```
 
-Permissions are informational in v1 (shown before install/enable) except
-`network`, which gates `ctx.net.fetch` (A5). The host refuses to load a plugin
-whose `apiVersion` is greater than the host's, and warns (but loads) when it
-is lower.
+`permissions` is purely descriptive metadata in v1: it is listed on the
+plugin's row in Project Settings so users can see what a plugin does, but
+nothing is gated and no prompt is shown (decision C1.4). The host refuses to
+load a plugin whose `apiVersion` is greater than the host's, and warns (but
+loads) when it is lower.
 
 ### A5. Host API: `PluginDefinition` and `PluginContext`
 
@@ -182,7 +185,7 @@ export interface PluginContext {
   }
   /** Subscribe to host events; returns unsubscribe. */
   on: <K extends keyof HostEvents>(event: K, handler: (e: HostEvents[K]) => void) => () => void
-  /** Gated by the `network` permission; same-origin/CORS rules of the browser apply. */
+  /** Plain fetch; browser same-origin/CORS rules apply. Listed here so plugins have one obvious door. */
   net: { fetch: typeof fetch }
   /** Spawn a Web Worker from source text (host inlines it as a Blob URL so the single-file build works). */
   worker: (source: string | (() => Worker)) => Worker
@@ -308,23 +311,21 @@ Phase 2 of the platform, but designed in from the start.
   reads from `globalThis.__tpReact`, which the host sets before importing.
 - **Upgrades:** re-installing the same `id` with a higher version replaces
   the source; `migrate()` runs on the next activation per project.
-- **Trust UI:** before install, show manifest name/author/homepage/permissions
-  and a one-line warning that plugins run with the app's rights over local
-  data. Community index entries carry a `verified` flag set by the repo
-  maintainers.
+- **Install UI:** the install dialog shows manifest name, version, author,
+  homepage and the descriptive permissions list, with a single Install
+  button. No warnings or consent steps (C1.4). Community index entries carry
+  a `verified` flag set by the repo maintainers, shown as a badge.
 
-### A9. Security posture
+### A9. Security posture (confirmed: fully trusted)
 
-- All data is local-first, so the blast radius of a bad plugin is the user's
-  browser storage for this origin. That is acceptable for v1 and matches
-  typical modding.
-- `network` permission gates `ctx.net.fetch`; plugins without it get a
-  function that throws. (They can still call global `fetch`; this is a
-  courtesy gate, not a sandbox. Documented honestly in the install dialog.)
-- Phase 3 option: run untrusted plugins in a sandboxed `<iframe>` with a
-  postMessage RPC version of `PluginContext`; slots then render plugin-provided
-  declarative descriptors instead of React components. Not planned unless
-  the community grows.
+- Plugins are fully trusted code, like game mods. All data is local-first, so
+  the blast radius of a bad plugin is the user's browser storage for this
+  origin.
+- The README and the community index page state this plainly: install
+  plugins only from sources you trust.
+- Nothing is gated at runtime. If the community grows, a sandboxed
+  `<iframe>` + postMessage variant of `PluginContext` can be added later
+  without changing the plugin API surface for well-behaved plugins.
 
 ### A10. Host UI changes
 
@@ -334,8 +335,8 @@ Phase 2 of the platform, but designed in from the start.
    quick editor), *Plugins*, *Data* (storage usage, snapshots, "delete
    plugin data").
 2. **Plugins tab:** one row per installed plugin: icon, name, version,
-   description, permissions chips, **toggle** (off by default), gear to open
-   `settingsPanel` (only when enabled). Footer: "Add plugin…" (file/URL) and
+   description, descriptive permission chips, **toggle** (off by default),
+   gear to open `settingsPanel` (only when enabled). Footer: "Add plugin…" (file/URL) and
    "Browse community plugins" (index). Toggling calls `mutate`
    (undoable) and then the runtime activates/deactivates.
 3. **Slots** rendered in: `Sidebar` (after Tags), `Toolbar` (before export),
@@ -406,8 +407,14 @@ Import telemetry ◄── Collect runs ◄── Engine tool maps game events �
 4. After a playtest, the designer exports the collected events (CSV or JSON)
    and **imports** them into the plugin as a named dataset.
 5. The plugin maps events back to items by id and shows **median time to
-   reach, reach rate, drop-off, deaths, pacing** on the timeline, in
+   reach, spread, reach rate, drop-off, deaths, pacing** on the timeline, in
    tooltips, in the inspector and in an analytics panel.
+6. The designer narrows everything to a **run cohort** (B6a): runs that
+   reached a chosen milestone, runs that took the red-pill path, runs that
+   completed an ALL branch in a given order, runs on a given build.
+7. Optionally the designer **bakes** the measured timings back into the plan
+   (B8a): positions become median seconds, or the timings of one chosen run,
+   after a preview shows how far every item would move.
 
 ### B2. Export: milestones
 
@@ -482,6 +489,14 @@ Recommendations to document in the plugin's help panel: use gameplay time
 (pause excluded), emit `reach` once per run per milestone, emit a run record
 even for abandoned runs (so reach % has a true denominator), hash player ids.
 
+Branch paths need no engine support (decision C2.21, *inference only*): a run
+is considered to have taken a path when it reached any milestone placed on
+that path, and the order of ALL-branch paths is derived from the earliest
+reach time on each path. The practical consequence for designers: **every
+path that should be measurable needs at least one item on it** (a
+checkpoint, a story beat, anything). The branch inspector warns when a path
+has no mapped milestone.
+
 ### B4. Import: telemetry
 
 Menu entry: **Import telemetry…** (also drag-and-drop a file onto the
@@ -544,6 +559,10 @@ interface DatasetBlob {
 }
 ```
 
+Derived at aggregation time (not stored): for every branch, per run, the
+path taken (ANY) or the completion order (ALL), inferred from `reachT` of
+the items on each path. Recomputed whenever items move between paths.
+
 Sizing: 200 000 runs × 100 milestones × 4 B ≈ 80 MB for `reachT`; plus two
 Uint16 planes ≈ 80 MB. Within IndexedDB limits but large; the import step
 warns above 100 MB and offers "store aggregates only" (drops per-run arrays,
@@ -557,15 +576,17 @@ dataset change, cohort filter change, mapping change, item order change
 (debounced). Results cached by `(datasetId, cohortKey, mappingHash,
 orderHash)`.
 
-Per milestone (mapped item), for the cohort's runs `R`:
+Per milestone (mapped item), for the active cohort's runs `R` (B6a; with no
+cohort, `R` = all runs of the dataset):
 
 | metric | definition |
 | --- | --- |
 | `n` | runs in `R` that reached the milestone |
-| `reach` | `n / |R|` (denominator configurable, B7) |
+| `reach` | `n / |R|`. With a funnel start set, `R` already contains only runs that reached it, so reach is relative to the start |
 | `stepReach` | `n / n_prev` where `prev` is the previous mapped milestone in timeline order on the same line (main line, or the path's own sequence; the first item on a path uses the fork's previous main-line milestone) |
 | `dropoff` | `1 − stepReach` |
-| `tMedian`, `tP10`, `tP25`, `tP75`, `tP90`, `tMean`, `tMin`, `tMax`, `tStd` | over reach times of the `n` runs, after outlier policy (B7) |
+| `tMedian`, `tP10`, `tP25`, `tP75`, `tP90`, `tMean`, `tMin`, `tMax`, `tStd` | over reach times of the `n` runs, after outlier policy (B7); rebased to the funnel start when `rebaseTimes` is on |
+| `iqr`, `spread` | `tP75 − tP25`, and `tP90 − tP10`; drive the whisker/halo visuals (B8b) |
 | `segMedian` | median of `(t − t_prev)` per run, over runs that reached both |
 | `deaths`, `deathsPerRun` | sum / `n` (deaths of runs that never reached it still count, divided by runs that *attempted* = reached prev) |
 | `attempts` | mean extra reaches |
@@ -575,10 +596,14 @@ Per section: reach at section end (last milestone inside), median enter/exit
 time (first/last mapped milestone in the section), runs lost inside the
 section (`n_first − n_last`).
 
-Per branch: **ANY** → share of runs that reached any milestone on each path
-(runs touching several paths counted for each, flagged); **ALL** → most
-common completion order of paths and its share, plus per-path median
-completion time.
+Per branch (inference from path items, B3): **ANY** → for each path, the
+number and share of runs whose first reached path-item is on that path; runs
+that touched several paths are attributed to the path they reached first and
+counted in a `mixed` figure shown in the inspector. **ALL** → every observed
+completion order (sequence of paths by earliest reach time), with count and
+share, plus "first path" shares and per-path median completion time. Runs
+that completed only some paths are listed as partial orders (`Red → …`).
+Nested branches report shares conditional on the parent path.
 
 Global: total runs, completed runs (reached the last milestone or
 `outcome=completed`), median run length, histogram of last milestone reached
@@ -586,6 +611,86 @@ Global: total runs, completed runs (reached the last milestone or
 
 Histograms: 24 bins between p1 and p99 of the reach time per milestone,
 computed in the same pass.
+
+### B6a. Run cohorts (confirmed)
+
+A **cohort** is a saved or transient set of predicates over runs. Predicates
+are ANDed; predicates of the same kind on the same target are ORed (e.g. two
+builds). Every indicator (badges, tint, whiskers, lane, tooltips, inspector,
+section and branch labels, funnel table, reports) is computed for the
+active cohort. Cohorts live in `state.data.cohorts` (named) and
+`state.data.activeCohort` / `compareCohort` (undoable).
+
+```ts
+type Predicate =
+  | { kind: 'reached'; milestoneId: string }             // run reached this milestone
+  | { kind: 'notReached'; milestoneId: string }
+  | { kind: 'funnelStart'; milestoneId: string }         // like `reached`, and also the origin for reach % and (optionally) times
+  | { kind: 'funnelEnd'; milestoneId: string }           // milestones after it are excluded from the funnel table
+  | { kind: 'path'; branchId: string; pathId: string }   // ANY branch: run took this path
+  | { kind: 'firstPath'; branchId: string; pathId: string } // ALL branch: this path was completed first
+  | { kind: 'order'; branchId: string; pathIds: string[] }  // ALL branch: exact completion order (prefix match allowed)
+  | { kind: 'dim'; name: string; values: string[] }      // runs CSV dimension, e.g. build ∈ {0.4.1, 0.4.2}
+  | { kind: 'outcome'; values: ('completed' | 'quit' | 'crash' | 'unknown')[] }
+interface Cohort { id: string; name: string; predicates: Predicate[]; color?: string }
+```
+
+Where cohorts are built (all three, decision C2.22):
+
+- **Item inspector → Analytics section:** buttons *Use as funnel start*,
+  *Use as funnel end*, *Only runs that reached this*, *Only runs that did
+  not reach this*. The funnel-start item gets a small flag glyph on the
+  canvas.
+- **Branch inspector → Analytics section:** the distribution table (see
+  below). Each path row (ANY) or order row (ALL) has a *Filter* button that
+  adds the predicate; clicking an already-active row removes it.
+- **Sidebar Analytics panel → Cohort builder:** chips for every active
+  predicate with ×; *Add predicate…* opens a picker (milestone search,
+  branch/path picker, dimension values); *Save as…* names the cohort;
+  saved cohorts appear as chips, like Views, and a saved cohort can be set
+  as **A** (active) or **B** (compare).
+- **Canvas:** Alt-click a branch path line or label → solo that path's runs
+  (adds a `path`/`firstPath` predicate; Alt-click again removes it), the
+  same gesture the sidebar uses to solo a type. Alt-click the funnel-start
+  flag clears it.
+
+**Cohort bar.** When any predicate is active, a slim bar under the view bar
+shows the chips and `612 of 1 842 runs (33 %)`, and a *Clear* button. In
+compare mode it shows `A: Red pill · 612` and `B: Blue pill · 1 187` with
+their colours.
+
+**Distributions with no filter.** The point of cohorts is also to *see*
+the split before filtering:
+
+- ANY branch on canvas: each path label gains `· 62 %`; path stroke width
+  scales between 1.5 px and 4 px with share; a `mixed 3 %` note appears on
+  the gate when runs touched several paths.
+- ALL branch on canvas: the gate shows the top order compactly
+  (`R→B→G 41 %`); each path label shows *first* share (`· 1st in 71 %`).
+- Branch inspector: full table — ANY: path, runs, share, median time on
+  path; ALL: every observed order with runs and share (top 10, rest
+  grouped), "first path" shares, partial-order count. Both have a *Filter*
+  button per row and a mini bar chart.
+- Nested branches: the inner branch's table is conditional on the outer
+  path when an outer `path` predicate is active, and otherwise shows a
+  small "by parent path" breakdown.
+- Sidebar Analytics panel: **Branch choices** section listing all branches
+  with their top split, so a designer can scan the whole game's choices
+  at once.
+
+**Funnel start and time rebasing.** Setting a funnel start does two things:
+`R` becomes runs that reached it (so every reach % is relative to it), and
+the funnel table starts there. Times stay "since run start" unless the
+**Rebase times to funnel start** toggle (sidebar panel and settings) is on;
+then every time metric is `t − t_start` per run, badges say `+12:34`, and
+the pacing lane origin moves to the start milestone (decision C2.23).
+
+**Compare (A vs B).** Two cohorts may be active at once (decision C2.24).
+Badges show A's value with a B delta (`12:34 · −1:20`, `84 % · +6 pp`),
+tint follows the delta sign, the lane draws A solid and B dashed, the
+inspector shows an A/B column pair, whiskers draw as two thin stacked
+boxes. Dataset-vs-dataset comparison is the same mechanism with a
+`datasetId` on the cohort (a cohort may optionally pin a dataset).
 
 ### B7. Settings (per project, in `state.settings`)
 
@@ -595,11 +700,15 @@ computed in the same pass.
 | `badgeMetrics` | up to 2 of: median, reach, stepReach, dropoff, deaths, segMedian, targetDelta | `[median, reach]` |
 | `tintMode` | `none`, `reach` (sequential), `dropoff` (diverging, red = high loss), `deaths` | `dropoff` |
 | `showLane` | on/off, plus lane placement below/above spine and metric (funnel, pacing, deaths) | on, below, funnel |
-| `reachDenominator` | `allRuns`, `runsWithAnyEvent`, `runsReachingFirstMilestone` | `allRuns` |
+| `reachDenominator` | `allRuns`, `runsWithAnyEvent` — only applies when no funnel start is set | `allRuns` |
+| `rebaseTimes` | rebase time metrics to the funnel-start milestone | off |
+| `spreadVisual` | `whisker` (box + whiskers under labelled nodes, halo at low zoom), `halo`, `none` | `whisker` |
+| `spreadStat` | percentiles drive the visuals; σ is shown numerically | `percentiles` (fixed in v1) |
+| `bakeScale` | `preserveExtent`, `unitsPerSecond:N`, `anchorFunnelStart:factor` | `preserveExtent` |
 | `outliers` | `none`, `trimP99`, `capSeconds:N` | `trimP99` |
 | `minSample` | integer; hide stats when `n <` | 5 |
 | `showNoData` | show a faint "no data" marker on unmapped items | off |
-| `perItem[itemId]` | `{ targetTimeS?: number; prevOverride?: itemId; excludeFromFunnel?: boolean }` | — |
+| `perItem[itemId]` | `{ targetTimeS?: number; prevOverride?: itemId; excludeFromFunnel?: boolean; lockOnBake?: boolean }` | — |
 | `live` | `{ url, headers, intervalMin }` (phase 3) | off |
 
 ### B8. Display
@@ -649,21 +758,101 @@ suffix `· 91 % · 18:20`.
 **Branch paths:** label suffix `· 62 % of runs` (ANY) or `· 1st in 71 %`
 (ALL).
 
-**Time-warp view** (`projectTransform`, toolbar toggle "⏱ Time-warp",
-command `T`): x positions become `tMedian` seconds; unmapped items and
-section bounds are linearly interpolated between neighbouring mapped
-milestones; branch fork/join use the min/max of their path milestones.
-Editing is disabled (host banner). Useful for seeing pacing as it really
-is versus the abstract plan.
+**Time-warp view and bake:** see B8a.
 
-**Comparison mode:** with a compare dataset selected, badges show deltas
-(`+1:20`, `−6 pp`), tint uses the delta sign, and the lane draws both curves
-(A solid, B dashed).
+**Spread (variation) visuals:** see B8b.
+
+**Comparison mode:** see *Compare (A vs B)* in B6a.
 
 **Export parity:** PNG/SVG exports include badges and the lane when enabled.
 "Export → Analytics report (CSV)" writes the funnel table for the current
 cohort; "(Markdown)" writes a shareable summary with the top losses and
 section stats.
+
+### B8a. Time-warp view and bake (confirmed)
+
+Two related features share one engine, the **timing source**:
+
+```ts
+type TimingSource =
+  | { kind: 'median' }                       // tMedian of the active cohort
+  | { kind: 'percentile'; p: number }        // e.g. p25 "fast players", p75 "slow players"
+  | { kind: 'run'; runId: string }           // one specific run's actual reach times
+```
+
+and one **mapping** from seconds to timeline units (setting `bakeScale`,
+decision C2.27, default *preserve extent*): the first and last mapped
+milestones on the main line keep their current positions and the scale
+`k = (pos_last − pos_first) / (t_last − t_first)` maps every other measured
+time; unmapped items, section bounds and branch fork/join positions are
+linearly interpolated between their nearest mapped neighbours (in the
+original position space) so structure keeps its relative place. Items on a
+branch path are mapped inside the path's own fork/join interval. Items with
+`lockOnBake` never move. Items the timing source has no time for (not
+reached in that run, or `n < minSample`) interpolate like unmapped items and
+are flagged.
+
+**Time-warp view** (`projectTransform`, toolbar toggle "⏱", command `T`): the
+canvas shows the mapped project read-only (host banner). A small source
+picker sits in the banner: *Median · p25 · p75 · Run…* (a run picker with
+search by run id, player id, date, outcome, and a "random run in cohort"
+button). Toggling off restores the plan instantly; nothing is written.
+
+**Bake** (command *Bake timings into positions…*, also a button in the
+banner while time-warping): writes the mapped positions into the project as
+one undoable `mutateProject`. It always goes through a **preview modal**
+first:
+
+1. Source picker (same as above) and scale mode.
+2. A **shift table**: one row per item — title, current `pos`, new `pos`,
+   delta in units and as `%` of the item's distance to its previous
+   milestone, direction glyph (◀ earlier / ▶ later), and a checkbox to
+   exclude that row (keeps it where it is and interpolates neighbours).
+   Sortable by absolute delta so the biggest surprises are on top. Summary
+   line: `31 items move · median shift 2.4 u · largest: "The chasm" +9.1 u`.
+3. A **before/after strip**: two miniature spines (current on top, baked
+   below) with thin connector lines between each item's old and new x, in
+   the type colour. Large shifts get a stronger connector. This is the same
+   `ExportScene` renderer at small scale, so it costs nothing new.
+4. *Bake* commits; *Bake and keep time-warp off* is the default; a toast
+   offers Undo for 10 s like delete does.
+
+After a bake, per-item `targetTimeS` may optionally be set to the baked
+time (checkbox in the preview) so the plan now carries the measured target.
+
+### B8b. Spread (standard deviation) visuals (confirmed)
+
+Goal: see at a glance which milestones players hit at a consistent time
+and which are all over the place, without cluttering the spine. Decisions
+C2.25/26: percentiles drive the geometry (robust to the long tails timing
+data always has), and σ is shown as a number.
+
+1. **Whisker under labelled nodes** (default). When an item's label is
+   shown (same LOD gate as titles and badges), a slim box-and-whisker is
+   drawn just below the badge, in the type colour at 60 % opacity: the box
+   spans p25–p75, whiskers p10–p90, a 1 px tick at the median. Its width is
+   the spread mapped with the current `bakeScale` mapping so it is
+   comparable across the line (in time-warp/bake preview it is exact
+   seconds on the axis). Hovering the whisker shows `p10 · p25 · median ·
+   p75 · p90 · σ · n`.
+2. **Halo at low zoom** (fallback when the label is hidden). The node's
+   outer ring gets a soft radial gradient whose radius grows with
+   `iqr / tMedian` (relative spread), from +0 px (tight) to +10 px (very
+   spread), clamped, so a zoomed-out spine reads as "sharp dots = reliable
+   timing, fuzzy dots = unreliable timing". The halo is `pointer-events:
+   none` and respects `prefers-reduced-motion` (no animation anyway).
+3. **Smear in time-warp / bake preview.** When time-warping, each item can
+   additionally draw a translucent density band along the axis from p10 to
+   p90 (opacity by histogram density, 24 bins), so the whole line looks
+   like a long-exposure photo of where players actually were. Toggle in
+   the time-warp banner; off by default.
+4. **Numbers.** Badge metric `spread` shows `±σ` (or `IQR` when
+   `spreadStat` is percentiles and the user picks it), tooltip and
+   inspector show σ, IQR, p10–p90 and the histogram; the funnel table has
+   an IQR column and can sort by it to find the least predictable
+   milestones. The lane's pacing mode already draws the p25–p75 band.
+5. **Comparison.** With A/B cohorts the whisker draws as two thin stacked
+   boxes (A above, B below); the halo uses A only.
 
 ### B9. Performance targets
 
@@ -690,8 +879,11 @@ URL and nothing else.
 3. Aggregation worker; badges, tint, tooltip, inspector section; settings
    panel.
 4. Analytics lane (funnel, pacing, deaths); section and branch stats.
-5. Cohorts, comparison mode, report exports; wide CSV and runs CSV inputs.
-6. Time-warp view.
+5. Run cohorts (B6a): predicates, cohort bar, branch distributions on
+   canvas and in the inspector, funnel start, rebase toggle, named cohorts,
+   A/B compare; report exports; wide CSV and runs CSV inputs.
+6. Spread visuals (B8b): whiskers, halo, numbers; then time-warp view and
+   bake with preview (B8a), smear mode.
 7. Live URL source; "aggregates only" storage mode.
 
 Acceptance (per phase, manual + unit tests on `model/`):
@@ -702,12 +894,21 @@ Acceptance (per phase, manual + unit tests on `model/`):
   the generator's parameters within tolerance.
 - Disabling the plugin removes every badge, panel and menu entry and leaves
   the project JSON valid for the vanilla app; re-enabling restores datasets.
-- Undo works across enable/disable, mapping edits, per-item settings.
+- Undo works across enable/disable, mapping edits, per-item settings,
+  cohort changes and bakes.
 - A 1 M-event CSV imports without freezing the UI.
+- Synthetic generator with a known red/blue split and a known ALL-branch
+  order distribution reproduces those shares in the branch inspector within
+  1 pp; filtering to "Red" changes every downstream badge and the cohort bar
+  count matches the generator.
+- Bake preview's shift table equals the positions written by the bake; undo
+  restores the exact previous positions.
 
 ### B12. Additional feature ideas (beyond the phases above)
 
-Ranked roughly by value/effort; none are committed.
+Ranked roughly by value/effort; none are committed. (Cohorts, path/order
+distributions, bake and spread visuals were promoted into B6a/B8a/B8b
+during review.)
 
 1. **Expected-vs-actual pacing** — target time per item plus a project-level
    "target run length"; the pacing lane shows cumulative drift.
@@ -766,11 +967,10 @@ Sanity checks that the slot set is general enough:
 
 ---
 
-## Part C — Decision log (assumptions to confirm)
+## Part C — Decision log (confirmed 2026-09-08 / 2026-09-15)
 
-Each decision below was made by assumption to keep the spec buildable.
-Alternatives are listed a/b/c; the chosen one is marked **→**. Flip any of
-them before implementation starts; the affected sections are noted.
+Alternatives are listed a/b/c; the chosen one is marked **→**. Choices that
+differ from the original recommendation are marked *(changed)*.
 
 ### C1. Platform
 
@@ -794,10 +994,10 @@ them before implementation starts; the affected sections are noted.
    **→ a.** Keep `schemaVersion: 1`, add optional `plugins` and `items[].key`.
    b. Bump to 2 with a migration step.
    c. Move plugin state to a sidecar file.
-5. **Trust model for community plugins** (A9)
-   a. Fully trusted, no permissions shown.
-   **→ b.** Trusted execution, permissions manifest shown at install, `network`
-   gated by a courtesy check.
+5. **Trust model for community plugins** (A9) *(changed)*
+   **→ a.** Fully trusted, no prompts; permissions are descriptive metadata
+   only.
+   b. Trusted execution with a permissions dialog and a gated `network`.
    c. Sandboxed iframe with RPC (safer, more work, declarative UI only).
 6. **Settings entry point** (A10)
    a. New "Plugins" section in the sidebar only.
@@ -829,10 +1029,14 @@ them before implementation starts; the affected sections are noted.
     **→ a.** Seconds since run start, gameplay time; wall clock optional in `ts`.
     b. Wall-clock timestamps only, run time derived.
     c. Frame or tick counts converted with a per-dataset rate.
-12. **Reach-rate denominator** (B6, B7)
-    **→ a.** All runs in the cohort (setting allows the others).
-    b. Runs that reached the first milestone.
-    c. Runs with any event.
+12. **Reach-rate denominator** (B6, B6a) *(changed)*
+    a. All runs, fixed.
+    b. Runs that reached the first milestone, fixed.
+    **→ d.** Owner's answer: make the denominator a **run cohort** the
+    designer controls — pick any milestone as the funnel start, filter to
+    the path chosen on an ANY branch, filter to the completion order on an
+    ALL branch, and see the pick distribution when nothing is filtered.
+    Specified in B6a; the default with no cohort is all runs.
 13. **"Previous milestone" for drop-off** (B6)
     **→ a.** Timeline order by `pos` on the same line, with a per-item override.
     b. Explicit `prev` column in the milestones export, set by the designer.
@@ -850,10 +1054,12 @@ them before implementation starts; the affected sections are noted.
     b. Lane chart only.
     **→ c.** Badges + tint + optional lane, all toggleable; time-warp as a
     separate view.
-17. **Time-warp view** (B8)
-    **→ a.** Read-only view transform (positions = median seconds).
-    b. A "bake" command that rewrites positions (undoable).
-    c. Not included.
+17. **Time-warp view and bake** (B8a) *(changed)*
+    a. Read-only view transform only.
+    b. Bake to median only.
+    **→ d.** Owner's answer: both, and the bake can target the **median or one
+    specific run**, always behind a **preview** that shows how far each item
+    moves; plus a visualisation of variation (see 25/26).
 18. **Live data** (B7, B11)
     **→ a.** Phase 3 URL polling with headers.
     b. Not included; file import only.
@@ -868,3 +1074,40 @@ them before implementation starts; the affected sections are noted.
     **→ b.** Vitest unit tests for parsers/aggregation/runtime reconcile;
     UI manual.
     c. Playwright end-to-end for the import flow too.
+
+### C3. Run cohorts, bake and spread (added in review)
+
+21. **Branch path detection** (B3, B6) *(changed)*
+    a. Explicit path-entry milestones exported for the engine, with inference
+    as fallback.
+    **→ b.** Inference only: a run took a path if it reached any item on it;
+    ALL-branch order comes from earliest reach times per path. Paths need
+    at least one item to be measurable; the inspector warns otherwise.
+    c. Explicit only.
+22. **Where cohorts are built** (B6a)
+    **→ a.** Item inspector + branch inspector + sidebar builder + Alt-click on
+    canvas paths.
+    b. Sidebar builder only.
+    c. Inspector only.
+23. **Time rebasing with a funnel start** (B6a)
+    **→ a.** Toggle, default absolute (since run start).
+    b. Always rebase.
+    c. Never rebase.
+24. **Comparison and saving** (B6a)
+    **→ a.** Two cohorts active at once (A/B) with deltas; named cohorts saved
+    in the project; dataset comparison uses the same mechanism.
+    b. One cohort at a time, saved presets.
+    c. One transient cohort.
+25. **Spread visual** (B8b)
+    **→ a.** Whisker (p25–p75 box, p10–p90 whiskers) under labelled nodes, halo
+    on the ring at low zoom, smear band in time-warp, ±σ badge optional.
+    b. Halo only.
+    c. Smear in time-warp only.
+26. **Spread statistic** (B8b)
+    **→ a.** Percentiles drive the geometry; σ shown as a number.
+    b. Standard deviation everywhere (±1σ/±2σ whiskers).
+    c. Both, switchable.
+27. **Seconds → timeline units for bake/time-warp** (B8a)
+    **→ a.** Preserve total extent: first and last mapped milestones stay put.
+    b. Fixed units per second setting.
+    c. Anchor on the funnel start with a user factor.
