@@ -592,6 +592,7 @@ function Cheatsheet() {
     ['Drag type from sidebar', 'Create an item on the line (or on a branch path)'],
     ['Double-click the line', 'Quick-create an item of the last-used type'],
     ['N', 'New item at the view center'],
+    ['Space', 'Search for a type and add an item under the cursor'],
     ['Drag item', 'Move (Alt = no snap · Alt at start = clone)'],
     ['Shift+drag item', 'Move ALL items together (or toggle the link button)'],
     ['Drag span edge circles', 'Stretch an item into a span'],

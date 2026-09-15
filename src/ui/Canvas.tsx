@@ -127,6 +127,8 @@ export function CanvasView() {
   const menuRef = useRef<HTMLDivElement>(null)
   /** Set after a right-drag pan so the browser's contextmenu event doesn't open the menu. */
   const suppressMenuRef = useRef(false)
+  /** Last pointer position over the canvas (null once it leaves) — where Space places the picker. */
+  const pointerRef = useRef<{ x: number; y: number } | null>(null)
 
   const cam = proj.camera
   const st = proj.settings
@@ -381,6 +383,27 @@ export function CanvasView() {
     }))
     return id
   }
+
+  // ---- Space: open the "new item" type search at the pointer (or the view
+  // centre when the pointer is elsewhere), like the context menu's entry.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== ' ' || e.repeat || e.ctrlKey || e.metaKey || e.altKey) return
+      const t = e.target as HTMLElement
+      if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable) return
+      const st = useStore.getState()
+      if (st.ui.readOnly || st.ui.overlay || st.ui.editTypeId || dragRef.current) return
+      e.preventDefault()
+      // A focused toolbar button would also "click" on Space — drop its focus.
+      if (t.tagName === 'BUTTON' || t.tagName === 'A') t.blur()
+      const at = pointerRef.current ?? { x: size.w / 2, y: spineY - 40 }
+      const rawPos = toPos(at.x)
+      const pos = st.ui.snap ? snapPos(rawPos, cam.s) : rawPos
+      setMenu({ x: at.x, y: at.y, target: { kind: 'bg', pos, rawPos }, search: true })
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  })
 
   // ---- context menu close (outside click / Escape)
   useEffect(() => {
@@ -712,11 +735,12 @@ export function CanvasView() {
   }
 
   const onPointerMove = (e: React.PointerEvent) => {
-    const d = dragRef.current
-    if (!d) return
     const rect = wrapRef.current!.getBoundingClientRect()
     const x = e.clientX - rect.left
     const y = e.clientY - rect.top
+    pointerRef.current = { x, y }
+    const d = dragRef.current
+    if (!d) return
     if (d.kind === 'pan') {
       const dx = e.clientX - d.startClientX
       if (Math.abs(dx) + Math.abs(e.clientY - d.startClientY) > 3) {
@@ -1364,6 +1388,7 @@ export function CanvasView() {
       className={`canvas-wrap tool-${ui.tool} ${drag?.kind === 'pan' ? 'panning' : ''}`}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
+      onPointerLeave={() => { pointerRef.current = null }}
       onContextMenu={bgContextMenu}
       onMouseDown={e => { if (e.button === 1) e.preventDefault() }}
     >
