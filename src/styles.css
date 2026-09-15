@@ -66,6 +66,31 @@ input, select, textarea { font: inherit; color: inherit; }
 .search-box:focus-within { border-color: var(--accent); }
 .search-input { background: none; border: none; outline: none; color: var(--text); width: 170px; }
 
+/* Type search: the "add item by typing" bar (sidebar) and the in-place
+   picker the context menu's "New item here…" turns into. */
+.type-search { position: relative; }
+.type-search-box { min-width: 0; margin: 2px 0 6px; }
+.type-search-box .search-input { width: 100%; min-width: 0; font-size: 12px; }
+.type-search-list {
+  position: absolute; left: 0; right: 0; top: 100%; z-index: 60;
+  background: var(--panel); border: 1px solid var(--line-soft); border-radius: 10px;
+  box-shadow: var(--shadow); padding: 4px; max-height: 260px; overflow-y: auto;
+  animation: menu-in .14s cubic-bezier(.34,1.56,.64,1);
+}
+.type-search-row {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 5px 8px; border-radius: 7px; text-align: left; font-size: 12.5px;
+}
+.type-search-row.hi, .type-search-row:hover { background: var(--panel2); }
+.type-search-row.new { color: var(--muted); font-style: italic; }
+.type-search-row.new .type-swatch { background: var(--panel2); color: var(--muted); }
+.type-search-path { font-size: 10.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 45%; }
+.type-swatch.sm { width: 20px; height: 20px; border-radius: 6px; }
+.menu.ctx .type-search { min-width: 220px; padding: 2px; }
+.menu.ctx .type-search-box { margin: 0; }
+.menu.ctx .type-search-list { position: static; box-shadow: none; border: none; padding: 4px 0 0; max-height: 290px; }
+.menu.ctx .type-search-row { padding: 6px 8px; }
+
 .tools { display: flex; align-items: center; gap: 2px; margin-left: auto; }
 .sep { width: 1px; height: 18px; background: var(--line-soft); margin: 0 5px; }
 .density { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 11px; margin-right: 6px; }

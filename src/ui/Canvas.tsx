@@ -10,13 +10,14 @@ import {
 } from '../model/layout'
 import { useActiveProject, useStore } from '../model/store'
 import type { Camera, Item, Section } from '../model/types'
-import { clamp, formatUnit, rulerStepFor, sectionHue, snapPos, timeBaseFor, uid, unitSuffix } from '../model/util'
+import { PALETTE, clamp, formatUnit, rulerStepFor, sectionHue, snapPos, timeBaseFor, uid, unitSuffix } from '../model/util'
 import { bindParticleCanvas, burst, puff, ripple, setParticleLevel } from '../fx/particles'
 import { setSoundOn, sfx } from '../fx/sound'
 import { flyCamera, cancelFlight } from '../fx/springs'
 import { getClipboard, setClipboard } from './clipboard'
 import { Markdown } from './Markdown'
 import { chipDrop, nav } from './nav'
+import { TypeSearch } from './TypeSearch'
 
 const MIN_S = 0.4
 const MAX_S = 700
@@ -93,7 +94,11 @@ type Drag =
     }
 
 type CtxTarget = { kind: 'bg'; pos: number; rawPos: number } | { kind: 'item'; id: string }
-interface CtxMenu { x: number; y: number; target: CtxTarget }
+interface CtxMenu {
+  x: number; y: number; target: CtxTarget
+  /** Background menu switched to the "new item" type search. */
+  search?: boolean
+}
 
 export function CanvasView() {
   const proj = useActiveProject()
@@ -283,6 +288,12 @@ export function CanvasView() {
         historyRef.current.past.push({ ...cam })
         flyCamera(cam, nxt, c => setCamera(c), undefined, animate)
       },
+      addItem: typeId => {
+        if (ui.readOnly) return null
+        const raw = toPos(size.w / 2)
+        const pos = ui.snap ? snapPos(raw, cam.s) : raw
+        return createItem(typeId, pos, null, size.w / 2, spineY)
+      },
     }
     return () => { nav.current = null }
   })
@@ -343,9 +354,10 @@ export function CanvasView() {
     return () => { chipDrop.current = null }
   })
 
-  const createItem = (typeId: string, pos: number, pathId: string | null, fxX: number, fxY: number) => {
-    const type = proj.types.find(t => t.id === typeId) ?? proj.types[0]
-    if (!type) return
+  const createItem = (typeId: string, pos: number, pathId: string | null, fxX: number, fxY: number): string | null => {
+    const type = useStore.getState().projects.find(p => p.id === proj.id)?.types.find(t => t.id === typeId)
+      ?? proj.types.find(t => t.id === typeId) ?? proj.types[0]
+    if (!type) return null
     const id = uid()
     mutate(p => {
       p.items.push({
@@ -357,6 +369,17 @@ export function CanvasView() {
     select([id])
     burst(fxX, fxY, type.color)
     sfx.create()
+    return id
+  }
+
+  /** New type under the given name (next palette colour), for the "new type" row of a type search. */
+  const createType = (name: string): string => {
+    const id = uid()
+    mutate(p => p.types.push({
+      id, name, icon: 'Circle', color: PALETTE[p.types.length % PALETTE.length], folderId: null,
+      defaultLayerId: p.layers[Math.min(1, p.layers.length - 1)]?.id ?? null, fields: [],
+    }))
+    return id
   }
 
   // ---- context menu close (outside click / Escape)
@@ -1684,18 +1707,34 @@ export function CanvasView() {
         <div
           ref={menuRef}
           className="menu ctx"
-          style={{ left: clamp(menu.x, 0, size.w - 200), top: clamp(menu.y, 0, size.h - 200) }}
+          style={menu.search
+            // The in-place type search is wider and taller than the menu; keep it on the canvas.
+            ? { left: clamp(menu.x, 0, size.w - 250), top: clamp(menu.y, 0, size.h - 340) }
+            : { left: clamp(menu.x, 0, size.w - 200), top: clamp(menu.y, 0, size.h - 200) }}
           onContextMenu={e => e.preventDefault()}
         >
-          {menu.target.kind === 'bg' ? (() => {
+          {menu.target.kind === 'bg' && menu.search ? (() => {
+            // "New item here": a type search in place of the menu — type to
+            // filter, Enter/click to place an item of that type at the click.
+            const { pos } = menu.target
+            return (
+              <TypeSearch
+                proj={proj}
+                placeholder="New item here…"
+                autoFocus
+                listWhenEmpty
+                onPick={typeId => { createItem(typeId, pos, null, menu.x, menu.y); setMenu(null) }}
+                onCreateType={name => { createItem(createType(name), pos, null, menu.x, menu.y); setMenu(null) }}
+                onClose={() => setMenu(null)}
+              />
+            )
+          })() : menu.target.kind === 'bg' ? (() => {
             const { pos, rawPos } = menu.target
             return (
               <>
-                <button onClick={() => {
-                  const typeId = ui.lastTypeId ?? proj.types[0]?.id
-                  if (typeId) createItem(typeId, pos, null, menu.x, menu.y)
-                  setMenu(null)
-                }}><Plus width={13} height={13} /> New item here</button>
+                <button onClick={() => setMenu({ ...menu, search: true })}>
+                  <Plus width={13} height={13} /> New item here…
+                </button>
                 <button onClick={() => {
                   const levelName = proj.hierarchyLevels[0] ?? 'Section'
                   const span = (size.w * 0.25) / cam.s

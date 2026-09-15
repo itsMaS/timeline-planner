@@ -10,6 +10,7 @@ import type { ItemType, TypeFolder } from '../model/types'
 import { PALETTE, uid } from '../model/util'
 import { IconPicker } from './IconPicker'
 import { chipDrop, nav } from './nav'
+import { TypeSearch } from './TypeSearch'
 
 // The min-zoom slider is logarithmic: camera zoom spans several orders of
 // magnitude depending on the project's scope (a 4-hour plan in hours sits in
@@ -222,14 +223,17 @@ export function Sidebar() {
     window.addEventListener('pointerup', onUp)
   }
 
-  const newType = (folderId: string | null, color?: string) => {
+  const newType = (folderId: string | null, color?: string, name?: string) => {
     const id = uid()
     mutate(p => p.types.push({
-      id, name: 'New type', icon: 'Circle', color: color ?? '#8b5cf6', folderId,
+      id, name: name ?? 'New type', icon: 'Circle',
+      color: color ?? (name ? PALETTE[p.types.length % PALETTE.length] : '#8b5cf6'), folderId,
       defaultLayerId: p.layers[Math.min(1, p.layers.length - 1)]?.id ?? null, fields: [],
     }))
     if (folderId) tweak(p => { const x = p.typeFolders.find(y => y.id === folderId); if (x) x.collapsed = false })
-    setUI({ editTypeId: id })
+    // A named type (from the add-item search) is ready to use; a blank one opens its editor.
+    if (!name) setUI({ editTypeId: id })
+    return id
   }
 
   const newFolder = (parentId: string | null, color?: string) => {
@@ -426,6 +430,14 @@ export function Sidebar() {
       />
       {open.types && (
         <div className="sb-body" data-type-folder="">
+          {canEdit && proj.types.length > 0 && (
+            <TypeSearch
+              proj={proj}
+              placeholder="Add item… (search types)"
+              onPick={typeId => { nav.current?.addItem(typeId) }}
+              onCreateType={name => { nav.current?.addItem(newType(null, undefined, name)) }}
+            />
+          )}
           {childFolders(proj, null).map(folderNode)}
           {typesInFolder(proj, null).map(typeRow)}
           {proj.types.length === 0 && <div className="sb-hint">no types yet</div>}
