@@ -120,6 +120,21 @@ export function branchPathYs(n: number): number[] {
   return Array.from({ length: n }, (_, i) => (i - (n - 1) / 2) * PATH_GAP)
 }
 
+/**
+ * Y of the spine within a canvas of height `h`. With markers on both sides
+ * the line sits a little above centre; with markers only above it drops to
+ * ~76% so the rows get the space that would otherwise sit empty below —
+ * keeping room under the line for the widest branch fan (paths spread
+ * symmetrically around the spine) plus the ruler, base dots and status bar.
+ */
+export function spineYFor(p: Project, h: number): number {
+  if (p.settings.placement === 'both') return Math.round(h * 0.42)
+  let fan = 0
+  for (const br of p.branches) fan = Math.max(fan, ((br.paths.length - 1) / 2) * PATH_GAP)
+  const reserve = Math.max(90, fan + 80)
+  return Math.round(Math.max(h * 0.42, Math.min(h * 0.76, h - reserve)))
+}
+
 /** Horizontal length of the split/rejoin curves for a branch of the given screen width. */
 export function branchCurveW(forkX: number, joinX: number): number {
   return clamp((joinX - forkX) * 0.3, 6, 58)

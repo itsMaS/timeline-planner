@@ -6,7 +6,7 @@ import {
 import { iconByName } from '../model/icons'
 import {
   BranchLayout, PATH_LIFT, PlacedItem, ROW_H, branchPathD, contentExtent, displayLabel, fitCamera, itemMatchesFilters,
-  layoutTimeline, minZoomFor, refreshSectionDepths, rowY, spineD, terminalEndX, typeOf,
+  layoutTimeline, minZoomFor, refreshSectionDepths, rowY, spineD, spineYFor, terminalEndX, typeOf,
 } from '../model/layout'
 import { useActiveProject, useStore } from '../model/store'
 import type { Camera, Item, Section } from '../model/types'
@@ -141,7 +141,7 @@ export function CanvasView() {
   const maxS = timeBase ? Math.max(MAX_S, timeBase * 400) : MAX_S
   // Zoom-out limit follows the content extent so large scopes stay reachable.
   const minS = Math.min(MIN_S, minZoomFor(proj, size.w))
-  const spineY = Math.round(size.h * 0.42)
+  const spineY = spineYFor(proj, size.h)
   const selection = useMemo(() => new Set(ui.selection), [ui.selection])
 
   useEffect(() => { setParticleLevel(ui.animLevel) }, [ui.animLevel])

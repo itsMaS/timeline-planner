@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { ListChecks, Shuffle } from 'lucide-react'
 import { iconByName } from '../model/icons'
-import { branchPathD, contentExtent, displayLabel, layoutTimeline, rowY, spineD, terminalEndX, typeOf } from '../model/layout'
+import { branchPathD, contentExtent, displayLabel, layoutTimeline, rowY, spineD, spineYFor, terminalEndX, typeOf } from '../model/layout'
 import type { Camera, Project } from '../model/types'
 import { clamp, download, formatUnit, rulerStepFor, sectionHue, unitSuffix } from '../model/util'
 
@@ -14,7 +14,7 @@ function ExportScene(props: { proj: Project; cam: Camera; w: number; h: number; 
   const { proj, cam, w, h, density, theme } = props
   const C = theme === 'dark' ? DARK : LIGHT
   const st = proj.settings
-  const spineY = Math.round(h * 0.42)
+  const spineY = spineYFor(proj, h)
   const sizeAt = (d0: number) => Math.max(10, st.sectionStyle.labelSize - 2.5 * d0)
   const barTopFor = (depth: number) => {
     let y = 0
