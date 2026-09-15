@@ -70,6 +70,12 @@ export function getIdentity(): Identity {
   return id
 }
 
+/** The creator stamp for a new item: this browser's current display identity. */
+export function creatorStamp(): Identity {
+  const { name, color } = getIdentity()
+  return { name, color }
+}
+
 export function setIdentity(id: Identity) {
   try { localStorage.setItem(LS_ID, JSON.stringify(id)) } catch { /* ok */ }
 }

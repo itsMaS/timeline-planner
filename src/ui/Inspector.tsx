@@ -7,6 +7,7 @@ import type { Branch, Item, Section } from '../model/types'
 import { formatUnit, uid, unitSuffix } from '../model/util'
 import { Markdown } from './Markdown'
 import { nav } from './nav'
+import { creatorStamp } from '../sync/client'
 import { uploadImage } from '../sync/share'
 
 export function Inspector() {
@@ -54,6 +55,16 @@ function Head(props: { title: string; children?: React.ReactNode }) {
 }
 
 // ------------------------------------------------------------------ read-only panels
+
+/** Creator chip: the collaborator's colour dot and display name. */
+function Creator({ who }: { who: { name: string; color: string } }) {
+  return (
+    <span className="creator">
+      <span className="creator-dot" style={{ background: who.color }} />
+      {who.name}
+    </span>
+  )
+}
 
 function ReadField({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -128,6 +139,9 @@ function ReadItemPanel({ id }: { id: string }) {
         {fields.map(f => (
           <ReadField key={f.id} label={f.name}>{item.fieldValues[f.id]}</ReadField>
         ))}
+        {item.createdBy && (
+          <ReadField label="Created by"><Creator who={item.createdBy} /></ReadField>
+        )}
         <div className="field">
           <label>Description</label>
           <div className="md-preview"><Markdown text={item.description || '*no description*'} /></div>
@@ -278,6 +292,7 @@ function ItemPanel({ id }: { id: string }) {
               const cp = structuredClone(src)
               cp.id = nid
               cp.pos += Math.max(0.5, cp.duration)
+              cp.createdBy = creatorStamp()
               p.items.push(cp)
             })
             select([nid])
@@ -359,6 +374,12 @@ function ItemPanel({ id }: { id: string }) {
           />
           {item.link && <a className="link-btn" href={item.link} target="_blank" rel="noreferrer noopener">open ↗</a>}
         </div>
+        {item.createdBy && (
+          <div className="field">
+            <label>Created by</label>
+            <Creator who={item.createdBy} />
+          </div>
+        )}
         {type?.fields.map(f => (
           <div key={f.id} className="field">
             <label>{f.name}</label>

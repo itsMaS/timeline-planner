@@ -14,6 +14,7 @@ import { PALETTE, clamp, formatUnit, rulerStepFor, sectionHue, snapPos, timeBase
 import { bindParticleCanvas, burst, puff, ripple, setParticleLevel } from '../fx/particles'
 import { setSoundOn, sfx } from '../fx/sound'
 import { flyCamera, cancelFlight } from '../fx/springs'
+import { creatorStamp } from '../sync/client'
 import { getClipboard, setClipboard } from './clipboard'
 import { Markdown } from './Markdown'
 import { chipDrop, nav } from './nav'
@@ -371,6 +372,7 @@ export function CanvasView() {
       p.items.push({
         id, typeId: type.id, layerId: null, pathId, pos, duration: 0,
         title: `New ${type.name.toLowerCase()}`, description: '', tags: [], link: '', images: [], fieldValues: {},
+        createdBy: creatorStamp(),
       })
     })
     setUI({ lastTypeId: type.id })
@@ -691,6 +693,7 @@ export function CanvasView() {
           if (!srcItems.has(it.id)) continue
           const cp = structuredClone(it)
           cp.id = uid()
+          cp.createdBy = creatorStamp()
           newItemIds.push(cp.id)
           itemOrig.set(cp.id, cp.pos)
           p.items.push(cp)
@@ -1127,6 +1130,7 @@ export function CanvasView() {
           if (!src) continue
           const cp = structuredClone(src)
           cp.id = uid()
+          cp.createdBy = creatorStamp()
           cloneIds.push(cp.id)
           p.items.push(cp)
         }
@@ -1303,6 +1307,7 @@ export function CanvasView() {
         const cp = structuredClone(src)
         cp.id = uid()
         cp.pos += Math.max(0.5, cp.duration)
+        cp.createdBy = creatorStamp()
         nids.push(cp.id)
         p.items.push(cp)
       }
@@ -1343,6 +1348,7 @@ export function CanvasView() {
         cp.id = uid()
         cp.pos = pos + (src.pos - base)
         cp.pathId = null
+        cp.createdBy = creatorStamp()
         nids.push(cp.id)
         p.items.push(cp)
       }
@@ -1748,6 +1754,12 @@ export function CanvasView() {
             <strong>{hoverItem.title}</strong>
           </div>
           <div className="tt-type">{hoverType.name}{hoverItem.duration > 0 ? ` · span ${hoverItem.duration.toFixed(1)}` : ''}</div>
+          {hoverItem.createdBy && (
+            <div className="tt-type creator">
+              <span className="creator-dot" style={{ background: hoverItem.createdBy.color }} />
+              {hoverItem.createdBy.name}
+            </div>
+          )}
           {hoverItem.tags.length > 0 && (
             <div className="tt-tags">{hoverItem.tags.map(t => <span key={t} className="tag">{t}</span>)}</div>
           )}

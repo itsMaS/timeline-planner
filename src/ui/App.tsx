@@ -11,6 +11,7 @@ import type { TimelineSettings, UnitPreset } from '../model/types'
 import { uid } from '../model/util'
 import { exportCSV, exportFullSVG, exportJSON, exportPNG } from './export'
 import { CanvasView } from './Canvas'
+import { creatorStamp } from '../sync/client'
 import { getClipboard, setClipboard } from './clipboard'
 import { Inspector } from './Inspector'
 import { PresenceBar, ShareModal, TabSyncIcon } from './Share'
@@ -65,6 +66,7 @@ export function App() {
             const cp = structuredClone(src)
             cp.id = uid()
             cp.pos += Math.max(0.5, cp.duration)
+            cp.createdBy = creatorStamp()
             nids.push(cp.id)
             pr.items.push(cp)
           }
@@ -90,6 +92,7 @@ export function App() {
             cp.id = uid()
             cp.pos = center + (src.pos - base)
             cp.pathId = null
+            cp.createdBy = creatorStamp()
             nids.push(cp.id)
             pr.items.push(cp)
           }
@@ -124,6 +127,7 @@ export function App() {
         s.mutate(pr => pr.items.push({
           id, typeId, layerId: null, pathId: null, pos: center, duration: 0,
           title: `New ${type.name.toLowerCase()}`, description: '', tags: [], link: '', images: [], fieldValues: {},
+          createdBy: creatorStamp(),
         }))
         s.select([id])
         return

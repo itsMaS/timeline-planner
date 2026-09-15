@@ -222,7 +222,7 @@ export function exportCSV(proj: Project) {
     { length: maxDepth + 1 },
     (_, d) => proj.hierarchyLevels[d] ?? `Level ${d + 1}`,
   )
-  const header = [...levels, 'Title', 'Type', 'Position', 'Duration', 'Branch path', 'Tags', 'Description', 'Link']
+  const header = [...levels, 'Title', 'Type', 'Position', 'Duration', 'Branch path', 'Tags', 'Description', 'Link', 'Created by']
   const rows = [...proj.items]
     .sort((a, b) => a.pos - b.pos)
     .map(it => [
@@ -235,6 +235,7 @@ export function exportCSV(proj: Project) {
       it.tags.join('; '),
       it.description,
       it.link,
+      it.createdBy?.name ?? '',
     ].map(esc).join(','))
   const csv = '\ufeff' + [header.map(esc).join(','), ...rows].join('\r\n')
   download(`${proj.name.replace(/\s+/g, '-').toLowerCase()}.csv`,
