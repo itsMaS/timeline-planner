@@ -59,7 +59,9 @@
   (default), `apply` (direct save with version check via `share_save_if`),
   `status`, `withdraw`, `export` (the app's document export → PDF via headless
   Chromium). The `timeline-agent` skill in `.claude/skills/` documents the
-  workflow; keep it in sync when the CLI changes.
+  workflow; keep it in sync when the CLI changes, and run `npm run build:skill`
+  to regenerate the standalone bundle `scripts/timeline.cjs` inside the skill
+  (it is what people install outside this repo).
 
 ## Working with the owner
 

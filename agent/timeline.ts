@@ -309,8 +309,24 @@ const commands: Record<string, () => Promise<void>> = {
   status: cmdStatus, withdraw: cmdWithdraw, export: cmdExport,
 }
 
+const USAGE = `Timeline Planner agent CLI — work on a shared timeline through its edit link.
+
+  <command> [options]        (edit link via --link <url-or-token> or $TIMELINE_LINK)
+
+  read     [--out doc.json]                     download the timeline ({version, timelineId, name, doc})
+  outline  [--in doc.json]                      sections → items with ids, for orientation
+  propose  --base doc.json --edited edited.json --title "…" [--summary "…"] [--notes notes.json] [--author "…"]
+                                                diff base → edited into a proposal for review in the app
+  apply    --base doc.json --edited edited.json [--force]
+                                                save directly (fails if someone saved since the read)
+  status   [--all]                              list open (or all) proposals
+  withdraw <proposal-id>                        delete a proposal
+  export   --out file.pdf [--html file.html] [--in doc.json]
+           [--sections a,b] [--types a,b] [--layers a,b] [--tags a,b] [--text q]
+                                                the app's document export printed to PDF (needs Chromium)`
+
 if (!cmd || !commands[cmd]) {
-  console.log(readFileSync(new URL(import.meta.url)).toString().split('*/')[0].split('\n').slice(1).map(l => l.replace(/^ \* ?/, '')).join('\n'))
+  console.log(USAGE)
   process.exit(cmd ? 1 : 0)
 }
 commands[cmd]().catch(e => fail((e as Error).message))

@@ -5,10 +5,17 @@ description: Work on a shared Timeline Planner project through its edit link —
 
 # Timeline agent
 
-Everything goes through `agent/timeline.ts` (run with `npx tsx agent/timeline.ts …`
-from the repo root; run `npm ci` first if `node_modules` is missing). It talks to
-the same token-checked Supabase RPCs the app uses, so it can do exactly what a
-person with the edit link can — nothing more.
+Everything goes through one CLI. It talks to the same token-checked Supabase
+RPCs the app uses, so it can do exactly what a person with the edit link can —
+nothing more. Two ways to run it; pick whichever is available and use it as
+`$TL` in the commands below:
+
+- **Standalone** (this skill installed anywhere, e.g. `~/.claude/skills/`):
+  `TL="node <this skill's folder>/scripts/timeline.cjs"` — a self-contained
+  bundle, only Node 20+ needed. For `export`, run `npm install` once inside
+  `scripts/` (installs `playwright-core`) and have a Chromium available.
+- **Inside the timeline-planner repo**: `TL="npx tsx agent/timeline.ts"` from
+  the repo root (run `npm ci` first if `node_modules` is missing).
 
 The edit link is `https://…/#/s/<token>`. Pass it as `--link "<url>"` or set
 `TIMELINE_LINK`. Never paste the token into commit messages, proposals or notes.
@@ -26,12 +33,12 @@ The edit link is `https://…/#/s/<token>`. Pass it as `--link "<url>"` or set
 ## Workflow for edits
 
 ```bash
-npx tsx agent/timeline.ts read --out /tmp/tl.json        # {version, timelineId, name, doc}
-npx tsx agent/timeline.ts outline --in /tmp/tl.json      # sections → items with ids, quick orientation
-cp /tmp/tl.json /tmp/tl-edited.json                      # edit the "doc" object in the copy
-npx tsx agent/timeline.ts propose --base /tmp/tl.json --edited /tmp/tl-edited.json \
+$TL read --out /tmp/tl.json        # {version, timelineId, name, doc}
+$TL outline --in /tmp/tl.json      # sections → items with ids, quick orientation
+cp /tmp/tl.json /tmp/tl-edited.json   # edit the "doc" object in the copy
+$TL propose --base /tmp/tl.json --edited /tmp/tl-edited.json \
   --title "Fix typos in descriptions" --summary "12 spelling fixes, no wording changes" \
-  --notes /tmp/notes.json                                # optional {entityId: "one-line reason"}
+  --notes /tmp/notes.json          # optional {entityId: "one-line reason"}
 ```
 
 Rules for editing the document (`doc`):
@@ -65,8 +72,7 @@ The app's own document export (sections as headings, items as sub-headings with
 description, fields, tags, link, images), printed to PDF by headless Chromium:
 
 ```bash
-npx tsx agent/timeline.ts export --out /tmp/chapter1-coins-enemies.pdf \
-  --sections "Chapter 1" --types "Coin,Enemy"
+$TL export --out /tmp/chapter1-coins-enemies.pdf --sections "Chapter 1" --types "Coin,Enemy"
 ```
 
 Filters mirror the app's: `--sections` (names or ids; only those sub-trees),
@@ -75,8 +81,18 @@ Filters mirror the app's: `--sections` (names or ids; only those sub-trees),
 substring. Use `outline` first to learn the exact names. Add `--html file.html`
 to also keep the HTML. Send the PDF to the user with the file tool when done.
 
-If no Chromium is found, set `CHROMIUM_PATH` (in Claude Code on the web it is
-`/opt/pw-browsers/chromium`).
+Chromium lookup order: `CHROMIUM_PATH`, playwright-core's own browser (install
+with `npx playwright-core install chromium` next to the script), then common
+system paths. On a desktop, pointing `CHROMIUM_PATH` at the installed Chrome or
+Edge binary is the quickest (macOS: `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`;
+Windows: `C:\Program Files\Google\Chrome\Application\chrome.exe`). In Claude
+Code on the web it is `/opt/pw-browsers/chromium`.
+
+## Maintenance
+
+`scripts/timeline.cjs` is generated from `agent/timeline.ts` by `npm run build:skill`
+in the repo. Rebuild and commit it whenever the CLI or the modules it imports
+change; never edit the bundle by hand.
 
 ## Reference
 

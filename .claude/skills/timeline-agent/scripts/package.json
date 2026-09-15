@@ -1,0 +1,8 @@
+{
+  "name": "timeline-agent-cli",
+  "private": true,
+  "description": "Standalone build of agent/timeline.ts from the timeline-planner repo. Regenerate with `npm run build:skill` there; do not edit timeline.cjs by hand.",
+  "dependencies": {
+    "playwright-core": "^1.62.1"
+  }
+}
