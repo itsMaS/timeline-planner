@@ -32,9 +32,22 @@ type Drag =
       allOrig: Map<string, number>
       /** Ripple mode was on (or Shift held) when the drag started. */
       ripple: boolean
+      /** Span items whose END (not start) travels with the drag — a base-dot
+          drag picks up every span ending at that position, so the dragged
+          delta stretches their duration instead of moving them. */
+      endOrig: Map<string, { pos: number; dur: number }>
       moved: boolean; color: string; cands: number[]
     }
   | { kind: 'handle'; id: string; side: 'L' | 'R'; origPos: number; origDur: number; startClientX: number; cands: number[] }
+  | {
+      /** Proportionally scale every selected item (positions and span
+          durations) around the group's opposite extreme — the handles on
+          the first and last selected item. */
+      kind: 'itemScale'; ids: string[]; side: 'L' | 'R'; startClientX: number
+      orig: Map<string, { pos: number; dur: number }>
+      anchor: number; grabPos: number
+      cands: number[]; minFactor: number; moved: boolean; color: string
+    }
   | { kind: 'branchEnd'; id: string; side: 'fork' | 'join'; orig: number; startClientX: number; cands: number[] }
   | {
       /** One or more section edges sharing the grabbed position (coincident
@@ -363,12 +376,12 @@ export function CanvasView() {
 
   // ---- snapping
   /** World positions dragged edges/items stick to while the magnet is on. */
-  const magnetCands = (exclude: { items?: Set<string>; sectionIds?: Set<string>; branchId?: string }): number[] => {
+  const magnetCands = (exclude: { items?: Set<string>; itemEnds?: Set<string>; sectionIds?: Set<string>; branchId?: string }): number[] => {
     const out: number[] = []
     for (const it of proj.items) {
       if (exclude.items?.has(it.id)) continue
       out.push(it.pos)
-      if (it.duration > 0) out.push(it.pos + it.duration)
+      if (it.duration > 0 && !exclude.itemEnds?.has(it.id)) out.push(it.pos + it.duration)
     }
     for (const sc of proj.sections) {
       if (exclude.sectionIds?.has(sc.id)) continue
@@ -706,6 +719,28 @@ export function CanvasView() {
       const src = rippleOn ? d.allOrig : d.orig
       src.forEach((op, id) => next.set(id, op + delta))
       setPosOverride(next)
+      // Spans ending at the grabbed position stretch with the drag (in ripple
+      // mode they translate whole, like everything else).
+      if (rippleOn || !d.endOrig.size) {
+        setDurOverride(null)
+      } else {
+        const durOvs: { id: string; pos: number; duration: number }[] = []
+        d.endOrig.forEach(({ pos, dur }, id) => {
+          durOvs.push({ id, pos, duration: Math.max(0, dur + delta) })
+        })
+        setDurOverride(durOvs)
+      }
+    } else if (d.kind === 'itemScale') {
+      if (!d.moved && Math.abs(e.clientX - d.startClientX) <= 3) return
+      d.moved = true
+      const du = (e.clientX - d.startClientX) / cam.s
+      const np = snapWorld(d.grabPos + du, d.cands, e.altKey)
+      const factor = Math.max((np - d.anchor) / (d.grabPos - d.anchor), d.minFactor)
+      const durOvs: { id: string; pos: number; duration: number }[] = []
+      d.orig.forEach(({ pos, dur }, id) => {
+        durOvs.push({ id, pos: d.anchor + (pos - d.anchor) * factor, duration: dur * factor })
+      })
+      setDurOverride(durOvs)
     } else if (d.kind === 'handle') {
       const du = (e.clientX - d.startClientX) / cam.s
       if (d.side === 'R') {
@@ -893,10 +928,29 @@ export function CanvasView() {
       }
     } else if (d.kind === 'item') {
       const ov = posOverride
+      const dv = durOverride
       setPosOverride(null)
-      if (d.moved && ov) {
+      setDurOverride(null)
+      if (d.moved && (ov || dv)) {
         mutate(p => {
-          for (const it of p.items) if (ov.has(it.id)) it.pos = ov.get(it.id)!
+          if (ov) for (const it of p.items) if (ov.has(it.id)) it.pos = ov.get(it.id)!
+          if (dv) for (const o of dv) {
+            const it = p.items.find(i => i.id === o.id)
+            if (it) { it.pos = o.pos; it.duration = o.duration }
+          }
+        })
+        puff(e.clientX - rect.left, e.clientY - rect.top, d.color)
+        sfx.snap()
+      }
+    } else if (d.kind === 'itemScale') {
+      const dv = durOverride
+      setDurOverride(null)
+      if (d.moved && dv) {
+        mutate(p => {
+          for (const o of dv) {
+            const it = p.items.find(i => i.id === o.id)
+            if (it) { it.pos = o.pos; it.duration = o.duration }
+          }
         })
         puff(e.clientX - rect.left, e.clientY - rect.top, d.color)
         sfx.snap()
@@ -1025,7 +1079,7 @@ export function CanvasView() {
     const type = typeOf(proj, item)
     setDragBoth({
       kind: 'item', ids, grabId: ids.includes(item.id) ? item.id : ids[0], startClientX: e.clientX,
-      orig, allOrig, ripple: ui.ripple || e.shiftKey, moved: false, color: type?.color ?? '#888',
+      orig, allOrig, endOrig: new Map(), ripple: ui.ripple || e.shiftKey, moved: false, color: type?.color ?? '#888',
       cands: magnetCands({ items: new Set(ids) }),
     })
   }
@@ -1043,10 +1097,13 @@ export function CanvasView() {
   }
 
   // ---- base dots: one per stack of placed items sharing a position; dragging
-  // the dot moves every item in that stack together.
+  // the dot moves every item in that stack together. A span whose END lands
+  // on such a position joins the stack too (as `endIds`): the drag then
+  // stretches that span so its end keeps following the stack.
+  type Column = { x: number; y: number; ids: string[]; endIds: string[]; color: string; ghost: boolean }
   const columns = useMemo(() => {
     const sorted = [...layout.placed].sort((a, b) => a.y - b.y || a.x - b.x)
-    const cols: { x: number; y: number; ids: string[]; color: string; ghost: boolean }[] = []
+    const cols: Column[] = []
     for (const pl of sorted) {
       const last = cols[cols.length - 1]
       if (last && last.y === pl.y && Math.abs(pl.x - last.x) < 5) {
@@ -1055,13 +1112,19 @@ export function CanvasView() {
         // stack survives the current filters.
         last.ghost = last.ghost && pl.ghost
       } else {
-        cols.push({ x: pl.x, y: pl.y, ids: [pl.item.id], color: typeOf(proj, pl.item)?.color ?? '#888', ghost: pl.ghost })
+        cols.push({ x: pl.x, y: pl.y, ids: [pl.item.id], endIds: [], color: typeOf(proj, pl.item)?.color ?? '#888', ghost: pl.ghost })
       }
     }
+    for (const pl of layout.placed) {
+      if (pl.item.duration <= 0) continue
+      const ex = toX(pl.item.pos + pl.item.duration)
+      const col = cols.find(c => c.y === pl.y && Math.abs(c.x - ex) < 5 && !c.ids.includes(pl.item.id))
+      if (col) col.endIds.push(pl.item.id)
+    }
     return cols
-  }, [layout, proj])
+  }, [layout, proj, cam])
 
-  const basePointerDown = (e: React.PointerEvent, col: { x: number; ids: string[]; color: string }) => {
+  const basePointerDown = (e: React.PointerEvent, col: Column) => {
     if (e.button !== 0) return
     if (ui.readOnly) { e.stopPropagation(); select(col.ids); return }
     e.stopPropagation()
@@ -1071,12 +1134,51 @@ export function CanvasView() {
       const it = proj.items.find(i => i.id === id)
       if (it) orig.set(id, it.pos)
     }
+    const endOrig = new Map<string, { pos: number; dur: number }>()
+    for (const id of col.endIds) {
+      const it = proj.items.find(i => i.id === id)
+      if (it) endOrig.set(id, { pos: it.pos, dur: it.duration })
+    }
     const allOrig = new Map<string, number>()
     for (const it of proj.items) allOrig.set(it.id, it.pos)
     setDragBoth({
       kind: 'item', ids: col.ids, grabId: col.ids[0], startClientX: e.clientX,
-      orig, allOrig, ripple: ui.ripple || e.shiftKey, moved: false, color: col.color,
-      cands: magnetCands({ items: new Set(col.ids) }),
+      orig, allOrig, endOrig, ripple: ui.ripple || e.shiftKey, moved: false, color: col.color,
+      cands: magnetCands({ items: new Set(col.ids), itemEnds: new Set(col.endIds) }),
+    })
+  }
+
+  // ---- group scale: with several items selected, the first (leftmost start)
+  // and last (rightmost end) selected item carry handles that scale the whole
+  // selection — positions and span durations — around the opposite extreme.
+  const groupScale = useMemo(() => {
+    const sel = proj.items.filter(it => selection.has(it.id))
+    if (sel.length < 2) return null
+    let first = sel[0]
+    let last = sel[0]
+    for (const it of sel) {
+      if (it.pos < first.pos) first = it
+      if (it.pos + it.duration > last.pos + last.duration) last = it
+    }
+    const minPos = first.pos
+    const maxEnd = last.pos + last.duration
+    if (maxEnd - minPos < 1e-9) return null
+    return { ids: sel.map(it => it.id), firstId: first.id, lastId: last.id, minPos, maxEnd }
+  }, [proj.items, selection])
+
+  const startGroupScale = (e: React.PointerEvent, side: 'L' | 'R', color: string) => {
+    if (e.button !== 0 || ui.readOnly || !groupScale) return
+    e.stopPropagation()
+    ;(e.target as Element).setPointerCapture?.(e.pointerId)
+    const orig = new Map<string, { pos: number; dur: number }>()
+    for (const it of proj.items) if (selection.has(it.id)) orig.set(it.id, { pos: it.pos, dur: it.duration })
+    const grabPos = side === 'L' ? groupScale.minPos : groupScale.maxEnd
+    const anchor = side === 'L' ? groupScale.maxEnd : groupScale.minPos
+    // Keep the group from collapsing below a hair's width on screen.
+    const minFactor = Math.min(0.5, (8 / cam.s) / (groupScale.maxEnd - groupScale.minPos))
+    setDragBoth({
+      kind: 'itemScale', ids: groupScale.ids, side, startClientX: e.clientX, orig, anchor, grabPos,
+      cands: magnetCands({ items: new Set(groupScale.ids) }), minFactor, moved: false, color,
     })
   }
 
@@ -1424,6 +1526,8 @@ export function CanvasView() {
               pl={pl}
               proj={proj}
               selected={selection.has(pl.item.id)}
+              scaleL={!ui.readOnly && groupScale?.firstId === pl.item.id}
+              scaleR={!ui.readOnly && groupScale?.lastId === pl.item.id}
               anim={ui.animLevel !== 'off'}
               onPointerDown={e => itemPointerDown(e, pl.item)}
               onContextMenu={e => itemContextMenu(e, pl.item)}
@@ -1439,6 +1543,7 @@ export function CanvasView() {
                   startClientX: e.clientX, cands: magnetCands({ items: new Set([pl.item.id]) }),
                 })
               }}
+              startScale={(side, e) => startGroupScale(e, side, typeOf(proj, pl.item)?.color ?? '#888')}
             />
           ))}
 
@@ -1515,7 +1620,7 @@ export function CanvasView() {
               style={{ stroke: col.color }}
               onPointerDown={e => basePointerDown(e, col)}
             >
-              <title>{col.ids.length > 1 ? `Move ${col.ids.length} items` : 'Move item'}</title>
+              <title>{col.ids.length + col.endIds.length > 1 ? `Move ${col.ids.length + col.endIds.length} items` : 'Move item'}</title>
             </circle>
           ))}
 
@@ -1639,14 +1744,19 @@ function ItemG(props: {
   pl: PlacedItem
   proj: ReturnType<typeof useActiveProject>
   selected: boolean
+  /** This item is the first of a multi-selection: its start carries the group scale handle. */
+  scaleL: boolean
+  /** This item is the last of a multi-selection: its end carries the group scale handle. */
+  scaleR: boolean
   anim: boolean
   onPointerDown: (e: React.PointerEvent) => void
   onContextMenu: (e: React.MouseEvent) => void
   onHoverStart: (e: React.PointerEvent) => void
   onHoverEnd: () => void
   startHandle: (side: 'L' | 'R', e: React.PointerEvent) => void
+  startScale: (side: 'L' | 'R', e: React.PointerEvent) => void
 }) {
-  const { pl, proj, selected } = props
+  const { pl, proj, selected, scaleL, scaleR } = props
   const type = typeOf(proj, pl.item)
   const Icon = iconByName(type?.icon ?? 'Circle')
   const color = type?.color ?? '#888'
@@ -1667,12 +1777,32 @@ function ItemG(props: {
             <rect x={0} y={barY} width={pl.spanW} height={6} rx={3} style={{ fill: `${color}55`, stroke: `${color}88` }} />
             {selected && (
               <>
-                <circle cx={0} cy={barY + 3} r={6} className="dur-handle" style={{ stroke: color }}
-                  onPointerDown={e => props.startHandle('L', e)} />
-                <circle cx={pl.spanW} cy={barY + 3} r={6} className="dur-handle" style={{ stroke: color }}
-                  onPointerDown={e => props.startHandle('R', e)} />
+                {!scaleL && (
+                  <circle cx={0} cy={barY + 3} r={6} className="dur-handle" style={{ stroke: color }}
+                    onPointerDown={e => props.startHandle('L', e)} />
+                )}
+                {!scaleR && (
+                  <circle cx={pl.spanW} cy={barY + 3} r={6} className="dur-handle" style={{ stroke: color }}
+                    onPointerDown={e => props.startHandle('R', e)} />
+                )}
               </>
             )}
+          </g>
+        )}
+        {/* Group scale handles: a bracket at the selection's first start and
+            last end (a span's own duration handle steps aside for it). */}
+        {scaleL && (
+          <g className="scale-handle" transform={`translate(0, ${barY + 3})`} onPointerDown={e => props.startScale('L', e)}>
+            <rect x={-5} y={-9} width={10} height={18} rx={3} style={{ stroke: color }} />
+            <path d="M 1.5 -4 L -1.5 0 L 1.5 4" style={{ stroke: color }} />
+            <title>Scale selection</title>
+          </g>
+        )}
+        {scaleR && (
+          <g className="scale-handle" transform={`translate(${pl.spanW}, ${barY + 3})`} onPointerDown={e => props.startScale('R', e)}>
+            <rect x={-5} y={-9} width={10} height={18} rx={3} style={{ stroke: color }} />
+            <path d="M -1.5 -4 L 1.5 0 L -1.5 4" style={{ stroke: color }} />
+            <title>Scale selection</title>
           </g>
         )}
         {selected && <circle r={19 * z} className="sel-ring" style={{ stroke: color }} />}
