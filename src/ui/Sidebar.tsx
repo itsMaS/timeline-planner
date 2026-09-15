@@ -69,11 +69,27 @@ export function Sidebar() {
     p.filters.offTypes = [...set]
     p.activeViewId = null
   })
-  /** Show only the given types; if they are already the only ones on, show all. */
+  /**
+   * Show only the given types; if they are already the only ones on, go back
+   * to the type visibility (and active view) from before the solo. Falls back
+   * to showing all when there is nothing remembered (e.g. after a reload).
+   */
+  const preSolo = useRef<{ offTypes: string[]; activeViewId: string | null; soloOff: string[] } | null>(null)
+  const sameSet = (a: string[], b: string[]) => a.length === b.length && b.every(id => a.includes(id))
   const soloTypes = (ids: string[]) => {
     const others = proj.types.filter(t => !ids.includes(t.id)).map(t => t.id)
-    const isSolo = proj.filters.offTypes.length === others.length && others.every(id => proj.filters.offTypes.includes(id))
-    tweak(p => { p.filters.offTypes = isSolo ? [] : others; p.activeViewId = null })
+    if (sameSet(proj.filters.offTypes, others)) {
+      const prev = preSolo.current
+      preSolo.current = null
+      tweak(p => { p.filters.offTypes = prev ? [...prev.offTypes] : []; p.activeViewId = prev ? prev.activeViewId : null })
+      return
+    }
+    // Hopping between solos keeps the original pre-solo state; anything else
+    // (filters changed by hand since) snapshots the current one.
+    if (!preSolo.current || !sameSet(proj.filters.offTypes, preSolo.current.soloOff)) {
+      preSolo.current = { offTypes: [...proj.filters.offTypes], activeViewId: proj.activeViewId, soloOff: others }
+    } else preSolo.current.soloOff = others
+    tweak(p => { p.filters.offTypes = others; p.activeViewId = null })
   }
   /** Viewer-side layer hiding goes through the per-user filter, never the shared layer flag. */
   const toggleLayerFilter = (id: string) => tweak(p => {
@@ -274,7 +290,7 @@ export function Sidebar() {
         >{off ? <EyeOff width={13} height={13} /> : <Eye width={13} height={13} />}</button>
         <button
           className="ghost-btn row-act"
-          title="Solo — show only this type (again to show all)"
+          title="Solo — show only this type (again to go back)"
           onPointerDown={e => e.stopPropagation()}
           onClick={() => soloTypes([t.id])}
         ><Target width={13} height={13} /></button>
@@ -344,7 +360,7 @@ export function Sidebar() {
           >{allOff ? <EyeOff width={13} height={13} /> : <Eye width={13} height={13} />}</button>
           <button
             className="ghost-btn row-act"
-            title="Solo — show only this folder's types (again to show all)"
+            title="Solo — show only this folder's types (again to go back)"
             onClick={() => soloTypes(all.map(t => t.id))}
             disabled={all.length === 0}
           ><Target width={13} height={13} /></button>
