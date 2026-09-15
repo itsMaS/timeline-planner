@@ -43,3 +43,10 @@
 - Type folders nest via `TypeFolder.parentId`; helpers live in
   `src/model/folders.ts` and `repairFolders` runs on load/mutate/remote patch to
   cut cycles and dangling links.
+
+## Working with the owner
+
+- **Decisions must be clickable.** When brainstorming or presenting choices,
+  always use the interactive question tool (AskUserQuestion) with a/b/c-style
+  options, never a plain-text list. Split into several rounds if there are more
+  than four decisions.
