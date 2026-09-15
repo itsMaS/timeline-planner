@@ -53,8 +53,9 @@ Rules for editing `doc`:
   pathId: null, pos, duration: 0, title, description: '', tags: [], link: '',
   images: [], fieldValues: {}}`; a type is `{id, name, icon, color, defaultLayerId,
   fields: [{fieldId, defaultValue: null}], folderId: null}` (fields are global:
-  `doc.fields` holds `{id, name, kind: 'text'|'int'|'float'|'ref', …}` and
-  `fieldValues` are strings, numbers or arrays of referenced ids by kind); a
+  `doc.fields` holds `{id, name, kind: 'text'|'int'|'float'|'select'|'ref', …}`,
+  a select field lists its `options`, and `fieldValues` are strings, numbers,
+  arrays of chosen options or arrays of referenced ids by kind); a
   section is `{id, name, depth, start, end, description: '', fieldValues: {}}`
   where `depth` indexes `hierarchyLevels` (`{id, name, fields, processors}`).
 - `pos`/`start`/`end` are in the project's world units (`settings.unit`). Put new

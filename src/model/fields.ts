@@ -13,6 +13,7 @@ export const FIELD_KINDS: { kind: FieldKind; label: string; glyph: string }[] = 
   { kind: 'text', label: 'Text', glyph: 'Aa' },
   { kind: 'int', label: 'Whole number', glyph: '#' },
   { kind: 'float', label: 'Decimal number', glyph: '0.0' },
+  { kind: 'select', label: 'Dropdown', glyph: '▾' },
   { kind: 'ref', label: 'Reference', glyph: '→' },
 ]
 
@@ -24,15 +25,17 @@ export function newFieldDef(id: Id, name: string, kind: FieldKind = 'text'): Fie
   return {
     id, name, kind, help: '', required: false, showInTooltip: false, defaultValue: null,
     maxLength: null, min: null, max: null, decimals: null, unit: '',
+    options: [], selectMultiple: false,
     refTargets: [], refMultiple: false, refShowLinks: false,
   }
 }
 
 /** Fill in anything missing from a field saved by an older build. */
 export function normalizeFieldDef(raw: Partial<FieldDef> & { id: Id }): FieldDef {
-  const base = newFieldDef(raw.id, raw.name ?? 'Field', (['text', 'int', 'float', 'ref'] as FieldKind[]).includes(raw.kind as FieldKind) ? raw.kind as FieldKind : 'text')
+  const base = newFieldDef(raw.id, raw.name ?? 'Field', (['text', 'int', 'float', 'select', 'ref'] as FieldKind[]).includes(raw.kind as FieldKind) ? raw.kind as FieldKind : 'text')
   const f: FieldDef = { ...base, ...raw, kind: base.kind }
   f.refTargets = Array.isArray(f.refTargets) ? f.refTargets : []
+  f.options = Array.isArray(f.options) ? f.options.filter(o => typeof o === 'string') : []
   f.defaultValue = coerceValue(f, f.defaultValue)
   return f
 }
@@ -96,6 +99,7 @@ export function coerceValue(field: FieldDef, v: unknown): FieldValue | null {
       const n = typeof v === 'number' ? v : typeof v === 'string' && v.trim() !== '' ? Number(v) : NaN
       return Number.isFinite(n) ? n : null
     }
+    case 'select':
     case 'ref': {
       if (Array.isArray(v)) { const ids = v.filter(x => typeof x === 'string'); return ids.length ? ids : null }
       return typeof v === 'string' && v ? [v] : null
@@ -121,6 +125,13 @@ export function clampValue(field: FieldDef, v: FieldValue | null): FieldValue | 
       if (field.max !== null) n = Math.min(field.max, n)
       if (field.kind === 'int') n = Math.round(n)
       return n
+    }
+    case 'select': {
+      // Only known options survive, in the field's option order; single-choice keeps the first.
+      const chosen = new Set(Array.isArray(v) ? v : [String(v)])
+      const out = field.options.filter(o => chosen.has(o))
+      const kept = field.selectMultiple ? out : out.slice(0, 1)
+      return kept.length ? kept : null
     }
     case 'ref': {
       const ids = Array.isArray(v) ? v : [String(v)]
@@ -153,6 +164,7 @@ export function formatValue(p: Project, field: FieldDef, v: FieldValue | null): 
     case 'text': return String(v)
     case 'int':
     case 'float': return formatNumber(field, Number(v))
+    case 'select': return (Array.isArray(v) ? v : [String(v)]).join(', ')
     case 'ref': return (Array.isArray(v) ? v : [String(v)]).map(id => entityTitle(p, id)).join(', ')
   }
 }
@@ -167,7 +179,10 @@ export function entityTitle(p: Project, id: Id): string {
 export function convertValue(from: FieldKind, to: FieldKind, v: FieldValue | null): FieldValue | null {
   if (v === null || from === to) return v
   if (to === 'ref' || from === 'ref') return null
-  if (to === 'text') return typeof v === 'number' ? String(v) : String(v)
+  // Dropdown ↔ text: choices become a comma list and back (unknown choices are dropped by clampValue).
+  if (from === 'select') { const s = (Array.isArray(v) ? v : [String(v)]).join(', '); return to === 'text' ? s : null }
+  if (to === 'select') return typeof v === 'string' ? v.split(',').map(x => x.trim()).filter(Boolean) : null
+  if (to === 'text') return String(v)
   const n = typeof v === 'number' ? v : Number(String(v).trim().replace(',', '.'))
   if (!Number.isFinite(n)) return null
   return to === 'int' ? Math.round(n) : n

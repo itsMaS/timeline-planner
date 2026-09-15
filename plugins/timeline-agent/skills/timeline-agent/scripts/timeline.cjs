@@ -3784,6 +3784,7 @@ function coerceValue(field, v) {
       const n = typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" ? Number(v) : NaN;
       return Number.isFinite(n) ? n : null;
     }
+    case "select":
     case "ref": {
       if (Array.isArray(v)) {
         const ids = v.filter((x) => typeof x === "string");
@@ -3805,6 +3806,8 @@ function formatValue(p, field, v) {
     case "int":
     case "float":
       return formatNumber(field, Number(v));
+    case "select":
+      return (Array.isArray(v) ? v : [String(v)]).join(", ");
     case "ref":
       return (Array.isArray(v) ? v : [String(v)]).map((id) => entityTitle(p, id)).join(", ");
   }

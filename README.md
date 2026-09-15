@@ -86,7 +86,8 @@ by stable random ids; positions are floats on an unbounded abstract axis.
   "hierarchyLevels": [{ "id": "…", "name": "Chapter",   // section depth names
                         "fields": [],                  // FieldAttachment[] like on types
                         "processors": [{ "processorId": "…", "showOnBand": true }] }],
-  "fields":     [{ "id": "…", "name": "Coins", "kind": "int", // "text" | "int" | "float" | "ref"
+  "fields":     [{ "id": "…", "name": "Coins", "kind": "int", // "text" | "int" | "float" | "select" | "ref"
+                   "options": [], "selectMultiple": false,   // select: preset choices
                    "min": 0, "max": null, "decimals": null, "unit": "coins", "maxLength": null,
                    "refTargets": [], "refMultiple": false, "refShowLinks": false,
                    "defaultValue": null, "help": "", "required": false, "showInTooltip": false }],

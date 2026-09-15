@@ -355,6 +355,18 @@ export function FieldEditor() {
           </div>
         </>
       )}
+      {field.kind === 'select' && (
+        <>
+          <div className="field">
+            <label>Options <span className="muted">(one per line, in display order)</span></label>
+            <OptionsEditor field={field} onChange={opts => edit(f => { f.options = opts })} />
+          </div>
+          <label className="check-row">
+            <input type="checkbox" checked={field.selectMultiple} onChange={e => edit(f => { f.selectMultiple = e.target.checked })} />
+            Allow several choices
+          </label>
+        </>
+      )}
       {field.kind === 'ref' && (
         <>
           <div className="field">
@@ -409,6 +421,56 @@ export function FieldEditor() {
         )}
       </div>
     </Modal>
+  )
+}
+
+/**
+ * Dropdown options as a plain textarea: local text while typing so blank
+ * lines and duplicates can exist mid-edit; the field only ever stores the
+ * cleaned list. Stored values that name a removed option are kept until
+ * the item is edited (they render as "removed option").
+ */
+function OptionsEditor({ field, onChange }: { field: FieldDef; onChange: (opts: string[]) => void }) {
+  const [text, setText] = useState(field.options.join('\n'))
+  const [focused, setFocused] = useState(false)
+  React.useEffect(() => { if (!focused) setText(field.options.join('\n')) }, [field.options, focused])
+  const commit = (t: string) => {
+    const seen = new Set<string>()
+    const opts = t.split('\n').map(o => o.trim()).filter(o => o && !seen.has(o) && seen.add(o))
+    if (opts.join('\n') !== field.options.join('\n')) onChange(opts)
+  }
+  const proj = useActiveProject()
+  const used = useMemo(() => {
+    const count = new Map<string, number>()
+    const bump = (rec: Record<string, unknown> | undefined) => {
+      const v = rec?.[field.id]
+      if (Array.isArray(v)) for (const o of v) count.set(String(o), (count.get(String(o)) ?? 0) + 1)
+    }
+    for (const it of proj.items) bump(it.fieldValues)
+    for (const sc of proj.sections) bump(sc.fieldValues)
+    return count
+  }, [proj, field.id])
+  return (
+    <div className="options-editor">
+      <textarea
+        className="input"
+        rows={Math.min(10, Math.max(3, field.options.length + 1))}
+        value={text}
+        placeholder={'e.g.\nEasy\nNormal\nHard'}
+        onFocus={() => setFocused(true)}
+        onChange={e => { setText(e.target.value); commit(e.target.value) }}
+        onBlur={e => { setFocused(false); commit(e.target.value) }}
+      />
+      {field.options.length > 0 && (
+        <div className="select-chips">
+          {field.options.map(o => (
+            <span key={o} className="chip on" title={`${used.get(o) ?? 0} value(s) use this`}>
+              {o}{used.get(o) ? <span className="muted"> · {used.get(o)}</span> : null}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
   )
 }
 

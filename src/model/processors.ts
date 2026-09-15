@@ -72,7 +72,7 @@ export function evalProcessor(p: Project, section: Section, proc: ProcessorDef, 
     case 'distinct': {
       const set = new Set<string>()
       for (const v of values) {
-        if (Array.isArray(v)) for (const id of v) set.add(entityTitle(p, id))
+        if (Array.isArray(v)) for (const x of v) set.add(field?.kind === 'ref' ? entityTitle(p, x) : x)
         else set.add(field && isNumberKind(field.kind) ? formatNumber(field, Number(v)) : String(v))
       }
       const list = [...set]

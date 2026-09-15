@@ -86,6 +86,45 @@ export function FieldValueInput(props: {
       />
     )
   }
+  if (field.kind === 'select') {
+    const chosen = Array.isArray(value) ? value : []
+    const known = new Set(field.options)
+    const stale = chosen.filter(o => !known.has(o))
+    if (!field.selectMultiple) {
+      return (
+        <div className="fv-select">
+          <select
+            className={`input ${props.compact ? 'sm' : ''}`}
+            value={chosen[0] ?? ''}
+            onChange={e => props.onChange(e.target.value ? [e.target.value] : null)}
+          >
+            <option value="">{placeholder ? `— ${placeholder} —` : '—'}</option>
+            {field.options.map(o => <option key={o} value={o}>{o}</option>)}
+            {stale.map(o => <option key={`stale-${o}`} value={o}>{o} (removed option)</option>)}
+          </select>
+          {field.options.length === 0 && <div className="sb-hint">no options yet — add some in the field settings</div>}
+        </div>
+      )
+    }
+    const toggle = (o: string) => {
+      const next = chosen.includes(o) ? chosen.filter(x => x !== o) : field.options.filter(x => x === o || chosen.includes(x))
+      props.onChange(next.length ? next : null)
+    }
+    return (
+      <div className="fv-select">
+        <div className="select-chips">
+          {field.options.map(o => (
+            <button key={o} className={`chip ${chosen.includes(o) ? 'on' : ''}`} onClick={() => toggle(o)}>{o}</button>
+          ))}
+          {stale.map(o => (
+            <button key={`stale-${o}`} className="chip on stale" title="No longer an option — click to remove" onClick={() => toggle(o)}>{o}</button>
+          ))}
+          {field.options.length === 0 && <div className="sb-hint">no options yet — add some in the field settings</div>}
+        </div>
+        {chosen.length === 0 && placeholder && <div className="sb-hint">{placeholder}</div>}
+      </div>
+    )
+  }
   if (field.kind === 'text') {
     const s = value === null ? '' : String(value)
     const over = field.maxLength !== null && s.length > field.maxLength
@@ -292,6 +331,9 @@ export function ReadFieldValue({ field, value }: { field: FieldDef; value: Field
   if (value === null) return <span className="muted">—</span>
   if (field.kind === 'ref' && Array.isArray(value)) {
     return <div className="ref-chips">{value.map(id => <RefChip key={id} id={id} />)}</div>
+  }
+  if (field.kind === 'select' && Array.isArray(value)) {
+    return <div className="select-chips read">{value.map(o => <span key={o} className="chip on">{o}</span>)}</div>
   }
   return <>{formatValue(proj, field, value)}</>
 }

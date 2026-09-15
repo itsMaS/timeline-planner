@@ -1,8 +1,8 @@
 export type Id = string
 
-export type FieldKind = 'text' | 'int' | 'float' | 'ref'
+export type FieldKind = 'text' | 'int' | 'float' | 'select' | 'ref'
 
-/** Stored value: text → string, int/float → number, ref → target ids. */
+/** Stored value: text → string, int/float → number, select → chosen options, ref → target ids. */
 export type FieldValue = string | number | Id[]
 
 /** A project-wide field definition. Types and hierarchy levels attach these. */
@@ -27,6 +27,10 @@ export interface FieldDef {
   decimals: number | null
   /** int / float: suffix shown after the value (e.g. "coins"). */
   unit: string
+  /** select: the preset choices, in display order. */
+  options: string[]
+  /** select: several choices instead of one. */
+  selectMultiple: boolean
   /** ref: allowed item type ids and hierarchy level ids; empty = anything. */
   refTargets: Id[]
   /** ref: several targets instead of one. */

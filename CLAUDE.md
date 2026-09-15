@@ -46,7 +46,7 @@
 
 ## Fields & processors
 
-- Fields are project-global (`Project.fields`, kinds text / int / float / ref).
+- Fields are project-global (`Project.fields`, kinds text / int / float / select / ref).
   Item types and hierarchy levels attach them via `FieldAttachment` (with an
   optional per-attachment default that overrides the field's default); items
   and sections store explicit values in `fieldValues`. Helpers, validation,

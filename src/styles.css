@@ -777,6 +777,12 @@ body.col-resizing .inspector { animation: none; }
 .ref-link { fill: none; stroke: var(--accent); stroke-width: 1.6; stroke-dasharray: 5 4; opacity: .8; }
 .ref-link-end { fill: var(--accent); }
 .canvas-wrap.picking, .canvas-wrap.picking .node, .canvas-wrap.picking .band-label-g { cursor: crosshair; }
+.select-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.select-chips .chip.stale { border-style: dashed; opacity: .7; text-decoration: line-through; }
+.select-chips.read .chip { cursor: default; }
+.fv-select { display: flex; flex-direction: column; gap: 4px; }
+.options-editor { display: flex; flex-direction: column; gap: 6px; }
+.options-editor textarea { resize: vertical; font-size: 12.5px; }
 .band-badge { font-weight: 600; pointer-events: none; font-variant-numeric: tabular-nums; }
 .tt-fields { margin-top: 5px; font-size: 11px; display: flex; flex-direction: column; gap: 1px; }
 .tt-fields .muted { margin-right: 4px; }
