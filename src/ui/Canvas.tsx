@@ -98,6 +98,8 @@ interface CtxMenu {
   x: number; y: number; target: CtxTarget
   /** Background menu switched to the "new item" type search. */
   search?: boolean
+  /** Prompting for the title of a just-created item (in place of the picker). */
+  name?: { itemId: string; placeholder: string }
 }
 
 export function CanvasView() {
@@ -129,6 +131,8 @@ export function CanvasView() {
   const suppressMenuRef = useRef(false)
   /** Last pointer position over the canvas (null once it leaves) — where Space places the picker. */
   const pointerRef = useRef<{ x: number; y: number } | null>(null)
+  /** Text typed so far into the new-item name prompt; committed when the prompt closes. */
+  const pendingNameRef = useRef('')
 
   const cam = proj.camera
   const st = proj.settings
@@ -294,7 +298,9 @@ export function CanvasView() {
         if (ui.readOnly) return null
         const raw = toPos(size.w / 2)
         const pos = ui.snap ? snapPos(raw, cam.s) : raw
-        return createItem(typeId, pos, null, size.w / 2, spineY)
+        const id = createItem(typeId, pos, null, size.w / 2, spineY)
+        if (id) promptName(id, size.w / 2, spineY + 14, pos)
+        return id
       },
     }
     return () => { nav.current = null }
@@ -374,6 +380,29 @@ export function CanvasView() {
     return id
   }
 
+  /**
+   * Ask for a just-created item's title in a small prompt at (x, y): Enter or
+   * clicking anywhere else commits what was typed (empty keeps the default
+   * title), Escape keeps the default.
+   */
+  const promptName = (itemId: string, x: number, y: number, pos: number) => {
+    const it = useStore.getState().projects.find(p => p.id === proj.id)?.items.find(i => i.id === itemId)
+    pendingNameRef.current = ''
+    setMenu({ x, y, target: { kind: 'bg', pos, rawPos: pos }, name: { itemId, placeholder: it?.title ?? 'Name…' } })
+  }
+
+  /** Close the context menu / picker / name prompt, committing a pending name unless cancelled. */
+  const closeMenu = (commit = true) => {
+    const m = menu
+    const text = pendingNameRef.current.trim()
+    pendingNameRef.current = ''
+    if (m?.name && commit && text) {
+      const { itemId } = m.name
+      mutate(p => { const it = p.items.find(i => i.id === itemId); if (it) it.title = text })
+    }
+    setMenu(null)
+  }
+
   /** New type under the given name (next palette colour), for the "new type" row of a type search. */
   const createType = (name: string): string => {
     const id = uid()
@@ -409,9 +438,9 @@ export function CanvasView() {
   useEffect(() => {
     if (!menu) return
     const onDown = (e: PointerEvent) => {
-      if (!menuRef.current?.contains(e.target as Node)) setMenu(null)
+      if (!menuRef.current?.contains(e.target as Node)) closeMenu()
     }
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setMenu(null) }
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') closeMenu(false) }
     window.addEventListener('pointerdown', onDown, true)
     window.addEventListener('keydown', onKey)
     return () => {
@@ -1732,9 +1761,9 @@ export function CanvasView() {
         <div
           ref={menuRef}
           className="menu ctx"
-          style={menu.search
+          style={menu.search || menu.name
             // The in-place type search is wider and taller than the menu; keep it on the canvas.
-            ? { left: clamp(menu.x, 0, size.w - 250), top: clamp(menu.y, 0, size.h - 340) }
+            ? { left: clamp(menu.x, 0, size.w - 250), top: clamp(menu.y, 0, size.h - (menu.name ? 60 : 340)) }
             : { left: clamp(menu.x, 0, size.w - 200), top: clamp(menu.y, 0, size.h - 200) }}
           onContextMenu={e => e.preventDefault()}
         >
@@ -1748,12 +1777,28 @@ export function CanvasView() {
                 placeholder="New item here…"
                 autoFocus
                 listWhenEmpty
-                onPick={typeId => { createItem(typeId, pos, null, menu.x, menu.y); setMenu(null) }}
-                onCreateType={name => { createItem(createType(name), pos, null, menu.x, menu.y); setMenu(null) }}
+                onPick={typeId => {
+                  const id = createItem(typeId, pos, null, menu.x, menu.y)
+                  if (id) promptName(id, menu.x, menu.y, pos); else setMenu(null)
+                }}
+                onCreateType={name => {
+                  const id = createItem(createType(name), pos, null, menu.x, menu.y)
+                  if (id) promptName(id, menu.x, menu.y, pos); else setMenu(null)
+                }}
                 onClose={() => setMenu(null)}
               />
             )
-          })() : menu.target.kind === 'bg' ? (() => {
+          })() : menu.name ? (
+            // Name the item just created from the picker: Enter or a click
+            // elsewhere keeps what's typed; Escape keeps the default title.
+            <NamePrompt
+              key={menu.name.itemId}
+              placeholder={menu.name.placeholder}
+              onChange={t => { pendingNameRef.current = t }}
+              onCommit={() => closeMenu()}
+              onCancel={() => closeMenu(false)}
+            />
+          ) : menu.target.kind === 'bg' ? (() => {
             const { pos, rawPos } = menu.target
             return (
               <>
@@ -1798,6 +1843,36 @@ export function CanvasView() {
           )}
         </div>
       )}
+    </div>
+  )
+}
+
+// ------------------------------------------------------------------ NamePrompt
+
+/** Single-line title prompt: Enter or blur commits, Escape cancels. */
+function NamePrompt(props: {
+  placeholder: string
+  onChange: (text: string) => void
+  onCommit: () => void
+  onCancel: () => void
+}) {
+  const [text, setText] = useState('')
+  return (
+    <div className="type-search name-prompt">
+      <div className="search-box type-search-box">
+        <input
+          className="search-input"
+          placeholder={props.placeholder}
+          value={text}
+          autoFocus
+          onChange={e => { setText(e.target.value); props.onChange(e.target.value) }}
+          onBlur={props.onCommit}
+          onKeyDown={e => {
+            if (e.key === 'Enter') { e.preventDefault(); props.onCommit() }
+            else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); props.onCancel() }
+          }}
+        />
+      </div>
     </div>
   )
 }

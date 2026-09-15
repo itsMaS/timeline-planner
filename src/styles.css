@@ -90,6 +90,7 @@ input, select, textarea { font: inherit; color: inherit; }
 .menu.ctx .type-search-box { margin: 0; }
 .menu.ctx .type-search-list { position: static; box-shadow: none; border: none; padding: 4px 0 0; max-height: 290px; }
 .menu.ctx .type-search-row { padding: 6px 8px; }
+.menu.ctx .name-prompt .search-input { font-weight: 600; }
 
 .tools { display: flex; align-items: center; gap: 2px; margin-left: auto; }
 .sep { width: 1px; height: 18px; background: var(--line-soft); margin: 0 5px; }
