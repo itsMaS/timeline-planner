@@ -1,6 +1,6 @@
 ---
 name: timeline-agent
-description: Work on a shared Timeline Planner project through its edit link — read it, propose reviewable changes (typo fixes, new items/types/sections, restructuring), apply changes directly when asked, and export filtered PDF documents. Use whenever a prompt contains a timeline link (`#/s/<token>`), or asks to suggest/propose/apply changes to a timeline, or to export a timeline or part of it as a PDF.
+description: Work on a shared Timeline Planner project through its edit link — read it, propose reviewable changes (typo fixes, new items/types/sections, restructuring), apply changes directly when asked, and export filtered PDF documents. Use whenever a prompt contains a timeline link (the `#/s/...` share URL), or asks to suggest/propose/apply changes to a timeline, or to export a timeline or part of it as a PDF.
 allowed-tools: Bash(node ${CLAUDE_SKILL_DIR}/scripts/timeline.cjs:*)
 ---
 
