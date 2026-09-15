@@ -5,7 +5,7 @@ import {
   type Conflict, type Decision, type Proposal, type ProposalChange,
 } from '../model/proposal'
 import { coerceValue, formatValue } from '../model/fields'
-import { useActiveProject, useStore } from '../model/store'
+import { useActiveProject, useActiveShare, useStore } from '../model/store'
 import type { Project } from '../model/types'
 import { decideProposal, deleteProposal, refreshProposals } from '../sync/proposals'
 import { nav } from './nav'
@@ -39,6 +39,7 @@ const countDecisions = (p: Proposal) => {
 export function ProposalsPanel() {
   const proj = useActiveProject()
   const activeId = useStore(s => s.activeId)
+  const share = useActiveShare()
   const proposals = useStore(s => s.proposals[s.activeId]) ?? []
   const reviewId = useStore(s => s.ui.reviewProposalId)
   const setUI = useStore(s => s.setUI)
@@ -61,6 +62,33 @@ export function ProposalsPanel() {
 
   if (review && review.status === 'open') {
     return <ProposalReview proj={proj} projectId={activeId} proposal={review} back={() => setUI({ reviewProposalId: null })} />
+  }
+
+  if (share?.role === 'suggest') {
+    // Suggesters see what they (and others) sent and how it was decided, but cannot review.
+    return (
+      <div className="sb-body">
+        {proposals.length === 0 && <div className="sb-hint">nothing sent yet · use Review &amp; send in the bar above the timeline</div>}
+        {[...proposals].reverse().map(p => {
+          const n = countDecisions(p)
+          return (
+            <div key={p.id} className={`prop-row ${p.status === 'open' ? '' : 'done'}`}>
+              <div className="prop-title">{p.title}</div>
+              <div className="prop-meta">
+                {p.author} · {ago(p.updatedAt)} · {p.status === 'open'
+                  ? `${n.pending} of ${p.changes.length} awaiting review`
+                  : `${n.applied} applied · ${n.rejected} rejected`}
+              </div>
+            </div>
+          )
+        })}
+        <div className="row gap prop-actions">
+          <button className="ghost-btn add" onClick={refresh} disabled={busy}>
+            <RefreshCw width={12} height={12} className={busy ? 'spin' : ''} /> refresh
+          </button>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -205,7 +233,7 @@ function ProposalReview(props: { proj: Project; projectId: string; proposal: Pro
 
 // ---------------------------------------------------------------- one change
 
-const FIELD_LABEL: Record<string, string> = {
+export const FIELD_LABEL: Record<string, string> = {
   title: 'title', description: 'description', tags: 'tags', link: 'link', images: 'images', fieldValues: 'fields',
   pos: 'position', duration: 'duration', typeId: 'type', layerId: 'layer', pathId: 'branch path',
   name: 'name', icon: 'icon', color: 'color', defaultLayerId: 'default layer', fields: 'fields', folderId: 'folder',
@@ -282,27 +310,11 @@ function addedSummary(proj: Project, c: ProposalChange): { k: string; v: unknown
   return out
 }
 
-function ChangeRow(props: { proj: Project; change: ProposalChange; conflict: Conflict; checked: boolean; onToggle: () => void }) {
-  const { proj, change: c, conflict } = props
-  const label = changeLabel(c)
+/** The diff part of a change: changed fields, the new entity, or the deletion notice. */
+export function ChangeBody({ proj, change: c }: { proj: Project; change: ProposalChange }) {
   const fields = useMemo(() => changedFields(c), [c])
-  const canJump = c.col === 'items' && c.kind !== 'add' && proj.items.some(it => it.id === c.entityId)
   return (
-    <div className={`prop-change ${props.checked ? 'on' : ''} ${c.kind}`}>
-      <label className="prop-change-head">
-        <input type="checkbox" checked={props.checked} onChange={props.onToggle} />
-        <span className="prop-kind">{label.kind}</span>
-        <span
-          className={`prop-name ${canJump ? 'jump' : ''}`}
-          title={canJump ? 'Jump to it on the timeline' : undefined}
-          onClick={e => { if (canJump) { e.preventDefault(); nav.current?.flyToItem(c.entityId) } }}
-        >{label.name}</span>
-        <span className={`prop-verb ${c.kind}`}>{label.verb}</span>
-      </label>
-      {conflict !== 'none' && (
-        <div className="prop-conflict"><AlertTriangle width={12} height={12} /> {CONFLICT_TEXT[conflict]}</div>
-      )}
-      {c.note && <div className="prop-note">{c.note}</div>}
+    <>
       {c.kind === 'update' && fields.map(f => (
         <div key={f.key} className="prop-field">
           <em>{FIELD_LABEL[f.key] ?? f.key}</em>
@@ -323,6 +335,31 @@ function ChangeRow(props: { proj: Project; change: ProposalChange; conflict: Con
           <ValueDelta proj={proj} k={c.entityId} before={c.before} after={c.after} />
         </div>
       )}
+    </>
+  )
+}
+
+export function ChangeRow(props: { proj: Project; change: ProposalChange; conflict: Conflict; checked: boolean; onToggle: () => void }) {
+  const { proj, change: c, conflict } = props
+  const label = changeLabel(c)
+  const canJump = c.col === 'items' && c.kind !== 'add' && proj.items.some(it => it.id === c.entityId)
+  return (
+    <div className={`prop-change ${props.checked ? 'on' : ''} ${c.kind}`}>
+      <label className="prop-change-head">
+        <input type="checkbox" checked={props.checked} onChange={props.onToggle} />
+        <span className="prop-kind">{label.kind}</span>
+        <span
+          className={`prop-name ${canJump ? 'jump' : ''}`}
+          title={canJump ? 'Jump to it on the timeline' : undefined}
+          onClick={e => { if (canJump) { e.preventDefault(); nav.current?.flyToItem(c.entityId) } }}
+        >{label.name}</span>
+        <span className={`prop-verb ${c.kind}`}>{label.verb}</span>
+      </label>
+      {conflict !== 'none' && (
+        <div className="prop-conflict"><AlertTriangle width={12} height={12} /> {CONFLICT_TEXT[conflict]}</div>
+      )}
+      {c.note && <div className="prop-note">{c.note}</div>}
+      <ChangeBody proj={proj} change={c} />
     </div>
   )
 }

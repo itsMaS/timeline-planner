@@ -17,9 +17,12 @@ what a person holding the edit link can — nothing more.
 
 ## The link
 
-The user pastes their edit link in the chat (`https://…/#/s/<token>`). Pass it
-to every command as `--link "<the link>"`. If they haven't given one and
-`$TIMELINE_LINK` isn't set, ask for it. Never repeat the token back in your
+The user pastes a share link in the chat (`https://…/#/s/…`). Pass it to every
+command as `--link "<the link>"`. If they haven't given one and
+`$TIMELINE_LINK` isn't set, ask for it. An **edit link** allows everything; a
+**suggest link** allows reading, proposing, `status` and `export` but not
+`apply` or `withdraw` (the CLI says so); a **view link** only allows reading and
+`export`. Never repeat the token back in your
 replies, proposal titles/summaries/notes, file names or commits.
 
 ## Modes

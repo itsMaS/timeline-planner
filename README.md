@@ -145,6 +145,13 @@ link into the chat and ask for what you want:
 /plugin install timeline-agent@timeline-planner
 ```
 
+Sharing gives three links: **edit**, **suggest** and **view**. A suggest link
+opens the full app in suggest mode: every edit lands in a private draft, and
+**Review & send** turns it into a proposal. Editors can switch to suggest mode
+themselves with the lightbulb in the toolbar. Every item and section has a
+**History** in the inspector: who changed what and when, with a diff and a
+restore button.
+
 Suggested changes don't touch the timeline: they show up under **Sidebar →
 Proposals** in every edit tab, with a per-change diff. Tick the ones you want
 and press **Apply selected** — a single undoable edit that syncs like any other.

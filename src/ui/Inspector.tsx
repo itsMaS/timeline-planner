@@ -14,6 +14,7 @@ import { Markdown } from './Markdown'
 import { nav } from './nav'
 import { creatorStamp } from '../sync/client'
 import { uploadImage } from '../sync/share'
+import { HistorySection } from './History'
 
 export function Inspector() {
   const proj = useActiveProject()
@@ -178,6 +179,7 @@ function ReadItemPanel({ id }: { id: string }) {
             ))}
           </div>
         )}
+        <HistorySection col="items" entityId={item.id} />
       </div>
     </>
   )
@@ -287,6 +289,7 @@ function ReadSectionPanel({ section }: { section: Section }) {
             {contained.map(it => <ItemJumpRow key={it.id} item={it} />)}
           </div>
         </div>
+        <HistorySection col="sections" entityId={section.id} />
       </div>
     </>
   )
@@ -467,6 +470,7 @@ function ItemPanel({ id }: { id: string }) {
             ))}
           </div>
         )}
+        <HistorySection col="items" entityId={item.id} />
       </div>
     </>
   )
@@ -704,6 +708,7 @@ function SectionPanel({ section }: { section: Section }) {
             })}
           </div>
         </div>
+        <HistorySection col="sections" entityId={section.id} />
       </div>
     </>
   )

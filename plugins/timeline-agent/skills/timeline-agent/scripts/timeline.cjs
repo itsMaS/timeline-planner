@@ -23306,6 +23306,7 @@ async function rpc(fn, args) {
 async function open(token) {
   const r = await rpc("share_open", { p_token: token });
   if (!r) fail("this link is not valid (revoked or mistyped)");
+  if (r.role === "view") fail("this is a view-only link: it can read but not propose or apply. Ask for the suggest or edit link.");
   return { version: r.version, timelineId: r.id, name: r.name, role: r.role, doc: r.doc };
 }
 function loadDoc(path, what) {
@@ -23414,7 +23415,7 @@ async function cmdApply() {
   const doc = edited.doc;
   if (flag("force") || !base.version) {
     const r = await rpc("share_save", { p_token: token, p_name: doc.name, p_doc: doc });
-    if (r.gone) fail("this link is not valid (revoked or mistyped)");
+    if (r.gone) fail("this link is not valid, or it is a suggest link (only an edit link can apply directly \u2014 use propose)");
     console.log(`saved directly (version ${r.version}) with ${plural(changes.length, "change")}`);
   } else {
     const r = await rpc("share_save_if", {
@@ -23423,7 +23424,7 @@ async function cmdApply() {
       p_name: doc.name,
       p_doc: doc
     });
-    if (r.gone) fail("this link is not valid (revoked or mistyped)");
+    if (r.gone) fail("this link is not valid, or it is a suggest link (only an edit link can apply directly \u2014 use propose)");
     if (r.conflict) fail(`the timeline changed since you read it (server is at version ${r.version}, base was ${base.version}). Re-read, redo the edit, or --force to overwrite.`, 2);
     console.log(`saved (version ${r.version}) with ${plural(changes.length, "change")}`);
   }
@@ -23451,7 +23452,7 @@ async function cmdStatus() {
 async function cmdWithdraw() {
   const id = positional[0] ?? fail("usage: withdraw <proposal-id>");
   const ok = await rpc("proposal_delete", { p_edit_token: TOKEN(), p_id: id });
-  console.log(ok ? `proposal ${id} deleted` : `proposal ${id} not found`);
+  console.log(ok ? `proposal ${id} deleted` : `proposal ${id} not found (or this is a suggest link \u2014 only editors can withdraw)`);
 }
 function findChrome() {
   const env = process.env.CHROMIUM_PATH;

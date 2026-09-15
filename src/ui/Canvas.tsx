@@ -10,7 +10,7 @@ import {
   layoutTimeline, minZoomFor, refreshSectionDepths, rowY, spineD, spineYFor, terminalEndX, typeOf,
 } from '../model/layout'
 import { bandBadge } from '../model/processors'
-import { proposalItemIds } from '../model/proposal'
+import { diffToChanges, proposalItemIds } from '../model/proposal'
 import { useActiveProject, useStore } from '../model/store'
 import type { Camera, Item, Section } from '../model/types'
 import { PALETTE, clamp, formatUnit, rulerStepFor, sectionHue, snapPos, timeBaseFor, uid, unitSuffix } from '../model/util'
@@ -150,7 +150,13 @@ export function CanvasView() {
   const selection = useMemo(() => new Set(ui.selection), [ui.selection])
   // Items touched by the proposal open in the review panel get a dashed ring.
   const reviewProposal = useStore(s => (s.ui.reviewProposalId ? s.proposals[s.activeId]?.find(p => p.id === s.ui.reviewProposalId) : undefined))
-  const proposed = useMemo(() => new Set(reviewProposal ? proposalItemIds(reviewProposal) : []), [reviewProposal])
+  // In suggest mode, items that differ from the saved document are marked the same way.
+  const baseProj = useStore(s => s.projects.find(p => p.id === s.activeId) ?? s.projects[0])
+  const proposed = useMemo(() => {
+    const ids = new Set(reviewProposal ? proposalItemIds(reviewProposal) : [])
+    if (proj !== baseProj) for (const c of diffToChanges(baseProj, proj)) if (c.col === 'items') ids.add(c.entityId)
+    return ids
+  }, [reviewProposal, proj, baseProj])
 
   useEffect(() => { setParticleLevel(ui.animLevel) }, [ui.animLevel])
   useEffect(() => { setSoundOn(ui.soundOn) }, [ui.soundOn])

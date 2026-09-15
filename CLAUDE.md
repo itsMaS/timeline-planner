@@ -43,6 +43,30 @@
 - Type folders nest via `TypeFolder.parentId`; helpers live in
   `src/model/folders.ts` and `repairFolders` runs on load/mutate/remote patch to
   cut cycles and dangling links.
+- Three links per timeline: **edit**, **suggest** and **view**
+  (`0003_suggest_and_history.sql`). `share_open`/`share_pull`/`history_list`
+  accept any of them; `proposal_create`/`proposal_list` accept edit or suggest;
+  everything that writes the document or decides proposals needs the edit token.
+
+## Suggest mode and history
+
+- Suggest mode = a **draft** (`store.drafts[projectId]`, persisted to
+  localStorage). While a draft exists `useActiveProject()` returns it and
+  `mutate`/`tweak`/`undo`/`redo`/`setCamera`/`renameProject` write to it instead
+  of the document (own undo stack `d:<id>`). Remote patches rebase the draft
+  (`rebaseDraft`). `diffToChanges(base, draft)` is the pending suggestion;
+  `SuggestBar`/`SuggestModal` (`src/ui/Suggest.tsx`) send it via
+  `submitSuggestion` and `resetDraft` keeps whatever was not sent. Suggest-link
+  tabs are always in suggest mode (`enterSuggest` in `main.tsx`); edit tabs
+  toggle it with the toolbar lightbulb. Use `useActiveBase()` when you need the
+  saved document.
+- History: every change that reaches the document goes through
+  `syncHooks.onHistory` (entity-level, with before/after and a source such as
+  `edit`, `undo`, `restore`, `proposal:<id>`), is coalesced in
+  `src/sync/history.ts` and appended to `timeline_history` (edit token only,
+  last 200 per entity). `HistorySection` (`src/ui/History.tsx`) in the
+  Inspector lists it for items and sections with a diff and a restore button
+  (which is a suggestion in suggest mode).
 
 ## Fields & processors
 

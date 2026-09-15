@@ -5,7 +5,9 @@
  *
  *   npx tsx agent/timeline.ts <command> [options]
  *
- * The edit link (or bare token) comes from --link or $TIMELINE_LINK.
+ * The edit or suggest link (or bare token) comes from --link or $TIMELINE_LINK.
+ * A suggest link can read, outline, propose, check status and export; only an
+ * edit link can `apply` or `withdraw`.
  *
  * Commands
  *   read     [--out doc.json]                     download the timeline (wrapper: {version, timelineId, name, doc})
@@ -83,12 +85,14 @@ async function rpc<T>(fn: string, args: Record<string, unknown>): Promise<T> {
   return (text ? JSON.parse(text) : null) as T
 }
 
-interface Wrapper { version: number; timelineId: string; name: string; role: 'edit' | 'view'; doc: Project }
-interface OpenResult { id: string; name: string; doc: Project; version: number; role: 'edit' | 'view' }
+type Role = 'edit' | 'suggest' | 'view'
+interface Wrapper { version: number; timelineId: string; name: string; role: Role; doc: Project }
+interface OpenResult { id: string; name: string; doc: Project; version: number; role: Role }
 
 async function open(token: string): Promise<Wrapper> {
   const r = await rpc<OpenResult | null>('share_open', { p_token: token })
   if (!r) fail('this link is not valid (revoked or mistyped)')
+  if (r.role === 'view') fail('this is a view-only link: it can read but not propose or apply. Ask for the suggest or edit link.')
   return { version: r.version, timelineId: r.id, name: r.name, role: r.role, doc: r.doc }
 }
 
@@ -206,13 +210,13 @@ async function cmdApply() {
   const doc = edited.doc
   if (flag('force') || !base.version) {
     const r = await rpc<{ gone?: true; version?: number }>('share_save', { p_token: token, p_name: doc.name, p_doc: doc })
-    if (r.gone) fail('this link is not valid (revoked or mistyped)')
+    if (r.gone) fail('this link is not valid, or it is a suggest link (only an edit link can apply directly — use propose)')
     console.log(`saved directly (version ${r.version}) with ${plural(changes.length, 'change')}`)
   } else {
     const r = await rpc<{ gone?: true; conflict?: true; version?: number }>('share_save_if', {
       p_token: token, p_expected_version: base.version, p_name: doc.name, p_doc: doc,
     })
-    if (r.gone) fail('this link is not valid (revoked or mistyped)')
+    if (r.gone) fail('this link is not valid, or it is a suggest link (only an edit link can apply directly — use propose)')
     if (r.conflict) fail(`the timeline changed since you read it (server is at version ${r.version}, base was ${base.version}). Re-read, redo the edit, or --force to overwrite.`, 2)
     console.log(`saved (version ${r.version}) with ${plural(changes.length, 'change')}`)
   }
@@ -239,7 +243,7 @@ async function cmdStatus() {
 async function cmdWithdraw() {
   const id = positional[0] ?? fail('usage: withdraw <proposal-id>')
   const ok = await rpc<boolean>('proposal_delete', { p_edit_token: TOKEN(), p_id: id })
-  console.log(ok ? `proposal ${id} deleted` : `proposal ${id} not found`)
+  console.log(ok ? `proposal ${id} deleted` : `proposal ${id} not found (or this is a suggest link — only editors can withdraw)`)
 }
 
 // ---------------------------------------------------------------- export

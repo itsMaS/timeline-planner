@@ -1,6 +1,6 @@
-import { applyChanges, type Decision, type Proposal } from '../model/proposal'
+import { applyChanges, type Decision, type Proposal, type ProposalChange } from '../model/proposal'
 import { useStore } from '../model/store'
-import { rpc } from './client'
+import { getIdentity, rpc } from './client'
 
 /**
  * Proposals (suggested changes awaiting review) for shared tabs opened with an
@@ -15,13 +15,19 @@ const lastSeen = new Map<string, string>()
 
 interface ListResult { version: number; ids: string[]; rows: Proposal[] }
 
+/** Reviewing (apply / reject / delete) needs the edit link. */
 const editTokenOf = (projectId: string): string | null => {
   const share = store().shares[projectId]
   return share?.role === 'edit' ? share.editToken : null
 }
+/** Listing and creating proposals works with the edit or the suggest link. */
+const proposeTokenOf = (projectId: string): string | null => {
+  const share = store().shares[projectId]
+  return share?.editToken ?? share?.suggestToken ?? null
+}
 
 export async function refreshProposals(projectId: string, full = false): Promise<void> {
-  const token = editTokenOf(projectId)
+  const token = proposeTokenOf(projectId)
   if (!token) return
   const since = full ? null : lastSeen.get(projectId) ?? null
   let r: ListResult | null
@@ -46,8 +52,8 @@ export async function refreshProposals(projectId: string, full = false): Promise
   for (const p of merged) if (p.updatedAt > newest) newest = p.updatedAt
   if (newest) lastSeen.set(projectId, newest)
   st.setProposals(projectId, merged)
-  // Announce proposals that arrived while this tab was open (not the initial load).
-  if (fresh.length && st.activeId === projectId) {
+  // Announce proposals that arrived while this tab was open (not the initial load); reviewers only.
+  if (fresh.length && st.activeId === projectId && editTokenOf(projectId)) {
     st.showToast(fresh.length === 1 ? `New proposal: “${fresh[0].title}”` : `${fresh.length} new proposals to review`)
   }
 }
@@ -85,4 +91,23 @@ export async function deleteProposal(projectId: string, id: string): Promise<voi
   await rpc<boolean>('proposal_delete', { p_edit_token: token, p_id: id })
   const st = store()
   st.setProposals(projectId, (st.proposals[projectId] ?? []).filter(p => p.id !== id))
+}
+
+/**
+ * Turn (part of) the suggest-mode draft into a proposal. Works with the edit
+ * and the suggest link; the author is this browser's display identity.
+ */
+export async function submitSuggestion(projectId: string, title: string, summary: string, changes: ProposalChange[]): Promise<Proposal> {
+  const token = proposeTokenOf(projectId)
+  if (!token) throw new Error('This tab cannot send suggestions')
+  if (!changes.length) throw new Error('Nothing to send')
+  const st = store()
+  const share = st.shares[projectId]
+  const row = await rpc<Proposal | null>('proposal_create', {
+    p_edit_token: token, p_title: title, p_summary: summary, p_author: getIdentity().name,
+    p_base_version: share?.version ?? null, p_changes: changes,
+  })
+  if (!row) throw new Error('This share link is not valid any more')
+  replaceRow(projectId, row)
+  return row
 }

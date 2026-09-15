@@ -441,10 +441,10 @@ export function Sidebar() {
       style={{ width: ui.sidebarW, minWidth: ui.sidebarW }}
     >
       {/* -------- proposals (suggested changes awaiting review; edit shares only) */}
-      {canEdit && share?.role === 'edit' && share.editToken && (
+      {canEdit && share && (share.role === 'edit' ? !!share.editToken : share.role === 'suggest') && (
         <>
           <SectionHeader
-            title="Proposals" open={open.proposals || reviewing} toggle={() => toggle('proposals')}
+            title={share.role === 'suggest' ? 'Suggestions' : 'Proposals'} open={open.proposals || reviewing} toggle={() => toggle('proposals')}
             action={openProposals > 0 && <span className="badge accent">{openProposals}</span>}
           />
           {(open.proposals || reviewing) && <ProposalsPanel />}

@@ -37,6 +37,8 @@ function Root() {
           st.addProject(project)
           st.setShare(project.id, info)
         }
+        // A suggest link is always in suggest mode: edits become proposals.
+        if (info.role === 'suggest') st.enterSuggest(existing ?? project.id)
         history.replaceState(null, '', `${location.pathname}${location.search}`)
         bootSync({ startExisting: true })
         void startSync(existing ?? project.id)

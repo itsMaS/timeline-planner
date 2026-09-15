@@ -3,7 +3,7 @@ import { repairFolders } from './folders'
 import { newFieldDef, normalizeFieldDef, repairSchema } from './fields'
 import { refreshSectionDepths } from './layout'
 import { applyPatch, diffProject, type Patch } from './patch'
-import type { Proposal } from './proposal'
+import { applyChanges, diffToChanges, type Proposal, type ProposalChange } from './proposal'
 import type { Camera, FieldAttachment, FieldDef, FieldValue, Filters, HierarchyLevel, Id, Project, TimelineSettings } from './types'
 import { uid } from './util'
 
@@ -169,7 +169,7 @@ export const clampInspectorW = (w: number) => Math.round(Math.max(240, Math.min(
 
 // ---------------------------------------------------------------- sharing
 
-export type ShareRole = 'edit' | 'view'
+export type ShareRole = 'edit' | 'suggest' | 'view'
 
 /** Link between a local project (tab) and a shared timeline in Supabase. */
 export interface ShareInfo {
@@ -177,6 +177,8 @@ export interface ShareInfo {
   id: string
   role: ShareRole
   editToken: string | null
+  /** Suggest link token; known to editors and suggesters. */
+  suggestToken: string | null
   viewToken: string
   /** Last server version we know about. */
   version: number
@@ -203,8 +205,10 @@ export interface SyncState {
 /** Hooks the sync layer registers so the store never imports Supabase code. */
 export const syncHooks: {
   onLocalPatch: ((projectId: Id, patch: Patch) => void) | null
+  /** Entity-level record of a change that reached the document (for the history log). */
+  onHistory: ((projectId: Id, changes: ProposalChange[], source: string) => void) | null
   onClose: ((projectId: Id) => void) | null
-} = { onLocalPatch: null, onClose: null }
+} = { onLocalPatch: null, onHistory: null, onClose: null }
 
 interface UIState {
   selection: string[] // item ids, or 'B:<id>' branch, 'S:<id>' section
@@ -220,7 +224,7 @@ interface UIState {
   /** Dragging one item moves every other item by the same amount. */
   ripple: boolean
   tool: Tool
-  overlay: 'templates' | 'cheatsheet' | 'settings' | 'share' | null
+  overlay: 'templates' | 'cheatsheet' | 'settings' | 'share' | 'suggest' | null
   editTypeId: Id | null
   /** Field / processor / hierarchy-level editor modals. */
   editFieldId: Id | null
@@ -259,13 +263,19 @@ interface Store {
   sync: Record<Id, SyncState>
   /** Suggested changes awaiting review, keyed by local project id (edit shares only). */
   proposals: Record<Id, Proposal[]>
+  /**
+   * Suggest-mode drafts keyed by project id. While a draft exists the tab
+   * shows and edits the draft instead of the document; the difference between
+   * the two is what gets sent as a proposal.
+   */
+  drafts: Record<Id, Project>
   /** True when the app was opened from a read-only link: nothing is persisted. */
   viewer: boolean
   setUI: (patch: Partial<UIState>) => void
   select: (ids: string[]) => void
   active: () => Project
-  /** Undoable structural mutation of the active project. */
-  mutate: (recipe: (p: Project) => void) => void
+  /** Undoable structural mutation of the active project (or of its draft in suggest mode). */
+  mutate: (recipe: (p: Project) => void, meta?: { source?: string }) => void
   /** Non-undoable, lightly persisted (camera, filters, settings). */
   tweak: (recipe: (p: Project) => void) => void
   setCamera: (cam: Camera) => void
@@ -288,6 +298,13 @@ interface Store {
   openViewer: (p: Project, info: ShareInfo) => void
   /** Replace or merge the proposal list of a project (null clears it). */
   setProposals: (projectId: Id, list: Proposal[] | null) => void
+  // -- suggest mode
+  /** Start collecting edits into a draft instead of the document. */
+  enterSuggest: (projectId: Id) => void
+  /** Drop the draft (keeping camera/filters) and edit the document directly again. */
+  exitSuggest: (projectId: Id) => void
+  /** Rebuild the draft as document + `keep` (what was not sent yet). */
+  resetDraft: (projectId: Id, keep: ProposalChange[]) => void
 }
 
 // ---------------------------------------------------------------- persistence
@@ -295,6 +312,7 @@ interface Store {
 const LS_INDEX = 'tp.index.v1'
 const LS_PROJ = (id: string) => `tp.project.v1.${id}`
 const LS_SNAP = (id: string) => `tp.snapshots.v1.${id}`
+const LS_DRAFT = (id: string) => `tp.draft.v1.${id}`
 
 /** Undo history is patch-based so that undo only reverts *your* edits on shared tabs. */
 interface HistEntry { fwd: Patch; inv: Patch }
@@ -325,6 +343,9 @@ function persistSoon(get: () => Store) {
       for (const p of s.projects) {
         const data = JSON.stringify(p)
         localStorage.setItem(LS_PROJ(p.id), data)
+        const draft = s.drafts[p.id]
+        if (draft) localStorage.setItem(LS_DRAFT(p.id), JSON.stringify(draft))
+        else localStorage.removeItem(LS_DRAFT(p.id))
         const now = Date.now()
         if (now - (lastSnapAt[p.id] ?? 0) > 4 * 60_000) {
           lastSnapAt[p.id] = now
@@ -338,7 +359,7 @@ function persistSoon(get: () => Store) {
   }, 350)
 }
 
-function loadInitial(): { projects: Project[]; activeId: Id; prefs: Partial<UIState>; shares: Record<Id, ShareInfo>; fresh: boolean } {
+function loadInitial(): { projects: Project[]; activeId: Id; prefs: Partial<UIState>; shares: Record<Id, ShareInfo>; drafts: Record<Id, Project>; fresh: boolean } {
   try {
     const idx = JSON.parse(localStorage.getItem(LS_INDEX) ?? 'null')
     if (idx && Array.isArray(idx.order) && idx.order.length) {
@@ -351,22 +372,52 @@ function loadInitial(): { projects: Project[]; activeId: Id; prefs: Partial<UISt
         const activeId = projects.some(p => p.id === idx.activeId) ? idx.activeId : projects[0].id
         const shares: Record<Id, ShareInfo> = {}
         const raw = (idx.shares ?? {}) as Record<Id, ShareInfo>
-        for (const p of projects) if (raw[p.id]?.id && raw[p.id]?.viewToken) shares[p.id] = raw[p.id]
-        return { projects, activeId, prefs: idx.prefs ?? {}, shares, fresh: false }
+        for (const p of projects) if (raw[p.id]?.id && raw[p.id]?.viewToken) shares[p.id] = { ...raw[p.id], suggestToken: raw[p.id].suggestToken ?? null }
+        // Suggest-mode drafts survive reloads; a suggest-link tab is always in suggest mode.
+        const drafts: Record<Id, Project> = {}
+        for (const p of projects) {
+          const rawDraft = localStorage.getItem(LS_DRAFT(p.id))
+          if (rawDraft) {
+            try { drafts[p.id] = normalizeProject(JSON.parse(rawDraft)) } catch { /* ignore a broken draft */ }
+          }
+          if (!drafts[p.id] && shares[p.id]?.role === 'suggest') drafts[p.id] = structuredClone(p)
+        }
+        return { projects, activeId, prefs: idx.prefs ?? {}, shares, drafts, fresh: false }
       }
     }
   } catch { /* fall through */ }
   const p = blankProject('Untitled')
-  return { projects: [p], activeId: p.id, prefs: {}, shares: {}, fresh: true }
+  return { projects: [p], activeId: p.id, prefs: {}, shares: {}, drafts: {}, fresh: true }
 }
 
 const init = loadInitial()
 
-/** Editing is blocked in viewer mode and on tabs joined through a view link. */
+/** Editing is blocked in viewer mode and on tabs joined through a view link (suggesters edit a draft). */
 function canEdit(s: Store, projectId: Id): boolean {
   if (s.ui.readOnly) return false
   const share = s.shares[projectId]
-  return !share || share.role === 'edit'
+  return !share || share.role !== 'view'
+}
+
+/** Rebase a draft onto a new version of the document: same changes, new base. */
+function rebaseDraft(oldBase: Project, newBase: Project, draft: Project): Project {
+  const changes = diffToChanges(oldBase, draft)
+  const next = structuredClone(newBase)
+  applyChanges(next, changes)
+  next.camera = draft.camera
+  next.filters = draft.filters
+  next.activeViewId = draft.activeViewId
+  repairFolders(next)
+  refreshSectionDepths(next)
+  repairSchema(next)
+  return next
+}
+
+function withDraft(s: Store, projectId: Id, draft: Project | null): Record<Id, Project> {
+  const drafts = { ...s.drafts }
+  if (draft) drafts[projectId] = draft
+  else delete drafts[projectId]
+  return drafts
 }
 
 export const useStore = create<Store>((set, get) => ({
@@ -375,6 +426,7 @@ export const useStore = create<Store>((set, get) => ({
   shares: init.shares,
   sync: {},
   proposals: {},
+  drafts: init.drafts,
   viewer: false,
   ui: {
     selection: [],
@@ -412,49 +464,70 @@ export const useStore = create<Store>((set, get) => ({
   select: ids => set(s => ({ ui: { ...s.ui, selection: ids, pickRef: null, highlightId: null } })),
   active: () => {
     const s = get()
-    return s.projects.find(p => p.id === s.activeId) ?? s.projects[0]
+    return s.drafts[s.activeId] ?? s.projects.find(p => p.id === s.activeId) ?? s.projects[0]
   },
 
-  mutate: recipe => {
+  mutate: (recipe, meta) => {
     const s = get()
     const cur = s.projects.find(p => p.id === s.activeId)
     if (!cur || !canEdit(s, cur.id)) return
-    const draft = structuredClone(cur)
-    recipe(draft)
-    repairFolders(draft)
-    refreshSectionDepths(draft)
-    repairSchema(draft)
-    const fwd = diffProject(cur, draft)
+    const base = s.drafts[cur.id] ?? cur
+    const next = structuredClone(base)
+    recipe(next)
+    repairFolders(next)
+    refreshSectionDepths(next)
+    repairSchema(next)
+    const fwd = diffProject(base, next)
     if (fwd) {
-      const inv = diffProject(draft, cur)!
-      const h = hist(cur.id)
+      const inv = diffProject(next, base)!
+      const h = hist(s.drafts[cur.id] ? `d:${cur.id}` : cur.id)
       h.past.push({ fwd, inv })
       if (h.past.length > 100) h.past.shift()
       h.future = []
     }
-    set({ projects: s.projects.map(p => (p.id === cur.id ? draft : p)) })
+    if (s.drafts[cur.id]) {
+      // Suggest mode: the draft changes, the document does not.
+      set({ drafts: withDraft(s, cur.id, next) })
+      persistSoon(get)
+      return
+    }
+    set({ projects: s.projects.map(p => (p.id === cur.id ? next : p)) })
     persistSoon(get)
-    if (fwd) syncHooks.onLocalPatch?.(cur.id, fwd)
+    if (fwd) {
+      syncHooks.onLocalPatch?.(cur.id, fwd)
+      syncHooks.onHistory?.(cur.id, diffToChanges(cur, next), meta?.source ?? 'edit')
+    }
   },
 
   tweak: recipe => {
     const s = get()
     const cur = s.projects.find(p => p.id === s.activeId)
     if (!cur) return
-    const draft = structuredClone(cur)
-    recipe(draft)
-    refreshSectionDepths(draft)
+    const base = s.drafts[cur.id] ?? cur
+    const next = structuredClone(base)
+    recipe(next)
+    refreshSectionDepths(next)
     // Only synced fields (settings, name…) travel; camera/filters stay per user.
-    const fwd = diffProject(cur, draft)
+    const fwd = diffProject(base, next)
     if (fwd && !canEdit(s, cur.id)) return
-    set({ projects: s.projects.map(p => (p.id === cur.id ? draft : p)) })
+    if (s.drafts[cur.id]) {
+      set({ drafts: withDraft(s, cur.id, next) })
+      persistSoon(get)
+      return
+    }
+    set({ projects: s.projects.map(p => (p.id === cur.id ? next : p)) })
     persistSoon(get)
-    if (fwd) syncHooks.onLocalPatch?.(cur.id, fwd)
+    if (fwd) {
+      syncHooks.onLocalPatch?.(cur.id, fwd)
+      syncHooks.onHistory?.(cur.id, diffToChanges(cur, next), 'edit')
+    }
   },
 
   setCamera: cam => {
     const s = get()
-    set({ projects: s.projects.map(p => (p.id === s.activeId ? { ...p, camera: cam } : p)) })
+    const draft = s.drafts[s.activeId]
+    if (draft) set({ drafts: withDraft(s, s.activeId, { ...draft, camera: cam }) })
+    else set({ projects: s.projects.map(p => (p.id === s.activeId ? { ...p, camera: cam } : p)) })
     persistSoon(get)
   },
 
@@ -462,34 +535,50 @@ export const useStore = create<Store>((set, get) => ({
     const s = get()
     const cur = s.projects.find(p => p.id === s.activeId)
     if (!cur || !canEdit(s, cur.id)) return
-    const h = hist(cur.id)
+    const draft = s.drafts[cur.id]
+    const h = hist(draft ? `d:${cur.id}` : cur.id)
     const entry = h.past.pop()
     if (!entry) return
     h.future.push(entry)
-    const draft = structuredClone(cur)
-    applyPatch(draft, entry.inv)
-    refreshSectionDepths(draft)
-    repairSchema(draft)
-    set({ projects: s.projects.map(p => (p.id === cur.id ? draft : p)), ui: { ...s.ui, selection: [] } })
+    const base = draft ?? cur
+    const next = structuredClone(base)
+    applyPatch(next, entry.inv)
+    refreshSectionDepths(next)
+    repairSchema(next)
+    if (draft) {
+      set({ drafts: withDraft(s, cur.id, next), ui: { ...s.ui, selection: [] } })
+      persistSoon(get)
+      return
+    }
+    set({ projects: s.projects.map(p => (p.id === cur.id ? next : p)), ui: { ...s.ui, selection: [] } })
     persistSoon(get)
     syncHooks.onLocalPatch?.(cur.id, entry.inv)
+    syncHooks.onHistory?.(cur.id, diffToChanges(cur, next), 'undo')
   },
 
   redo: () => {
     const s = get()
     const cur = s.projects.find(p => p.id === s.activeId)
     if (!cur || !canEdit(s, cur.id)) return
-    const h = hist(cur.id)
+    const draft = s.drafts[cur.id]
+    const h = hist(draft ? `d:${cur.id}` : cur.id)
     const entry = h.future.pop()
     if (!entry) return
     h.past.push(entry)
-    const draft = structuredClone(cur)
-    applyPatch(draft, entry.fwd)
-    refreshSectionDepths(draft)
-    repairSchema(draft)
-    set({ projects: s.projects.map(p => (p.id === cur.id ? draft : p)), ui: { ...s.ui, selection: [] } })
+    const base = draft ?? cur
+    const next = structuredClone(base)
+    applyPatch(next, entry.fwd)
+    refreshSectionDepths(next)
+    repairSchema(next)
+    if (draft) {
+      set({ drafts: withDraft(s, cur.id, next), ui: { ...s.ui, selection: [] } })
+      persistSoon(get)
+      return
+    }
+    set({ projects: s.projects.map(p => (p.id === cur.id ? next : p)), ui: { ...s.ui, selection: [] } })
     persistSoon(get)
     syncHooks.onLocalPatch?.(cur.id, entry.fwd)
+    syncHooks.onHistory?.(cur.id, diffToChanges(cur, next), 'redo')
   },
 
   addProject: p => {
@@ -501,7 +590,7 @@ export const useStore = create<Store>((set, get) => ({
   closeProject: id => {
     const s = get()
     if (s.projects.length <= 1) return
-    try { localStorage.removeItem(LS_PROJ(id)); localStorage.removeItem(LS_SNAP(id)) } catch { /* ok */ }
+    try { localStorage.removeItem(LS_PROJ(id)); localStorage.removeItem(LS_SNAP(id)); localStorage.removeItem(LS_DRAFT(id)) } catch { /* ok */ }
     syncHooks.onClose?.(id)
     const projects = s.projects.filter(p => p.id !== id)
     const shares = { ...s.shares }
@@ -510,8 +599,11 @@ export const useStore = create<Store>((set, get) => ({
     delete sync[id]
     const proposals = { ...s.proposals }
     delete proposals[id]
+    const drafts = { ...s.drafts }
+    delete drafts[id]
     delete histories[id]
-    set({ projects, shares, sync, proposals, activeId: s.activeId === id ? projects[0].id : s.activeId, ui: { ...s.ui, selection: [] } })
+    delete histories[`d:${id}`]
+    set({ projects, shares, sync, proposals, drafts, activeId: s.activeId === id ? projects[0].id : s.activeId, ui: { ...s.ui, selection: [] } })
     persistSoon(get)
   },
 
@@ -520,9 +612,15 @@ export const useStore = create<Store>((set, get) => ({
   renameProject: (id, name) => {
     const s = get()
     if (!canEdit(s, id)) return
+    const draft = s.drafts[id]
+    if (draft) { set({ drafts: withDraft(s, id, { ...draft, name }) }); persistSoon(get); return }
+    const cur = s.projects.find(p => p.id === id)
     set({ projects: s.projects.map(p => (p.id === id ? { ...p, name } : p)) })
     persistSoon(get)
     syncHooks.onLocalPatch?.(id, { set: { name } })
+    if (cur && cur.name !== name) {
+      syncHooks.onHistory?.(id, [{ id: uid(), col: 'project', kind: 'set', entityId: 'name', before: cur.name, after: name }], 'edit')
+    }
   },
 
   importProject: json => {
@@ -574,12 +672,16 @@ export const useStore = create<Store>((set, get) => ({
     const s = get()
     const cur = s.projects.find(p => p.id === projectId)
     if (!cur) return
-    const draft = structuredClone(cur)
-    applyPatch(draft, patch)
-    repairFolders(draft)
-    refreshSectionDepths(draft)
-    repairSchema(draft)
-    set({ projects: s.projects.map(p => (p.id === projectId ? draft : p)) })
+    const next = structuredClone(cur)
+    applyPatch(next, patch)
+    repairFolders(next)
+    refreshSectionDepths(next)
+    repairSchema(next)
+    const draft = s.drafts[projectId]
+    set({
+      projects: s.projects.map(p => (p.id === projectId ? next : p)),
+      drafts: draft ? withDraft(s, projectId, rebaseDraft(cur, next, draft)) : s.drafts,
+    })
     persistSoon(get)
   },
 
@@ -596,10 +698,54 @@ export const useStore = create<Store>((set, get) => ({
     refreshSectionDepths(next)
     repairSchema(next)
     const share = s.shares[projectId]
+    const draft = s.drafts[projectId]
     set({
       projects: s.projects.map(p => (p.id === projectId ? next : p)),
       shares: share ? { ...s.shares, [projectId]: { ...share, version } } : s.shares,
+      drafts: draft ? withDraft(s, projectId, rebaseDraft(cur, next, draft)) : s.drafts,
     })
+    persistSoon(get)
+  },
+
+  // ---------------------------------------------------------------- suggest mode
+
+  enterSuggest: projectId => {
+    const s = get()
+    if (s.drafts[projectId]) return
+    const cur = s.projects.find(p => p.id === projectId)
+    if (!cur) return
+    set({ drafts: withDraft(s, projectId, structuredClone(cur)), ui: { ...s.ui, selection: [] } })
+    persistSoon(get)
+  },
+
+  exitSuggest: projectId => {
+    const s = get()
+    const draft = s.drafts[projectId]
+    if (!draft) return
+    delete histories[`d:${projectId}`]
+    set({
+      projects: s.projects.map(p => (p.id === projectId ? { ...p, camera: draft.camera, filters: draft.filters, activeViewId: draft.activeViewId } : p)),
+      drafts: withDraft(s, projectId, null),
+      ui: { ...s.ui, selection: [] },
+    })
+    persistSoon(get)
+  },
+
+  resetDraft: (projectId, keep) => {
+    const s = get()
+    const cur = s.projects.find(p => p.id === projectId)
+    const draft = s.drafts[projectId]
+    if (!cur || !draft) return
+    const next = structuredClone(cur)
+    applyChanges(next, keep)
+    next.camera = draft.camera
+    next.filters = draft.filters
+    next.activeViewId = draft.activeViewId
+    repairFolders(next)
+    refreshSectionDepths(next)
+    repairSchema(next)
+    delete histories[`d:${projectId}`]
+    set({ drafts: withDraft(s, projectId, next), ui: { ...s.ui, selection: [] } })
     persistSoon(get)
   },
 
@@ -623,8 +769,19 @@ export const useStore = create<Store>((set, get) => ({
   },
 }))
 
+/** The project as the tab sees it: the suggest-mode draft when there is one. */
 export function useActiveProject(): Project {
+  return useStore(s => s.drafts[s.activeId] ?? s.projects.find(p => p.id === s.activeId) ?? s.projects[0])
+}
+
+/** The saved document (never the draft). */
+export function useActiveBase(): Project {
   return useStore(s => s.projects.find(p => p.id === s.activeId) ?? s.projects[0])
+}
+
+/** True while the active tab collects edits into a draft instead of the document. */
+export function useSuggesting(): boolean {
+  return useStore(s => !!s.drafts[s.activeId])
 }
 
 export function useActiveShare(): ShareInfo | undefined {

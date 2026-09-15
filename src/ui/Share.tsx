@@ -4,6 +4,8 @@ import { useActiveProject, useActiveShare, useActiveSync, useStore, type SyncSta
 import { getIdentity, setIdentity } from '../sync/client'
 import { refreshPresence, regenerateLink, shareLink, shareProject, stopSharing } from '../sync/share'
 
+const ROLE_LABEL: Record<string, string> = { edit: 'can edit', suggest: 'can suggest', view: 'viewing' }
+
 const STATUS_LABEL: Record<SyncStatus, string> = {
   connecting: 'Connecting…',
   live: 'Live',
@@ -21,7 +23,7 @@ export function TabSyncIcon({ projectId }: { projectId: string }) {
   const sync = useStore(s => s.sync[projectId])
   if (!share) return null
   const status = sync?.status ?? 'connecting'
-  const title = `${share.owner ? 'Shared by you' : share.role === 'edit' ? 'Shared with you (can edit)' : 'Shared with you (view only)'} · ${STATUS_LABEL[status]}${sync?.pending ? ' · saving…' : ''}`
+  const title = `${share.owner ? 'Shared by you' : share.role === 'edit' ? 'Shared with you (can edit)' : share.role === 'suggest' ? 'Shared with you (can suggest)' : 'Shared with you (view only)'} · ${STATUS_LABEL[status]}${sync?.pending ? ' · saving…' : ''}`
   const Icon = status === 'offline' || status === 'gone' ? CloudOff : Cloud
   return (
     <span className={`tab-sync ${status} ${sync?.pending ? 'pending' : ''}`} title={title}>
@@ -37,7 +39,7 @@ export function PresenceBar() {
   if (!peers.length) return null
   const shown = peers.slice(0, 6)
   return (
-    <div className="presence" title={peers.map(p => `${p.name} · ${p.role === 'edit' ? 'can edit' : 'viewing'}`).join('\n')}>
+    <div className="presence" title={peers.map(p => `${p.name} · ${ROLE_LABEL[p.role]}`).join('\n')}>
       {shown.map(p => (
         <span key={p.key} className={`avatar ${p.role}`} style={{ background: p.color }}>{initials(p.name)}</span>
       ))}
@@ -109,8 +111,8 @@ export function ShareModal() {
         {!share ? (
           <>
             <p className="muted">
-              Sharing publishes this timeline online and gives you two links: one that lets people edit together in
-              real time, and one that only shows the timeline.
+              Sharing publishes this timeline online and gives you three links: one that lets people edit together in
+              real time, one that only lets them suggest changes for you to review, and one that only shows the timeline.
             </p>
             <p className="muted small">
               Pasted images are moved to online storage. Your camera, filters and selection stay private to you.
@@ -127,7 +129,7 @@ export function ShareModal() {
               <span className="status-dot" />
               <span>{STATUS_LABEL[status]}{sync?.pending ? ' · saving…' : ''}</span>
               <span className="grow" />
-              <span className="muted small">{share.owner ? 'You own this timeline' : share.role === 'edit' ? 'You can edit' : 'View only'}</span>
+              <span className="muted small">{share.owner ? 'You own this timeline' : share.role === 'edit' ? 'You can edit' : share.role === 'suggest' ? 'You can suggest changes' : 'View only'}</span>
             </div>
             {status === 'polling' && (
               <p className="muted small">
@@ -142,6 +144,15 @@ export function ShareModal() {
                 onRegenerate={share.owner ? () => {
                   if (window.confirm('Regenerate the edit link? Everyone using the old one loses edit access.'))
                     run(() => regenerateLink(proj.id, 'edit'))
+                } : undefined}
+              />
+            )}
+            {share.suggestToken && (
+              <CopyField
+                label="Suggest link" value={shareLink(share.suggestToken)} hint="can propose changes for you to review, not edit"
+                onRegenerate={share.owner ? () => {
+                  if (window.confirm('Regenerate the suggest link? Everyone using the old one loses access.'))
+                    run(() => regenerateLink(proj.id, 'suggest'))
                 } : undefined}
               />
             )}
@@ -175,7 +186,7 @@ export function ShareModal() {
                     <span key={p.key} className="peer">
                       <span className="avatar" style={{ background: p.color }}>{initials(p.name)}</span>
                       {p.name}{p.self ? ' (you)' : ''}
-                      <span className="muted small"> · {p.role === 'edit' ? 'can edit' : 'viewing'}</span>
+                      <span className="muted small"> · {ROLE_LABEL[p.role]}</span>
                     </span>
                   ))}
                 </div>

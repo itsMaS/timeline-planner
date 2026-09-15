@@ -4,6 +4,7 @@ import { normalizeProject, syncHooks, useStore, type Peer, type ShareInfo, type 
 import type { Project } from '../model/types'
 import { uid } from '../model/util'
 import { CLIENT_ID, ensureSession, getIdentity, rpc, supabase } from './client'
+import { flushHistory, onHistory } from './history'
 import { refreshProposals } from './proposals'
 
 /**
@@ -55,13 +56,16 @@ let booted = false
 
 export function bootSync(opts: { startExisting: boolean }) {
   syncHooks.onLocalPatch = onLocalPatch
+  syncHooks.onHistory = onHistory
   syncHooks.onClose = stopSync
   if (opts.startExisting) for (const id of Object.keys(store().shares)) void startSync(id)
   if (booted) return
   booted = true
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) for (const s of sessions.values()) void pull(s)
+    else flushHistory()
   })
+  window.addEventListener('pagehide', () => flushHistory())
   window.addEventListener('online', () => {
     for (const s of sessions.values()) { void pull(s); if (s.unsaved.length) scheduleSave(s, 0) }
   })
@@ -108,21 +112,24 @@ function handleGone(s: Session) {
 
 interface OpenResult {
   id: string; name: string; doc: Project; version: number
-  editToken: string | null; viewToken: string; role: ShareRole; owner: boolean
+  editToken: string | null; suggestToken: string | null; viewToken: string; role: ShareRole; owner: boolean
 }
+
+/** The strongest token this tab holds: what every read RPC is called with. */
+const tokenOf = (share: ShareInfo) => share.editToken ?? share.suggestToken ?? share.viewToken
 type PullResult = { gone: true } | { version: number; doc?: Project; name?: string }
 
 async function pull(s: Session, initial = false): Promise<boolean> {
   const share = shareOf(s.projectId)
   if (!share || s.stopped) return false
-  const token = share.editToken ?? share.viewToken
+  const token = tokenOf(share)
   try {
     if (initial) {
       const r = await rpc<OpenResult | null>('share_open', { p_token: token })
       if (s.stopped) return false
       if (!r) { handleGone(s); return false }
       store().setShare(s.projectId, {
-        id: r.id, role: r.role, editToken: r.editToken, viewToken: r.viewToken, version: share.version,
+        id: r.id, role: r.role, editToken: r.editToken, suggestToken: r.suggestToken, viewToken: r.viewToken, version: share.version,
         // Keep a locally known ownership (we created it) even if the auth session changed.
         owner: share.owner || r.owner,
       })
@@ -218,7 +225,7 @@ export function refreshPresence() {
 function onLocalPatch(projectId: string, patch: Patch) {
   const s = sessions.get(projectId)
   const share = shareOf(projectId)
-  if (!s || !share || share.role !== 'edit') return
+  if (!s || !share || share.role !== 'edit' || !share.editToken) return
   s.unsaved.push(patch)
   setSync(projectId, { pending: true })
   if (s.live && s.channel) {
@@ -311,7 +318,7 @@ async function migrateImages(projectId: string, timelineId: string): Promise<num
 // ---------------------------------------------------------------- share management
 
 interface CreateResult {
-  id: string; name: string; version: number; editToken: string; viewToken: string; role: 'edit'; owner: true
+  id: string; name: string; version: number; editToken: string; suggestToken: string; viewToken: string; role: 'edit'; owner: true
 }
 
 /** Publish a local tab as a shared timeline (this browser becomes its owner). */
@@ -320,7 +327,7 @@ export async function shareProject(projectId: string): Promise<ShareInfo> {
   const proj = projectOf(projectId)
   if (!proj) throw new Error('Project not found')
   const r = await rpc<CreateResult>('share_create', { p_name: proj.name, p_doc: proj })
-  const info: ShareInfo = { id: r.id, role: 'edit', editToken: r.editToken, viewToken: r.viewToken, version: r.version, owner: true }
+  const info: ShareInfo = { id: r.id, role: 'edit', editToken: r.editToken, suggestToken: r.suggestToken, viewToken: r.viewToken, version: r.version, owner: true }
   store().setShare(projectId, info)
   await startSync(projectId)
   const failed = await migrateImages(projectId, r.id)
@@ -336,7 +343,7 @@ export async function openShared(token: string): Promise<{ project: Project; inf
   const project = normalizeProject(structuredClone(r.doc))
   project.id = r.id
   project.name = r.name
-  const info: ShareInfo = { id: r.id, role: r.role, editToken: r.editToken, viewToken: r.viewToken, version: r.version, owner: r.owner }
+  const info: ShareInfo = { id: r.id, role: r.role, editToken: r.editToken, suggestToken: r.suggestToken, viewToken: r.viewToken, version: r.version, owner: r.owner }
   return { project, info }
 }
 
@@ -347,7 +354,7 @@ export async function regenerateLink(projectId: string, which: ShareRole): Promi
   if (!r) throw new Error('Only the owner can regenerate links')
   const cur = shareOf(projectId)
   if (!cur) return
-  store().setShare(projectId, which === 'edit' ? { ...cur, editToken: r.token } : { ...cur, viewToken: r.token })
+  store().setShare(projectId, which === 'edit' ? { ...cur, editToken: r.token } : which === 'suggest' ? { ...cur, suggestToken: r.token } : { ...cur, viewToken: r.token })
 }
 
 /** Owner: delete the remote timeline. Everyone else: just disconnect this tab. */

@@ -830,3 +830,34 @@ body.col-resizing .inspector { animation: none; }
   fill: none; stroke: #f59e0b; stroke-width: 2; stroke-dasharray: 5 4; opacity: .9;
   transform-box: fill-box; transform-origin: center; animation: spin 6s linear infinite;
 }
+
+/* ---------------------------------------------------------------- suggest mode */
+.suggest-bar {
+  display: flex; align-items: center; gap: 8px; padding: 5px 12px; font-size: 12px; flex-wrap: wrap;
+  background: color-mix(in srgb, #f59e0b 12%, var(--panel)); border-bottom: 1px solid color-mix(in srgb, #f59e0b 35%, var(--line-soft));
+  color: var(--text);
+}
+.suggest-bar > svg { color: #f59e0b; }
+.suggest-bar .muted { font-size: 11.5px; }
+.primary-btn.small { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 4px 10px; }
+.ghost-btn.on.suggest { color: #f59e0b; background: color-mix(in srgb, #f59e0b 16%, transparent); }
+.modal.suggest { width: 560px; }
+.modal.suggest textarea.input { resize: vertical; }
+.suggest-changes { max-height: 46vh; overflow-y: auto; padding-right: 2px; }
+.suggest-changes .prop-change { margin: 4px 0; }
+
+/* ---------------------------------------------------------------- history */
+.field.history > label { display: flex; align-items: center; gap: 5px; }
+.hist-list { display: flex; flex-direction: column; gap: 3px; margin-top: 4px; }
+.hist-entry { border: 1px solid var(--line-soft); border-radius: 8px; overflow: hidden; }
+.hist-entry.open { border-color: color-mix(in srgb, var(--accent) 45%, var(--line-soft)); }
+.hist-head {
+  display: flex; align-items: center; gap: 6px; width: 100%; padding: 5px 8px; font-size: 12px; text-align: left;
+  color: var(--text); flex-wrap: wrap; cursor: pointer; border-radius: 0;
+}
+.hist-head:hover { background: var(--panel2); }
+.hist-head b { font-weight: 600; }
+.hist-head .badge { font-size: 10px; padding: 1px 6px; }
+.hist-when { margin-left: auto; font-size: 11px; white-space: nowrap; }
+.hist-body { padding: 4px 8px 8px; border-top: 1px solid var(--line-soft); font-size: 12px; }
+.hist-body .ghost-btn.add { margin-top: 6px; }

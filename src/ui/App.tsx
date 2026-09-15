@@ -1,11 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react'
 import {
-  Download, Eye, EyeOff, FileText, GitBranch, Grid3x3, HelpCircle, Link, Magnet, Maximize2, Minus, Moon, Plus,
+  Download, Eye, EyeOff, FileText, GitBranch, Grid3x3, HelpCircle, Lightbulb, Link, Magnet, Maximize2, Minus, Moon, Plus,
   Redo2, Search, Settings2, Share2, Sun, TableProperties, Undo2, Upload, Volume2, VolumeX, X, ZoomIn,
 } from 'lucide-react'
 import { iconByName } from '../model/icons'
 import { itemMatchesFilters } from '../model/layout'
-import { blankProject, emptyFilters, useActiveProject, useActiveShare, useStore } from '../model/store'
+import { blankProject, emptyFilters, useActiveProject, useActiveShare, useStore, useSuggesting } from '../model/store'
 import { TEMPLATES } from '../model/templates'
 import type { TimelineSettings, UnitPreset } from '../model/types'
 import { uid } from '../model/util'
@@ -21,6 +21,7 @@ import { PanelDivider } from './Panels'
 import { FieldEditor, LevelEditor, ProcessorEditor } from './SchemaEditors'
 import { PresenceBar, ShareModal, TabSyncIcon } from './Share'
 import { Sidebar } from './Sidebar'
+import { SuggestBar, SuggestModal, exitSuggestSafely } from './Suggest'
 import { TypeEditor } from './TypeEditor'
 import { nav } from './nav'
 
@@ -40,7 +41,7 @@ export function App() {
       const t = e.target as HTMLElement
       const typing = t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable
       const s = store.getState()
-      const p = s.projects.find(x => x.id === s.activeId)!
+      const p = s.active()
       const mod = e.ctrlKey || e.metaKey
 
       if (e.key === 'Escape') {
@@ -179,6 +180,7 @@ export function App() {
   return (
     <div className="app">
       <Toolbar applyView={applyView} />
+      <SuggestBar />
       <div className="main">
         <Sidebar />
         {ui.sidebarOpen && <PanelDivider side="left" />}
@@ -195,6 +197,7 @@ export function App() {
       {ui.overlay === 'settings' && <SettingsModal />}
       {ui.overlay === 'share' && <ShareModal />}
       <ConfirmDialog />
+      {ui.overlay === 'suggest' && <SuggestModal />}
       <ToastView />
       <DragGhost />
     </div>
@@ -221,6 +224,8 @@ function Toolbar({ applyView }: { applyView: (id: string | null) => void }) {
   const redo = useStore(s => s.redo)
   const mutate = useStore(s => s.mutate)
   const tweak = useStore(s => s.tweak)
+  const suggesting = useSuggesting()
+  const enterSuggest = useStore(s => s.enterSuggest)
   const [exportOpen, setExportOpen] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
   // Selected sections narrow the document export to just those sub-trees.
@@ -333,6 +338,13 @@ function Toolbar({ applyView }: { applyView: (id: string | null) => void }) {
             onClick={() => setUI({ theme: ui.theme === 'dark' ? 'light' : 'dark' })}>
             {ui.theme === 'dark' ? <Sun width={15} height={15} /> : <Moon width={15} height={15} />}
           </button>
+          {share?.role === 'edit' && (
+            <button
+              className={`ghost-btn ${suggesting ? 'on suggest' : ''}`}
+              title={suggesting ? 'Suggest mode is on — exit to edit directly' : 'Suggest mode — collect edits into a suggestion for review instead of changing the timeline'}
+              onClick={() => { if (suggesting) exitSuggestSafely(proj.id); else enterSuggest(proj.id) }}
+            ><Lightbulb width={15} height={15} /></button>
+          )}
           <button className={`ghost-btn ${share ? 'on' : ''}`} title={share ? 'Sharing — links, people, status' : 'Share this timeline…'}
             onClick={() => setUI({ overlay: 'share' })}>
             <Share2 width={15} height={15} />
