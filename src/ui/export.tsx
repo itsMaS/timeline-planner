@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { ListChecks, Shuffle } from 'lucide-react'
 import { iconByName } from '../model/icons'
-import { branchPathD, contentExtent, displayLabel, layoutTimeline, rowY, spineD, spineYFor, terminalEndX, typeOf } from '../model/layout'
+import { branchPathD, contentExtent, layoutTimeline, rowY, spineD, spineYFor, splitLabel, terminalEndX, typeOf } from '../model/layout'
 import type { Camera, Project } from '../model/types'
 import { clamp, download, formatUnit, rulerStepFor, sectionHue, unitSuffix } from '../model/util'
 
@@ -10,8 +10,8 @@ const DARK: Colors = { bg: '#111318', text: '#e6e8ee', line: '#3a3f4d', muted: '
 const LIGHT: Colors = { bg: '#f6f7f9', text: '#23262e', line: '#c3c8d4', muted: '#6b7180' }
 
 /** Pure, style-free SVG scene used for PNG/SVG export. */
-function ExportScene(props: { proj: Project; cam: Camera; w: number; h: number; density: number; theme: 'dark' | 'light' }) {
-  const { proj, cam, w, h, density, theme } = props
+function ExportScene(props: { proj: Project; cam: Camera; w: number; h: number; density: number; theme: 'dark' | 'light'; showFields: boolean }) {
+  const { proj, cam, w, h, density, theme, showFields } = props
   const C = theme === 'dark' ? DARK : LIGHT
   const st = proj.settings
   const spineY = spineYFor(proj, h)
@@ -24,7 +24,7 @@ function ExportScene(props: { proj: Project; cam: Camera; w: number; h: number; 
   const maxDepth = proj.sections.length ? Math.max(...proj.sections.map(s => s.depth)) : -1
   const headerH = maxDepth >= 0 ? barTopFor(maxDepth + 1) : 0
   const maxUpRows = Math.max(1, Math.floor((spineY - headerH - 76) / 46) + 1)
-  const layout = layoutTimeline(proj, cam, w, proj.filters, density, false, new Set(), new Set(), st.placement, maxUpRows)
+  const layout = layoutTimeline(proj, cam, w, proj.filters, density, false, new Set(), new Set(), st.placement, maxUpRows, showFields)
   const toX = (pos: number) => (pos - cam.x) * cam.s
   const font = 'ui-sans-serif, system-ui, sans-serif'
 
@@ -171,9 +171,15 @@ function ExportScene(props: { proj: Project; cam: Camera; w: number; h: number; 
               )}
               <circle r={14 * z} fill={C.bg} stroke={t?.color} strokeWidth={1.5} />
               <Icon x={-8 * z} y={-8 * z} width={16 * z} height={16 * z} color={t?.color} strokeWidth={2} />
-              {pl.labelShown && (
-                <text x={20 * z} y={4 * z} fontFamily={font} fontSize={11.5 * clamp(z, 0.8, 1.35)} fill={C.text}>{displayLabel(pl.item.title)}</text>
-              )}
+              {pl.labelShown && (() => {
+                const label = splitLabel(proj, pl.item, showFields)
+                return (
+                  <text x={20 * z} y={4 * z} fontFamily={font} fontSize={11.5 * clamp(z, 0.8, 1.35)} fill={C.text}>
+                    {label.title}
+                    {label.fields && <tspan fill={C.muted} fontSize={10.5 * clamp(z, 0.8, 1.35)}>{` · ${label.fields}`}</tspan>}
+                  </text>
+                )
+              })()}
             </g>
           )
         })}
@@ -247,9 +253,9 @@ export function exportJSON(proj: Project) {
     new Blob([JSON.stringify(proj, null, 2)], { type: 'application/json' }))
 }
 
-export function exportPNG(proj: Project, w: number, h: number, density: number, theme: 'dark' | 'light') {
+export function exportPNG(proj: Project, w: number, h: number, density: number, theme: 'dark' | 'light', showFields = true) {
   const markup = renderToStaticMarkup(
-    <ExportScene proj={proj} cam={proj.camera} w={w} h={h} density={density} theme={theme} />,
+    <ExportScene proj={proj} cam={proj.camera} w={w} h={h} density={density} theme={theme} showFields={showFields} />,
   )
   const svgBlob = new Blob([markup], { type: 'image/svg+xml' })
   const url = URL.createObjectURL(svgBlob)
@@ -270,14 +276,14 @@ export function exportPNG(proj: Project, w: number, h: number, density: number, 
   img.src = url
 }
 
-export function exportFullSVG(proj: Project, density: number, theme: 'dark' | 'light') {
+export function exportFullSVG(proj: Project, density: number, theme: 'dark' | 'light', showFields = true) {
   const { min, max } = contentExtent(proj)
   const span = max - min
   const s = clamp(6000 / span, 12, 80)
   const w = Math.ceil(span * s)
   const h = 760
   const markup = renderToStaticMarkup(
-    <ExportScene proj={proj} cam={{ x: min, s }} w={w} h={h} density={1} theme={theme} />,
+    <ExportScene proj={proj} cam={{ x: min, s }} w={w} h={h} density={1} theme={theme} showFields={showFields} />,
   )
   download(`${proj.name.replace(/\s+/g, '-').toLowerCase()}.svg`,
     new Blob([markup], { type: 'image/svg+xml' }))

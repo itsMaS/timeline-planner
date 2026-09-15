@@ -95,16 +95,49 @@ export function itemMatchesFilters(p: Project, it: Item, f: Filters): boolean {
 }
 
 const LABEL_MAX = 200
+/** Labels get more room when custom fields ride along after the title. */
+const LABEL_MAX_FIELDS = 360
+const FIELD_SEP = ' · '
 
-export function labelWidth(title: string): number {
-  return Math.min(title.length * 6.6, LABEL_MAX)
+export function labelWidth(title: string, max = LABEL_MAX): number {
+  return Math.min(title.length * 6.6, max)
 }
 
 /** Title truncated to the width labelWidth actually reserves, so long labels
  *  can't overflow their slot and run into neighboring items. */
-export function displayLabel(title: string): string {
-  if (title.length * 6.6 <= LABEL_MAX) return title
-  return title.slice(0, Math.floor(LABEL_MAX / 6.6) - 1) + '…'
+export function displayLabel(title: string, max = LABEL_MAX): string {
+  if (title.length * 6.6 <= max) return title
+  return title.slice(0, Math.floor(max / 6.6) - 1) + '…'
+}
+
+/** "Name: value · Name: value" for every custom field the item has filled in. */
+export function itemFieldText(p: Project, it: Item): string {
+  const type = typeOf(p, it)
+  if (!type) return ''
+  return type.fields
+    .map(f => ({ f, v: (it.fieldValues[f.id] ?? '').trim() }))
+    .filter(x => x.v)
+    .map(x => `${x.f.name}: ${x.v}`)
+    .join(FIELD_SEP)
+}
+
+/** Full text an item's label occupies on the canvas (title, then fields when shown). */
+function itemLabel(p: Project, it: Item, showFields: boolean): { text: string; max: number } {
+  const title = it.title || '…'
+  const fields = showFields ? itemFieldText(p, it) : ''
+  return fields ? { text: title + FIELD_SEP + fields, max: LABEL_MAX_FIELDS } : { text: title, max: LABEL_MAX }
+}
+
+/**
+ * Label split into its title and (muted) fields part, truncated as a whole so
+ * it never exceeds the slot the layout reserved for it.
+ */
+export function splitLabel(p: Project, it: Item, showFields: boolean): { title: string; fields: string } {
+  const { text, max } = itemLabel(p, it, showFields)
+  const shown = displayLabel(text, max)
+  const title = it.title || '…'
+  if (!showFields || shown.length <= title.length + FIELD_SEP.length) return { title: shown, fields: '' }
+  return { title, fields: shown.slice(title.length + FIELD_SEP.length) }
 }
 
 const ICON_W = 30
@@ -184,6 +217,8 @@ export function layoutTimeline(
   placement: 'above' | 'both' = 'above',
   /** Hard cap on rows above the spine so items never reach the section header bars. */
   maxUpRows = Infinity,
+  /** Reserve label room for custom field values shown after the title. */
+  showFields = false,
 ): LayoutResult {
   const toX = (pos: number) => (pos - cam.x) * cam.s
   const margin = 220
@@ -286,7 +321,8 @@ export function layoutTimeline(
       const rowCap = pin ? maxRows + 4 : maxRows
       const iconW = ICON_W * size
       const tryPlace = (withLabel: boolean): PlacedItem | null => {
-        const lw = withLabel ? (labelWidth(it.title || '…') + 8) * size : 0
+        const lbl = itemLabel(p, it, showFields)
+        const lw = withLabel ? (labelWidth(lbl.text, lbl.max) + 8) * size : 0
         const w = Math.max(iconW + lw, spanW)
         const a = x - iconW / 2 - minGap / 2
         const b = x - iconW / 2 + w + minGap / 2

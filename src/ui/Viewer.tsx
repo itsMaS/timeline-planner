@@ -1,6 +1,6 @@
 import React, { useEffect } from 'react'
 import {
-  Eye, EyeOff, ExternalLink, FileText, Maximize2, Minus, Moon, PanelLeft, Search, Sun, X, ZoomIn,
+  Eye, EyeOff, ExternalLink, FileText, Maximize2, Minus, Moon, PanelLeft, Search, Sun, TableProperties, X, ZoomIn,
 } from 'lucide-react'
 import { itemMatchesFilters } from '../model/layout'
 import { useActiveProject, useActiveShare, useActiveSync, useStore } from '../model/store'
@@ -99,6 +99,8 @@ export function Viewer() {
             onClick={() => setUI({ ghostHidden: !ui.ghostHidden })}>
             {ui.ghostHidden ? <EyeOff width={15} height={15} /> : <Eye width={15} height={15} />}
           </button>
+          <button className={`ghost-btn ${ui.showFields ? 'on' : ''}`} title="Show custom field values next to item titles"
+            onClick={() => setUI({ showFields: !ui.showFields })}><TableProperties width={15} height={15} /></button>
           <span className="sep" />
           <button className="ghost-btn" title="Zoom out (-)" onClick={() => nav.current?.zoomBy(0.74)}><Minus width={15} height={15} /></button>
           <button className="ghost-btn" title="Zoom in (+)" onClick={() => nav.current?.zoomBy(1.35)}><ZoomIn width={15} height={15} /></button>

@@ -151,6 +151,8 @@ interface UIState {
   sidebarOpen: boolean
   /** Viewer mode: every structural edit is blocked. */
   readOnly: boolean
+  /** Show filled-in custom field values next to item titles on the canvas. */
+  showFields: boolean
 }
 
 interface Store {
@@ -218,6 +220,7 @@ function persistSoon(get: () => Store) {
         prefs: {
           ghostHidden: s.ui.ghostHidden, density: s.ui.density, theme: s.ui.theme,
           soundOn: s.ui.soundOn, animLevel: s.ui.animLevel, snap: s.ui.snap, magnet: s.ui.magnet, ripple: s.ui.ripple,
+          showFields: s.ui.showFields,
         },
       }))
       for (const p of s.projects) {
@@ -292,6 +295,7 @@ export const useStore = create<Store>((set, get) => ({
     toast: null,
     sidebarOpen: true,
     readOnly: false,
+    showFields: init.prefs.showFields ?? true,
   } as UIState,
 
   setUI: patch => { set(s => ({ ui: { ...s.ui, ...patch } })); persistSoon(get) },

@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import {
   Download, Eye, EyeOff, FileText, GitBranch, Grid3x3, HelpCircle, Link, Magnet, Maximize2, Minus, Moon, Plus,
-  Redo2, Search, Settings2, Share2, Sun, Undo2, Upload, Volume2, VolumeX, X, ZoomIn,
+  Redo2, Search, Settings2, Share2, Sun, TableProperties, Undo2, Upload, Volume2, VolumeX, X, ZoomIn,
 } from 'lucide-react'
 import { iconByName } from '../model/icons'
 import { itemMatchesFilters } from '../model/layout'
@@ -305,6 +305,8 @@ function Toolbar({ applyView }: { applyView: (id: string | null) => void }) {
             onClick={() => setUI({ ghostHidden: !ui.ghostHidden })}>
             {ui.ghostHidden ? <EyeOff width={15} height={15} /> : <Eye width={15} height={15} />}
           </button>
+          <button className={`ghost-btn ${ui.showFields ? 'on' : ''}`} title="Show custom field values next to item titles"
+            onClick={() => setUI({ showFields: !ui.showFields })}><TableProperties width={15} height={15} /></button>
           <button className={`ghost-btn ${ui.tool === 'branch' ? 'on' : ''}`} title="Branch tool (B) — drag along the line"
             onClick={() => setUI({ tool: ui.tool === 'branch' ? 'select' : 'branch' })}>
             <GitBranch width={15} height={15} />
@@ -336,10 +338,10 @@ function Toolbar({ applyView }: { applyView: (id: string | null) => void }) {
             {exportOpen && (
               <div className="menu" onPointerLeave={() => setExportOpen(false)}>
                 <button onClick={() => { exportJSON(proj); setExportOpen(false) }}><Download width={13} height={13} /> Project JSON</button>
-                <button onClick={() => { exportPNG(proj, window.innerWidth, window.innerHeight - 90, ui.density, ui.theme); setExportOpen(false) }}>
+                <button onClick={() => { exportPNG(proj, window.innerWidth, window.innerHeight - 90, ui.density, ui.theme, ui.showFields); setExportOpen(false) }}>
                   <Download width={13} height={13} /> PNG of current view
                 </button>
-                <button onClick={() => { exportFullSVG(proj, ui.density, ui.theme); setExportOpen(false) }}>
+                <button onClick={() => { exportFullSVG(proj, ui.density, ui.theme, ui.showFields); setExportOpen(false) }}>
                   <Download width={13} height={13} /> SVG of full timeline
                 </button>
                 <button onClick={() => { exportCSV(proj); setExportOpen(false) }}>

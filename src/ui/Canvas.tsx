@@ -5,7 +5,7 @@ import {
 } from 'lucide-react'
 import { iconByName } from '../model/icons'
 import {
-  BranchLayout, PATH_LIFT, PlacedItem, ROW_H, branchPathD, contentExtent, displayLabel, fitCamera, itemMatchesFilters,
+  BranchLayout, PATH_LIFT, PlacedItem, ROW_H, branchPathD, contentExtent, fitCamera, itemMatchesFilters, splitLabel,
   layoutTimeline, minZoomFor, refreshSectionDepths, rowY, spineD, spineYFor, terminalEndX, typeOf,
 } from '../model/layout'
 import { useActiveProject, useStore } from '../model/store'
@@ -213,8 +213,8 @@ export function CanvasView() {
   const maxUpRows = Math.max(1, Math.floor((spineY - headerH - 76) / ROW_H) + 1)
 
   const layout = useMemo(
-    () => layoutTimeline(effective, cam, size.w, proj.filters, ui.density, ui.ghostHidden, stickyRef.current, selection, st.placement, maxUpRows),
-    [effective, cam, size.w, proj.filters, ui.density, ui.ghostHidden, selection, st.placement, maxUpRows],
+    () => layoutTimeline(effective, cam, size.w, proj.filters, ui.density, ui.ghostHidden, stickyRef.current, selection, st.placement, maxUpRows, ui.showFields),
+    [effective, cam, size.w, proj.filters, ui.density, ui.ghostHidden, selection, st.placement, maxUpRows, ui.showFields],
   )
   useEffect(() => {
     stickyRef.current = new Set(layout.placed.map(pl => pl.item.id))
@@ -1609,6 +1609,7 @@ export function CanvasView() {
               pl={pl}
               proj={proj}
               selected={selection.has(pl.item.id)}
+              showFields={ui.showFields}
               scaleL={!ui.readOnly && groupScale?.firstId === pl.item.id}
               scaleR={!ui.readOnly && groupScale?.lastId === pl.item.id}
               anim={ui.animLevel !== 'off'}
@@ -1906,10 +1907,12 @@ function ItemG(props: {
   onHoverEnd: () => void
   startHandle: (side: 'L' | 'R', e: React.PointerEvent) => void
   startScale: (side: 'L' | 'R', e: React.PointerEvent) => void
+  showFields: boolean
 }) {
   const { pl, proj, selected, scaleL, scaleR } = props
   const type = typeOf(proj, pl.item)
   const Icon = iconByName(type?.icon ?? 'Circle')
+  const label = splitLabel(proj, pl.item, props.showFields)
   const color = type?.color ?? '#888'
   const z = pl.size || 1
   const barY = 3 + 14 * z
@@ -1965,7 +1968,8 @@ function ItemG(props: {
             x={20 * z} y={4 * z} className="node-label"
             style={{ fill: `color-mix(in srgb, ${color} 30%, var(--text))`, fontSize: 11.5 * clamp(z, 0.8, 1.35) }}
           >
-            {displayLabel(pl.item.title)}
+            {label.title}
+            {label.fields && <tspan className="node-fields">{' · '}{label.fields}</tspan>}
           </text>
         )}
       </g>
