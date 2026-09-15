@@ -1,0 +1,6 @@
+{
+  "extraKnownMarketplaces": {
+    "timeline-planner": { "source": { "source": "github", "repo": "itsMaS/timeline-planner" } }
+  },
+  "enabledPlugins": { "timeline-agent@timeline-planner": true }
+}

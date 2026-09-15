@@ -1,0 +1,15 @@
+{
+  "name": "timeline-planner",
+  "owner": { "name": "Martynas Siskauskas", "url": "https://github.com/itsMaS" },
+  "description": "Skills for working with Timeline Planner projects from Claude Code.",
+  "plugins": [
+    {
+      "name": "timeline-agent",
+      "displayName": "Timeline Agent",
+      "description": "Read a shared timeline through its edit link, propose changes for review in the app, apply edits when asked, and export filtered PDF documents.",
+      "version": "1.0.0",
+      "source": "./plugins/timeline-agent",
+      "category": "productivity"
+    }
+  ]
+}

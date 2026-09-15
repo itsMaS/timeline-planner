@@ -3610,7 +3610,11 @@ var require_jsx_runtime = __commonJS({
 });
 
 // agent/timeline.ts
+var import_node_child_process = require("node:child_process");
 var import_node_fs = require("node:fs");
+var import_node_os = require("node:os");
+var import_node_path = require("node:path");
+var import_node_url = require("node:url");
 
 // src/model/patch.ts
 var SYNC_COLLECTIONS = ["types", "typeFolders", "layers", "sections", "branches", "items", "views"];
@@ -23373,6 +23377,77 @@ async function cmdWithdraw() {
   const ok = await rpc("proposal_delete", { p_edit_token: TOKEN(), p_id: id });
   console.log(ok ? `proposal ${id} deleted` : `proposal ${id} not found`);
 }
+function findChrome() {
+  const env = process.env.CHROMIUM_PATH;
+  if (env) return (0, import_node_fs.existsSync)(env) ? env : null;
+  const home = process.env.HOME ?? process.env.USERPROFILE ?? "";
+  const pf = process.env.ProgramFiles ?? "C:\\Program Files";
+  const pf86 = process.env["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)";
+  const local = process.env.LOCALAPPDATA ?? (0, import_node_path.join)(home, "AppData", "Local");
+  const candidates = process.platform === "darwin" ? [
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    (0, import_node_path.join)(home, "Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+    "/Applications/Chromium.app/Contents/MacOS/Chromium",
+    "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+    "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"
+  ] : process.platform === "win32" ? [
+    (0, import_node_path.join)(pf, "Google/Chrome/Application/chrome.exe"),
+    (0, import_node_path.join)(pf86, "Google/Chrome/Application/chrome.exe"),
+    (0, import_node_path.join)(local, "Google/Chrome/Application/chrome.exe"),
+    (0, import_node_path.join)(pf86, "Microsoft/Edge/Application/msedge.exe"),
+    (0, import_node_path.join)(pf, "Microsoft/Edge/Application/msedge.exe"),
+    (0, import_node_path.join)(local, "Chromium/Application/chrome.exe")
+  ] : [
+    "/opt/pw-browsers/chromium",
+    "/usr/bin/google-chrome",
+    "/usr/bin/google-chrome-stable",
+    "/usr/bin/chromium",
+    "/usr/bin/chromium-browser",
+    "/snap/bin/chromium",
+    "/usr/bin/microsoft-edge",
+    "/opt/google/chrome/chrome"
+  ];
+  for (const c of candidates) if ((0, import_node_fs.existsSync)(c)) return c;
+  const names = process.platform === "win32" ? ["chrome.exe", "msedge.exe"] : ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "chrome"];
+  for (const n of names) {
+    try {
+      const found = (0, import_node_child_process.execFileSync)(process.platform === "win32" ? "where" : "which", [n], { stdio: ["ignore", "pipe", "ignore"] }).toString().split(/\r?\n/)[0].trim();
+      if (found && (0, import_node_fs.existsSync)(found)) return found;
+    } catch {
+    }
+  }
+  return null;
+}
+async function printPdf(html, out) {
+  const chrome = findChrome();
+  if (!chrome) fail("no Chrome/Chromium/Edge found. Install Chrome, or set CHROMIUM_PATH to a browser binary.");
+  const dir = (0, import_node_fs.mkdtempSync)((0, import_node_path.join)((0, import_node_os.tmpdir)(), "tl-export-"));
+  const page = (0, import_node_path.join)(dir, "doc.html");
+  (0, import_node_fs.writeFileSync)(page, html);
+  const target = (0, import_node_path.resolve)(out);
+  try {
+    (0, import_node_child_process.execFileSync)(chrome, [
+      "--headless=new",
+      "--disable-gpu",
+      "--no-sandbox",
+      "--hide-scrollbars",
+      "--no-first-run",
+      "--no-default-browser-check",
+      `--user-data-dir=${(0, import_node_path.join)(dir, "profile")}`,
+      "--no-pdf-header-footer",
+      "--virtual-time-budget=8000",
+      `--print-to-pdf=${target}`,
+      (0, import_node_url.pathToFileURL)(page).href
+    ], { stdio: ["ignore", "ignore", "pipe"], timeout: 12e4 });
+  } catch (e) {
+    const err = e;
+    fail(`Chrome could not print the PDF: ${err.stderr?.toString().trim().split("\n").slice(-3).join(" ") || err.message}`);
+  } finally {
+    (0, import_node_fs.rmSync)(dir, { recursive: true, force: true });
+  }
+  if (!(0, import_node_fs.existsSync)(target)) fail("Chrome exited without writing the PDF");
+  console.log(`pdf \u2192 ${out}`);
+}
 var listOpt = (k) => (opt(k) ?? "").split(",").map((s) => s.trim()).filter(Boolean);
 function resolve(wanted, pool, what) {
   const out = [];
@@ -23411,34 +23486,7 @@ async function cmdExport() {
     console.log(`html \u2192 ${opt("html")}`);
   }
   const out = opt("out") ?? (opt("html") ? "" : "timeline.pdf");
-  if (out) {
-    const { chromium } = await import("playwright-core");
-    let executablePath = process.env.CHROMIUM_PATH;
-    if (!executablePath) {
-      try {
-        executablePath = chromium.executablePath();
-      } catch {
-      }
-      if (!executablePath || !(0, import_node_fs.existsSync)(executablePath)) {
-        for (const cand of ["/opt/pw-browsers/chromium", "/usr/bin/chromium", "/usr/bin/chromium-browser", "/usr/bin/google-chrome"]) {
-          if ((0, import_node_fs.existsSync)(cand)) {
-            executablePath = cand;
-            break;
-          }
-        }
-      }
-    }
-    if (!executablePath || !(0, import_node_fs.existsSync)(executablePath)) fail("no Chromium found: set CHROMIUM_PATH or run `npx playwright-core install chromium`");
-    const browser = await chromium.launch({ executablePath, args: ["--no-sandbox"] });
-    try {
-      const page = await browser.newPage();
-      await page.setContent(html, { waitUntil: "load" });
-      await page.pdf({ path: out, format: "A4", printBackground: true, margin: { top: "18mm", bottom: "18mm", left: "16mm", right: "16mm" } });
-    } finally {
-      await browser.close();
-    }
-    console.log(`pdf \u2192 ${out}`);
-  }
+  if (out) await printPdf(html, out);
   console.log(`\u201C${title}\u201D: ${plural(visible, "visible item")}${sectionIds ? ` in ${plural(sectionIds.length, "section")}` : ""}`);
 }
 var commands = {

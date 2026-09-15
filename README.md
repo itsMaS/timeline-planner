@@ -128,18 +128,21 @@ CRDT-backed realtime mode later).
 
 ## Agents and proposals
 
-An agent (for example Claude Code with the `timeline-agent` skill) can work on a
-shared timeline through its edit link using `agent/timeline.ts`:
+Install the `timeline-agent` plugin in Claude Code, then paste a project's edit
+link into the chat and ask for what you want:
 
-```bash
-npx tsx agent/timeline.ts read --link "https://…/#/s/<edit-token>" --out tl.json
-# edit the "doc" object in a copy, then
-npx tsx agent/timeline.ts propose --base tl.json --edited tl-edited.json --title "Fix typos"
-npx tsx agent/timeline.ts export --sections "Chapter 1" --types "Coin,Enemy" --out chapter1.pdf
+```
+/plugin marketplace add itsMaS/timeline-planner
+/plugin install timeline-agent@timeline-planner
 ```
 
-Proposed changes don't touch the timeline: they show up under **Sidebar →
+Suggested changes don't touch the timeline: they show up under **Sidebar →
 Proposals** in every edit tab, with a per-change diff. Tick the ones you want
-and press **Apply selected** — that's a single undoable edit that syncs like any
-other. `apply` instead of `propose` saves directly (refusing if the timeline
-changed since it was read).
+and press **Apply selected** — a single undoable edit that syncs like any other.
+Asking to "apply directly" saves straight away (refusing if the timeline changed
+since it was read). PDF exports use the app's document export, printed by the
+Chrome already on your machine.
+
+The CLI behind the skill is `agent/timeline.ts` (`npx tsx agent/timeline.ts`
+inside this repo); `npm run build:skill` regenerates the bundled copy shipped in
+the plugin.

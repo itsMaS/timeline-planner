@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "build:skill": "esbuild agent/timeline.ts --bundle --platform=node --target=node20 --format=cjs --jsx=automatic --define:process.env.NODE_ENV='\"production\"' --external:playwright-core --outfile=.claude/skills/timeline-agent/scripts/timeline.cjs --log-level=warning"
+    "build:skill": "esbuild agent/timeline.ts --bundle --platform=node --target=node20 --format=cjs --jsx=automatic --define:process.env.NODE_ENV='\"production\"' --external:playwright-core --outfile=plugins/timeline-agent/skills/timeline-agent/scripts/timeline.cjs --log-level=warning"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.114.0",

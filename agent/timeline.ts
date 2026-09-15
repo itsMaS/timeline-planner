@@ -21,9 +21,14 @@
  *                                                 descriptions/fields/tags) printed to PDF with headless Chromium
  *
  * Everything is talked to through the same token-checked Supabase RPCs the app
- * uses, so nothing here can do more than a person holding the edit link.
+ * uses, so nothing here can do more than a person holding the edit link. The
+ * only external program is a Chrome/Chromium/Edge binary, for PDF export.
  */
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, resolve as resolvePath } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { diffToChanges, type Proposal, type ProposalChange } from '../src/model/proposal'
 import { itemMatchesFilters, typeOf } from '../src/model/layout'
 import type { Project } from '../src/model/types'
@@ -237,6 +242,67 @@ async function cmdWithdraw() {
 
 // ---------------------------------------------------------------- export
 
+/** A Chrome/Chromium/Edge binary: $CHROMIUM_PATH, then the usual install locations, then $PATH. */
+function findChrome(): string | null {
+  const env = process.env.CHROMIUM_PATH
+  if (env) return existsSync(env) ? env : null
+  const home = process.env.HOME ?? process.env.USERPROFILE ?? ''
+  const pf = process.env.ProgramFiles ?? 'C:\\Program Files'
+  const pf86 = process.env['ProgramFiles(x86)'] ?? 'C:\\Program Files (x86)'
+  const local = process.env.LOCALAPPDATA ?? join(home, 'AppData', 'Local')
+  const candidates = process.platform === 'darwin' ? [
+    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+    join(home, 'Applications/Google Chrome.app/Contents/MacOS/Google Chrome'),
+    '/Applications/Chromium.app/Contents/MacOS/Chromium',
+    '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
+    '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
+  ] : process.platform === 'win32' ? [
+    join(pf, 'Google/Chrome/Application/chrome.exe'),
+    join(pf86, 'Google/Chrome/Application/chrome.exe'),
+    join(local, 'Google/Chrome/Application/chrome.exe'),
+    join(pf86, 'Microsoft/Edge/Application/msedge.exe'),
+    join(pf, 'Microsoft/Edge/Application/msedge.exe'),
+    join(local, 'Chromium/Application/chrome.exe'),
+  ] : [
+    '/opt/pw-browsers/chromium',
+    '/usr/bin/google-chrome', '/usr/bin/google-chrome-stable', '/usr/bin/chromium', '/usr/bin/chromium-browser',
+    '/snap/bin/chromium', '/usr/bin/microsoft-edge', '/opt/google/chrome/chrome',
+  ]
+  for (const c of candidates) if (existsSync(c)) return c
+  const names = process.platform === 'win32' ? ['chrome.exe', 'msedge.exe'] : ['google-chrome', 'google-chrome-stable', 'chromium', 'chromium-browser', 'chrome']
+  for (const n of names) {
+    try {
+      const found = execFileSync(process.platform === 'win32' ? 'where' : 'which', [n], { stdio: ['ignore', 'pipe', 'ignore'] }).toString().split(/\r?\n/)[0].trim()
+      if (found && existsSync(found)) return found
+    } catch { /* not on PATH */ }
+  }
+  return null
+}
+
+/** Print an HTML string to PDF with headless Chrome — no npm dependency needed. */
+async function printPdf(html: string, out: string): Promise<void> {
+  const chrome = findChrome()
+  if (!chrome) fail('no Chrome/Chromium/Edge found. Install Chrome, or set CHROMIUM_PATH to a browser binary.')
+  const dir = mkdtempSync(join(tmpdir(), 'tl-export-'))
+  const page = join(dir, 'doc.html')
+  writeFileSync(page, html)
+  const target = resolvePath(out)
+  try {
+    execFileSync(chrome, [
+      '--headless=new', '--disable-gpu', '--no-sandbox', '--hide-scrollbars', '--no-first-run', '--no-default-browser-check',
+      `--user-data-dir=${join(dir, 'profile')}`, '--no-pdf-header-footer', '--virtual-time-budget=8000',
+      `--print-to-pdf=${target}`, pathToFileURL(page).href,
+    ], { stdio: ['ignore', 'ignore', 'pipe'], timeout: 120_000 })
+  } catch (e) {
+    const err = e as { stderr?: Buffer; message: string }
+    fail(`Chrome could not print the PDF: ${err.stderr?.toString().trim().split('\n').slice(-3).join(' ') || err.message}`)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+  if (!existsSync(target)) fail('Chrome exited without writing the PDF')
+  console.log(`pdf → ${out}`)
+}
+
 const listOpt = (k: string) => (opt(k) ?? '').split(',').map(s => s.trim()).filter(Boolean)
 
 /** Match a list of names/ids against entities: exact id, exact name (case-insensitive), then substring. */
@@ -277,28 +343,7 @@ async function cmdExport() {
   const html = raw.replace(/<script>[\s\S]*?<\/script>/, '').replace(/<div class="doc-bar">[\s\S]*?<\/div>/, '')
   if (opt('html')) { writeFileSync(opt('html')!, html); console.log(`html → ${opt('html')}`) }
   const out = opt('out') ?? (opt('html') ? '' : 'timeline.pdf')
-  if (out) {
-    const { chromium } = await import('playwright-core')
-    let executablePath = process.env.CHROMIUM_PATH
-    if (!executablePath) {
-      try { executablePath = chromium.executablePath() } catch { /* fall through */ }
-      if (!executablePath || !existsSync(executablePath)) {
-        for (const cand of ['/opt/pw-browsers/chromium', '/usr/bin/chromium', '/usr/bin/chromium-browser', '/usr/bin/google-chrome']) {
-          if (existsSync(cand)) { executablePath = cand; break }
-        }
-      }
-    }
-    if (!executablePath || !existsSync(executablePath)) fail('no Chromium found: set CHROMIUM_PATH or run `npx playwright-core install chromium`')
-    const browser = await chromium.launch({ executablePath, args: ['--no-sandbox'] })
-    try {
-      const page = await browser.newPage()
-      await page.setContent(html, { waitUntil: 'load' })
-      await page.pdf({ path: out, format: 'A4', printBackground: true, margin: { top: '18mm', bottom: '18mm', left: '16mm', right: '16mm' } })
-    } finally {
-      await browser.close()
-    }
-    console.log(`pdf → ${out}`)
-  }
+  if (out) await printPdf(html, out)
   console.log(`“${title}”: ${plural(visible, 'visible item')}${sectionIds ? ` in ${plural(sectionIds.length, 'section')}` : ''}`)
 }
 
