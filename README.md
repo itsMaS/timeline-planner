@@ -125,3 +125,21 @@ Vite + React + TypeScript. SVG scene with a canvas overlay for particles;
 Zustand store where every change goes through a single mutate action (which is
 what powers undo/redo, autosave snapshots, and keeps the door open for a
 CRDT-backed realtime mode later).
+
+## Agents and proposals
+
+An agent (for example Claude Code with the `timeline-agent` skill) can work on a
+shared timeline through its edit link using `agent/timeline.ts`:
+
+```bash
+npx tsx agent/timeline.ts read --link "https://…/#/s/<edit-token>" --out tl.json
+# edit the "doc" object in a copy, then
+npx tsx agent/timeline.ts propose --base tl.json --edited tl-edited.json --title "Fix typos"
+npx tsx agent/timeline.ts export --sections "Chapter 1" --types "Coin,Enemy" --out chapter1.pdf
+```
+
+Proposed changes don't touch the timeline: they show up under **Sidebar →
+Proposals** in every edit tab, with a per-change diff. Tick the ones you want
+and press **Apply selected** — that's a single undoable edit that syncs like any
+other. `apply` instead of `propose` saves directly (refusing if the timeline
+changed since it was read).

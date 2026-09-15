@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { repairFolders } from './folders'
 import { refreshSectionDepths } from './layout'
 import { applyPatch, diffProject, type Patch } from './patch'
+import type { Proposal } from './proposal'
 import type { Camera, Filters, Id, Project, TimelineSettings } from './types'
 import { uid } from './util'
 
@@ -153,6 +154,8 @@ interface UIState {
   readOnly: boolean
   /** Show filled-in custom field values next to item titles on the canvas. */
   showFields: boolean
+  /** Proposal currently open in the review panel; its pending items are highlighted on the canvas. */
+  reviewProposalId: Id | null
 }
 
 interface Store {
@@ -163,6 +166,8 @@ interface Store {
   shares: Record<Id, ShareInfo>
   /** Live sync state keyed by local project id. */
   sync: Record<Id, SyncState>
+  /** Suggested changes awaiting review, keyed by local project id (edit shares only). */
+  proposals: Record<Id, Proposal[]>
   /** True when the app was opened from a read-only link: nothing is persisted. */
   viewer: boolean
   setUI: (patch: Partial<UIState>) => void
@@ -190,6 +195,8 @@ interface Store {
   replaceRemoteDoc: (projectId: Id, doc: Project, version: number, reapply?: Patch[]) => void
   /** Enter read-only viewer mode for a shared timeline. */
   openViewer: (p: Project, info: ShareInfo) => void
+  /** Replace or merge the proposal list of a project (null clears it). */
+  setProposals: (projectId: Id, list: Proposal[] | null) => void
 }
 
 // ---------------------------------------------------------------- persistence
@@ -275,6 +282,7 @@ export const useStore = create<Store>((set, get) => ({
   activeId: init.activeId,
   shares: init.shares,
   sync: {},
+  proposals: {},
   viewer: false,
   ui: {
     selection: [],
@@ -296,6 +304,7 @@ export const useStore = create<Store>((set, get) => ({
     sidebarOpen: true,
     readOnly: false,
     showFields: init.prefs.showFields ?? true,
+    reviewProposalId: null,
   } as UIState,
 
   setUI: patch => { set(s => ({ ui: { ...s.ui, ...patch } })); persistSoon(get) },
@@ -395,12 +404,14 @@ export const useStore = create<Store>((set, get) => ({
     delete shares[id]
     const sync = { ...s.sync }
     delete sync[id]
+    const proposals = { ...s.proposals }
+    delete proposals[id]
     delete histories[id]
-    set({ projects, shares, sync, activeId: s.activeId === id ? projects[0].id : s.activeId, ui: { ...s.ui, selection: [] } })
+    set({ projects, shares, sync, proposals, activeId: s.activeId === id ? projects[0].id : s.activeId, ui: { ...s.ui, selection: [] } })
     persistSoon(get)
   },
 
-  setActive: id => { set(s => ({ activeId: id, ui: { ...s.ui, selection: [] } })); persistSoon(get) },
+  setActive: id => { set(s => ({ activeId: id, ui: { ...s.ui, selection: [], reviewProposalId: null } })); persistSoon(get) },
 
   renameProject: (id, name) => {
     const s = get()
@@ -484,6 +495,15 @@ export const useStore = create<Store>((set, get) => ({
       shares: share ? { ...s.shares, [projectId]: { ...share, version } } : s.shares,
     })
     persistSoon(get)
+  },
+
+  setProposals: (projectId, list) => {
+    set(s => {
+      const proposals = { ...s.proposals }
+      if (list) proposals[projectId] = list
+      else delete proposals[projectId]
+      return { proposals }
+    })
   },
 
   openViewer: (p, info) => {

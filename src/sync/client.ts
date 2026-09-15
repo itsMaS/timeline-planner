@@ -17,6 +17,15 @@ export function supabase(): SupabaseClient {
   return client
 }
 
+type RpcResult<T> = { data: T | null; error: { message: string } | null }
+
+/** Call a Postgres RPC; throws with the server message on error. */
+export async function rpc<T>(fn: string, args: Record<string, unknown>): Promise<T> {
+  const { data, error } = (await supabase().rpc(fn, args)) as RpcResult<T>
+  if (error) throw new Error(error.message)
+  return data as T
+}
+
 let sessionPromise: Promise<boolean> | null = null
 
 /**

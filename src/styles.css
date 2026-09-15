@@ -640,3 +640,47 @@ input, select, textarea { font: inherit; color: inherit; }
   text-align: center; padding: 20px;
 }
 .boot a { color: var(--accent); }
+
+/* ---------------------------------------------------------------- proposals */
+.badge.accent { background: color-mix(in srgb, #f59e0b 22%, transparent); color: #f59e0b; font-weight: 600; }
+.prop-row {
+  padding: 6px 8px; border-radius: 8px; cursor: pointer; border: 1px solid var(--line-soft); margin: 4px 0;
+  background: color-mix(in srgb, #f59e0b 6%, transparent);
+}
+.prop-row:hover { background: var(--panel2); }
+.prop-row.done { cursor: default; background: none; opacity: .75; }
+.prop-title { font-size: 12.5px; font-weight: 600; word-break: break-word; }
+.prop-meta { font-size: 10.5px; color: var(--muted); display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.prop-meta .row-act { margin-left: auto; padding: 2px; }
+.prop-actions { margin-top: 4px; }
+.prop-review .prop-summary { font-size: 12px; margin: 6px 2px 8px; color: var(--text); white-space: pre-wrap; }
+.prop-all { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); padding: 4px 2px; }
+.prop-change {
+  border: 1px solid var(--line-soft); border-radius: 8px; padding: 6px 8px; margin: 5px 0;
+  font-size: 12px; opacity: .7;
+}
+.prop-change.on { opacity: 1; border-color: color-mix(in srgb, var(--accent) 55%, var(--line-soft)); }
+.prop-change-head { display: flex; align-items: center; gap: 6px; cursor: pointer; flex-wrap: wrap; }
+.prop-kind { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.prop-name { font-weight: 600; word-break: break-word; }
+.prop-name.jump { color: var(--accent); }
+.prop-name.jump:hover { text-decoration: underline; }
+.prop-verb { font-size: 10.5px; color: var(--muted); margin-left: auto; }
+.prop-verb.add { color: #22c55e; } .prop-verb.remove { color: #ef4444; }
+.prop-conflict { display: flex; gap: 5px; align-items: flex-start; font-size: 11px; color: #f59e0b; margin: 5px 0 2px; }
+.prop-note { font-size: 11px; color: var(--muted); font-style: italic; margin: 4px 0 2px; }
+.prop-field { margin: 5px 0 0; font-size: 12px; line-height: 1.45; }
+.prop-field > em { display: block; font-style: normal; font-size: 10.5px; color: var(--muted); }
+.diff { white-space: pre-wrap; word-break: break-word; }
+.diff em { font-style: normal; color: var(--muted); }
+.diff-del { background: color-mix(in srgb, #ef4444 22%, transparent); color: color-mix(in srgb, #ef4444 70%, var(--text)); text-decoration: line-through; border-radius: 3px; padding: 0 1px; }
+.diff-add { background: color-mix(in srgb, #22c55e 24%, transparent); color: color-mix(in srgb, #22c55e 60%, var(--text)); border-radius: 3px; padding: 0 1px; }
+.prop-error { color: #ef4444; font-size: 11.5px; margin: 6px 2px; }
+.prop-buttons { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; margin-top: 8px; }
+.prop-buttons .primary-btn { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 6px 12px; }
+.spin { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.prop-ring {
+  fill: none; stroke: #f59e0b; stroke-width: 2; stroke-dasharray: 5 4; opacity: .9;
+  transform-box: fill-box; transform-origin: center; animation: spin 6s linear infinite;
+}

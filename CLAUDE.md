@@ -44,6 +44,23 @@
   `src/model/folders.ts` and `repairFolders` runs on load/mutate/remote patch to
   cut cycles and dangling links.
 
+## Proposals (suggested changes) and the agent CLI
+
+- A proposal is a list of entity-level changes with `before`/`after` snapshots
+  (`src/model/proposal.ts`), stored in `timeline_proposals`
+  (`supabase/migrations/0002_proposals.sql`, RPCs `proposal_*`). Edit tabs fetch
+  them with every sync pull (`src/sync/proposals.ts`) and review them in
+  Sidebar → Proposals (`src/ui/Proposals.tsx`): per-change word diff, conflict
+  detection against the live doc, checkboxes, "Apply selected" = one `mutate`
+  (undoable, synced), decisions recorded server-side; decided proposals stay
+  as history. Items of the proposal under review get a dashed ring on the canvas.
+- `agent/timeline.ts` (`npx tsx agent/timeline.ts …`) is how an agent works on
+  a shared timeline through its edit link: `read`, `outline`, `propose`
+  (default), `apply` (direct save with version check via `share_save_if`),
+  `status`, `withdraw`, `export` (the app's document export → PDF via headless
+  Chromium). The `timeline-agent` skill in `.claude/skills/` documents the
+  workflow; keep it in sync when the CLI changes.
+
 ## Working with the owner
 
 - **Decisions must be clickable.** When brainstorming or presenting choices,

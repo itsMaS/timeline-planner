@@ -5,11 +5,12 @@ import {
 import { childFolders, dissolveFolder, folderTree, isSelfOrDescendant, typesInFolder, typesInSubtree } from '../model/folders'
 import { iconByName } from '../model/icons'
 import { itemMatchesFilters, typeOf } from '../model/layout'
-import { useActiveProject, useCanEdit, useStore } from '../model/store'
+import { useActiveProject, useActiveShare, useCanEdit, useStore } from '../model/store'
 import type { ItemType, TypeFolder } from '../model/types'
 import { PALETTE, uid } from '../model/util'
 import { IconPicker } from './IconPicker'
 import { chipDrop, nav } from './nav'
+import { ProposalsPanel } from './Proposals'
 import { TypeSearch } from './TypeSearch'
 
 // The min-zoom slider is logarithmic: camera zoom spans several orders of
@@ -44,7 +45,10 @@ export function Sidebar() {
   const tweak = useStore(s => s.tweak)
   const select = useStore(s => s.select)
   const canEdit = useCanEdit()
-  const [open, setOpen] = useState({ types: true, layers: true, structure: false, tags: false })
+  const share = useActiveShare()
+  const openProposals = useStore(s => (s.proposals[s.activeId] ?? []).filter(p => p.status === 'open').length)
+  const reviewing = useStore(s => s.ui.reviewProposalId !== null)
+  const [open, setOpen] = useState({ proposals: true, types: true, layers: true, structure: false, tags: false })
   const toggle = (k: keyof typeof open) => setOpen(o => ({ ...o, [k]: !o[k] }))
   const [openLayerId, setOpenLayerId] = useState<string | null>(null)
   const [openFolderId, setOpenFolderId] = useState<string | null>(null)
@@ -414,6 +418,17 @@ export function Sidebar() {
 
   return (
     <aside className={`sidebar ${ui.dragTypeId || ui.dragFolderId ? 'dragging' : ''} ${canEdit ? '' : 'readonly'}`}>
+      {/* -------- proposals (suggested changes awaiting review; edit shares only) */}
+      {canEdit && share?.role === 'edit' && share.editToken && (
+        <>
+          <SectionHeader
+            title="Proposals" open={open.proposals || reviewing} toggle={() => toggle('proposals')}
+            action={openProposals > 0 && <span className="badge accent">{openProposals}</span>}
+          />
+          {(open.proposals || reviewing) && <ProposalsPanel />}
+        </>
+      )}
+
       {/* -------- types */}
       <SectionHeader
         title="Types" open={open.types} toggle={() => toggle('types')}

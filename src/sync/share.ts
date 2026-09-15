@@ -3,7 +3,8 @@ import { applyPatch, patchBytes, type Patch } from '../model/patch'
 import { normalizeProject, syncHooks, useStore, type Peer, type ShareInfo, type ShareRole } from '../model/store'
 import type { Project } from '../model/types'
 import { uid } from '../model/util'
-import { CLIENT_ID, ensureSession, getIdentity, supabase } from './client'
+import { CLIENT_ID, ensureSession, getIdentity, rpc, supabase } from './client'
+import { refreshProposals } from './proposals'
 
 /**
  * Realtime collaboration for shared tabs.
@@ -47,14 +48,6 @@ const shareOf = (projectId: string): ShareInfo | undefined => store().shares[pro
 const projectOf = (projectId: string): Project | undefined => store().projects.find(p => p.id === projectId)
 const setSync = (projectId: string, patch: Parameters<ReturnType<typeof useStore.getState>['setSync']>[1]) =>
   store().setSync(projectId, patch)
-
-type RpcResult<T> = { data: T | null; error: { message: string } | null }
-
-async function rpc<T>(fn: string, args: Record<string, unknown>): Promise<T> {
-  const { data, error } = (await supabase().rpc(fn, args)) as RpcResult<T>
-  if (error) throw new Error(error.message)
-  return data as T
-}
 
 // ---------------------------------------------------------------- lifecycle
 
@@ -141,6 +134,8 @@ async function pull(s: Session, initial = false): Promise<boolean> {
       if (r.doc && r.version > share.version) store().replaceRemoteDoc(s.projectId, r.doc, r.version, s.unsaved)
     }
     if (!s.live) setSync(s.projectId, { status: 'polling' })
+    // Proposals ride along with every refresh (cheap: only rows changed since last time).
+    void refreshProposals(s.projectId, initial)
     return true
   } catch (e) {
     console.warn('[sync] pull failed', e)

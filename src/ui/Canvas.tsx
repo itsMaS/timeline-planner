@@ -8,6 +8,7 @@ import {
   BranchLayout, PATH_LIFT, PlacedItem, ROW_H, branchPathD, contentExtent, fitCamera, itemMatchesFilters, splitLabel,
   layoutTimeline, minZoomFor, refreshSectionDepths, rowY, spineD, spineYFor, terminalEndX, typeOf,
 } from '../model/layout'
+import { proposalItemIds } from '../model/proposal'
 import { useActiveProject, useStore } from '../model/store'
 import type { Camera, Item, Section } from '../model/types'
 import { PALETTE, clamp, formatUnit, rulerStepFor, sectionHue, snapPos, timeBaseFor, uid, unitSuffix } from '../model/util'
@@ -144,6 +145,9 @@ export function CanvasView() {
   const minS = Math.min(MIN_S, minZoomFor(proj, size.w))
   const spineY = spineYFor(proj, size.h)
   const selection = useMemo(() => new Set(ui.selection), [ui.selection])
+  // Items touched by the proposal open in the review panel get a dashed ring.
+  const reviewProposal = useStore(s => (s.ui.reviewProposalId ? s.proposals[s.activeId]?.find(p => p.id === s.ui.reviewProposalId) : undefined))
+  const proposed = useMemo(() => new Set(reviewProposal ? proposalItemIds(reviewProposal) : []), [reviewProposal])
 
   useEffect(() => { setParticleLevel(ui.animLevel) }, [ui.animLevel])
   useEffect(() => { setSoundOn(ui.soundOn) }, [ui.soundOn])
@@ -1609,6 +1613,7 @@ export function CanvasView() {
               pl={pl}
               proj={proj}
               selected={selection.has(pl.item.id)}
+              proposed={proposed.has(pl.item.id)}
               showFields={ui.showFields}
               scaleL={!ui.readOnly && groupScale?.firstId === pl.item.id}
               scaleR={!ui.readOnly && groupScale?.lastId === pl.item.id}
@@ -1896,6 +1901,8 @@ function ItemG(props: {
   pl: PlacedItem
   proj: ReturnType<typeof useActiveProject>
   selected: boolean
+  /** Part of the proposal being reviewed. */
+  proposed: boolean
   /** This item is the first of a multi-selection: its start carries the group scale handle. */
   scaleL: boolean
   /** This item is the last of a multi-selection: its end carries the group scale handle. */
@@ -1960,6 +1967,7 @@ function ItemG(props: {
           </g>
         )}
         {selected && <circle r={19 * z} className="sel-ring" style={{ stroke: color }} />}
+        {props.proposed && <circle r={(selected ? 24 : 20) * z} className="prop-ring" />}
         <circle r={14 * z} className="node-under" />
         <circle r={14 * z} className="node-bg" style={{ fill: `${color}26`, stroke: color }} />
         <Icon x={-8 * z} y={-8 * z} width={16 * z} height={16 * z} color={color} strokeWidth={2} />
