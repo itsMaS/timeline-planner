@@ -7,6 +7,7 @@ import { useActiveProject, useActiveShare, useActiveSync, useStore } from '../mo
 import { CanvasView } from './Canvas'
 import { Inspector } from './Inspector'
 import { nav } from './nav'
+import { PanelDivider } from './Panels'
 import { PresenceBar } from './Share'
 import { Sidebar } from './Sidebar'
 
@@ -114,7 +115,9 @@ export function Viewer() {
       {status === 'offline' && <div className="viewer-banner muted">Offline — showing the last version received.</div>}
       <div className="main">
         <Sidebar />
+        {ui.sidebarOpen && <PanelDivider side="left" />}
         <CanvasView />
+        {ui.selection.length > 0 && <PanelDivider side="right" />}
         <Inspector />
       </div>
       {share?.viewToken && null}

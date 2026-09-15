@@ -4,6 +4,8 @@ import { iconByName } from '../model/icons'
 import { contentExtent, displayLabel, layoutTimeline, rowY, typeOf } from '../model/layout'
 import type { Camera, Project } from '../model/types'
 import { clamp, download, formatUnit, rulerStepFor, sectionHue, unitSuffix } from '../model/util'
+import { attachmentsFor, effectiveValue, formatValue } from '../model/fields'
+import { bandBadge } from '../model/processors'
 
 interface Colors { bg: string; text: string; line: string; muted: string }
 const DARK: Colors = { bg: '#111318', text: '#e6e8ee', line: '#3a3f4d', muted: '#8b91a0' }
@@ -73,6 +75,10 @@ function ExportScene(props: { proj: Project; cam: Camera; w: number; h: number; 
               : ''
             const durPx = Math.max(labelPx - 2.5, 9)
             const showDur = !!durText && avail >= nameW + 8 + durText.length * durPx * 0.62 + 10
+            const badge = bandBadge(proj, sc)
+            const textEnd = Math.max(x1, 0) + 8 + nameW + (showDur ? 8 + durText.length * durPx * 0.62 : 0)
+            const badgeX = Math.min(x2, w) - 8
+            const showBadge = !!badge && showText && badgeX - badge.length * durPx * 0.62 >= textEnd + 14
             return (
               <g key={`hdr-${sc.id}`}>
                 <rect x={x1} y={barTop} width={x2 - x1} height={labelPx + 10}
@@ -85,6 +91,10 @@ function ExportScene(props: { proj: Project; cam: Camera; w: number; h: number; 
                 {showDur && (
                   <text x={Math.max(x1, 0) + 8 + nameW + 8} y={barTop + labelPx + 3} fontFamily={font} fontSize={durPx}
                     fill={`hsl(${hue} 45% ${theme === 'dark' ? '70%' : '38%'} / 0.55)`}>{durText}</text>
+                )}
+                {showBadge && (
+                  <text x={badgeX} y={barTop + labelPx + 3} textAnchor="end" fontFamily={font} fontSize={durPx} fontWeight={600}
+                    fill={`hsl(${hue} 50% ${theme === 'dark' ? '70%' : '38%'} / 0.85)`}>{badge}</text>
                 )}
               </g>
             )
@@ -233,22 +243,29 @@ export function exportCSV(proj: Project) {
   const maxDepth = proj.sections.reduce((n, sc) => Math.max(n, sc.depth), -1)
   const levels = Array.from(
     { length: maxDepth + 1 },
-    (_, d) => proj.hierarchyLevels[d] ?? `Level ${d + 1}`,
+    (_, d) => proj.hierarchyLevels[d]?.name ?? `Level ${d + 1}`,
   )
-  const header = [...levels, 'Title', 'Type', 'Position', 'Duration', 'Branch path', 'Tags', 'Description', 'Link']
+  const header = [...levels, 'Title', 'Type', 'Position', 'Duration', 'Branch path', 'Tags', 'Description', 'Link', ...proj.fields.map(f => f.name)]
   const rows = [...proj.items]
     .sort((a, b) => a.pos - b.pos)
-    .map(it => [
-      ...levels.map((_, d) => sectionAt(d, it.pos)),
-      it.title,
-      typeOf(proj, it)?.name ?? '',
-      it.pos,
-      it.duration,
-      pathName(it.pathId),
-      it.tags.join('; '),
-      it.description,
-      it.link,
-    ].map(esc).join(','))
+    .map(it => {
+      const atts = attachmentsFor(proj, { kind: 'item', entity: it })
+      return [
+        ...levels.map((_, d) => sectionAt(d, it.pos)),
+        it.title,
+        typeOf(proj, it)?.name ?? '',
+        it.pos,
+        it.duration,
+        pathName(it.pathId),
+        it.tags.join('; '),
+        it.description,
+        it.link,
+        ...proj.fields.map(f => {
+          const a = atts.find(x => x.field.id === f.id)
+          return a ? formatValue(proj, f, effectiveValue(f, a.att, it.fieldValues[f.id])) : ''
+        }),
+      ].map(esc).join(',')
+    })
   const csv = '\ufeff' + [header.map(esc).join(','), ...rows].join('\r\n')
   download(`${proj.name.replace(/\s+/g, '-').toLowerCase()}.csv`,
     new Blob([csv], { type: 'text/csv;charset=utf-8' }))

@@ -4,12 +4,15 @@ import {
 } from 'lucide-react'
 import { childFolders, dissolveFolder, folderTree, isSelfOrDescendant, typesInFolder, typesInSubtree } from '../model/folders'
 import { iconByName } from '../model/icons'
+import { attachedToNames, fieldUsage, kindGlyph, kindLabel, newFieldDef } from '../model/fields'
 import { itemMatchesFilters, typeOf } from '../model/layout'
-import { useActiveProject, useCanEdit, useStore } from '../model/store'
+import { processorUsage } from '../model/processors'
+import { newLevel, useActiveProject, useCanEdit, useStore } from '../model/store'
 import type { ItemType, TypeFolder } from '../model/types'
 import { PALETTE, uid } from '../model/util'
 import { IconPicker } from './IconPicker'
 import { chipDrop, nav } from './nav'
+import { describeProcessor } from './SchemaEditors'
 
 // The min-zoom slider is logarithmic: camera zoom spans several orders of
 // magnitude depending on the project's scope (a 4-hour plan in hours sits in
@@ -43,7 +46,7 @@ export function Sidebar() {
   const tweak = useStore(s => s.tweak)
   const select = useStore(s => s.select)
   const canEdit = useCanEdit()
-  const [open, setOpen] = useState({ types: true, layers: true, structure: false, tags: false })
+  const [open, setOpen] = useState({ types: true, layers: true, structure: false, schema: false, tags: false })
   const toggle = (k: keyof typeof open) => setOpen(o => ({ ...o, [k]: !o[k] }))
   const [openLayerId, setOpenLayerId] = useState<string | null>(null)
   const [openFolderId, setOpenFolderId] = useState<string | null>(null)
@@ -409,7 +412,10 @@ export function Sidebar() {
   }
 
   return (
-    <aside className={`sidebar ${ui.dragTypeId || ui.dragFolderId ? 'dragging' : ''} ${canEdit ? '' : 'readonly'}`}>
+    <aside
+      className={`sidebar ${ui.dragTypeId || ui.dragFolderId ? 'dragging' : ''} ${canEdit ? '' : 'readonly'}`}
+      style={{ width: ui.sidebarW, minWidth: ui.sidebarW }}
+    >
       {/* -------- types */}
       <SectionHeader
         title="Types" open={open.types} toggle={() => toggle('types')}
@@ -549,20 +555,25 @@ export function Sidebar() {
       {open.structure && (
         <div className="sb-body">
           <div className="sb-sub">Hierarchy levels</div>
-          {proj.hierarchyLevels.map((name, d) => (
-            <div key={d} className="row gap">
+          {proj.hierarchyLevels.map((level, d) => (
+            <div key={level.id} className="row gap level-row">
               {canEdit ? (
                 <input
                   className="bare-input grow"
-                  value={name}
-                  onChange={e => mutate(p => { p.hierarchyLevels[d] = e.target.value })}
+                  value={level.name}
+                  onChange={e => mutate(p => { const l = p.hierarchyLevels.find(x => x.id === level.id); if (l) l.name = e.target.value })}
                 />
               ) : (
-                <span className="level-name grow" style={{ paddingLeft: d * 10 }}>{name}</span>
+                <span className="level-name grow" style={{ paddingLeft: d * 10 }}>{level.name}</span>
+              )}
+              {(level.fields.length > 0 || level.processors.length > 0) && (
+                <span className="count" title={`${level.fields.length} field(s) · ${level.processors.length} processor(s)`}>
+                  {level.fields.length}f · {level.processors.length}p
+                </span>
               )}
               {canEdit && (
                 <button
-                  className="ghost-btn" title={`Add ${name} at current view`}
+                  className="ghost-btn" title={`Add ${level.name} at current view`}
                   onClick={() => {
                     const st = useStore.getState()
                     const p0 = st.projects.find(p => p.id === st.activeId)!
@@ -570,11 +581,16 @@ export function Sidebar() {
                     const center = p0.camera.x + w / p0.camera.s
                     const span = (w * 0.6) / p0.camera.s
                     mutate(p => p.sections.push({
-                      id: uid(), name: `New ${name.toLowerCase()}`, depth: d,
-                      start: center - span / 2, end: center + span / 2,
+                      id: uid(), name: `New ${level.name.toLowerCase()}`, depth: d,
+                      start: center - span / 2, end: center + span / 2, fieldValues: {},
                     }))
                   }}
                 ><Plus width={13} height={13} /></button>
+              )}
+              {canEdit && (
+                <button className="ghost-btn" title="Level fields & processors" onClick={() => setUI({ editLevelId: level.id })}>
+                  <Settings2 width={13} height={13} />
+                </button>
               )}
               {canEdit && d === proj.hierarchyLevels.length - 1 && d > 0 && (
                 <button
@@ -585,7 +601,7 @@ export function Sidebar() {
             </div>
           ))}
           {canEdit && proj.hierarchyLevels.length < 5 && (
-            <button className="ghost-btn add" onClick={() => mutate(p => p.hierarchyLevels.push('Sub-level'))}>
+            <button className="ghost-btn add" onClick={() => mutate(p => p.hierarchyLevels.push(newLevel('Sub-level')))}>
               + Add hierarchy level
             </button>
           )}
@@ -607,6 +623,64 @@ export function Sidebar() {
           {proj.sections.length === 0 && (
             <div className="sb-hint">{canEdit ? 'no sections yet — use + next to a level name' : 'no sections'}</div>
           )}
+        </div>
+      )}
+
+      {/* -------- fields & processors */}
+      <SectionHeader
+        title="Fields & processors" open={open.schema} toggle={() => toggle('schema')}
+        action={canEdit && (
+          <>
+            <button className="ghost-btn" title="New field" onClick={() => {
+              const id = uid()
+              mutate(p => p.fields.push(newFieldDef(id, 'New field')))
+              setUI({ editFieldId: id })
+            }}><Plus width={14} height={14} /></button>
+          </>
+        )}
+      />
+      {open.schema && (
+        <div className="sb-body">
+          <div className="sb-sub">Fields</div>
+          {proj.fields.map(f => {
+            const u = fieldUsage(proj, f.id)
+            const attached = attachedToNames(proj, f.id)
+            const values = u.items.length + u.sections.length
+            return (
+              <div key={f.id} className="schema-row" title={`${kindLabel(f.kind)} · on ${attached.join(', ') || 'nothing'} · ${values} value(s)`}
+                onClick={() => { if (canEdit) setUI({ editFieldId: f.id }) }}>
+                <span className="kind-glyph">{kindGlyph(f.kind)}</span>
+                <span className="type-name">{f.name}</span>
+                <span className="schema-sub">{attached.length ? attached.join(', ') : 'unused'}</span>
+                <span className="count">{values}</span>
+                {canEdit && <Settings2 width={12} height={12} className="row-gear" />}
+              </div>
+            )
+          })}
+          {proj.fields.length === 0 && <div className="sb-hint">{canEdit ? 'no fields yet — add one here or from a type editor' : 'no fields'}</div>}
+          <div className="sb-sub row">
+            <span className="grow">Processors</span>
+            {canEdit && (
+              <button className="ghost-btn" title="New processor" onClick={() => {
+                const id = uid()
+                mutate(p => p.processors.push({ id, name: 'New processor', op: 'count', fieldId: null, targets: [] }))
+                setUI({ editProcessorId: id })
+              }}><Plus width={13} height={13} /></button>
+            )}
+          </div>
+          {proj.processors.map(pr => {
+            const levels = processorUsage(proj, pr.id)
+            return (
+              <div key={pr.id} className="schema-row" title={`${describeProcessor(proj.fields, pr)} · on ${levels.map(l => l.name).join(', ') || 'no level'}`}
+                onClick={() => { if (canEdit) setUI({ editProcessorId: pr.id }) }}>
+                <span className="kind-glyph">Σ</span>
+                <span className="type-name">{pr.name}</span>
+                <span className="schema-sub">{describeProcessor(proj.fields, pr)}{levels.length ? ` · ${levels.map(l => l.name).join(', ')}` : ''}</span>
+                {canEdit && <Settings2 width={12} height={12} className="row-gear" />}
+              </div>
+            )
+          })}
+          {proj.processors.length === 0 && <div className="sb-hint">{canEdit ? 'processors sum or count what sits inside a section — attach them to a hierarchy level' : 'no processors'}</div>}
         </div>
       )}
 

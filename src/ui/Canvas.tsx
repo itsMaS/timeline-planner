@@ -3,11 +3,13 @@ import {
   ClipboardCopy, ClipboardPaste, CopyPlus, ListChecks, Maximize2, Plus, RectangleHorizontal,
   Scissors, Settings2, Shuffle, Trash2,
 } from 'lucide-react'
+import { allowsTarget, attachmentsFor, backlinks, effectiveValue, formatValue, ownerOf } from '../model/fields'
 import { iconByName } from '../model/icons'
 import {
   BranchLayout, PlacedItem, ROW_H, contentExtent, displayLabel, fitCamera, itemMatchesFilters,
   layoutTimeline, minZoomFor, refreshSectionDepths, rowY, typeOf,
 } from '../model/layout'
+import { bandBadge } from '../model/processors'
 import { useActiveProject, useStore } from '../model/store'
 import type { Camera, Item, Section } from '../model/types'
 import { clamp, formatUnit, rulerStepFor, sectionHue, snapPos, timeBaseFor, uid, unitSuffix } from '../model/util'
@@ -15,6 +17,7 @@ import { bindParticleCanvas, burst, puff, ripple, setParticleLevel } from '../fx
 import { setSoundOn, sfx } from '../fx/sound'
 import { flyCamera, cancelFlight } from '../fx/springs'
 import { getClipboard, setClipboard } from './clipboard'
+import { requestDelete } from './deletion'
 import { Markdown } from './Markdown'
 import { chipDrop, nav } from './nav'
 
@@ -572,8 +575,37 @@ export function CanvasView() {
   /** Label drag: select the section (shift adds) and move all selected together.
       Alt at the start duplicates the section (with contained sections and
       items) and drags the copy instead. */
+  /**
+   * Reference pick mode: while `ui.pickRef` is set, clicking an item or a
+   * section header fills that field instead of selecting. Returns true when
+   * the click was consumed.
+   */
+  const tryPick = (targetId: string): boolean => {
+    const st0 = useStore.getState()
+    const pr = st0.ui.pickRef
+    if (!pr) return false
+    const p0 = st0.projects.find(x => x.id === st0.activeId)
+    const field = p0?.fields.find(f => f.id === pr.fieldId)
+    const target = p0 ? ownerOf(p0, targetId) : null
+    if (!p0 || !field || !target) { setUI({ pickRef: null }); return true }
+    if (targetId === pr.ownerId) { showToast('An entry can’t reference itself.'); return true }
+    if (!allowsTarget(p0, field, target)) { showToast(`“${field.name}” can’t reference that kind of entry.`); return true }
+    mutate(pp => {
+      const o = ownerOf(pp, pr.ownerId)
+      if (!o) return
+      o.entity.fieldValues ??= {}
+      const cur = o.entity.fieldValues[field.id]
+      const ids = Array.isArray(cur) ? cur : []
+      o.entity.fieldValues[field.id] = field.refMultiple ? [...ids.filter(x => x !== targetId), targetId] : [targetId]
+    })
+    setUI({ pickRef: null })
+    sfx.select()
+    return true
+  }
+
   const labelPointerDown = (e: React.PointerEvent, sc: Section) => {
     if (e.button !== 0) return
+    if (tryPick(sc.id)) { e.stopPropagation(); return }
     if (ui.readOnly) { e.stopPropagation(); select([`S:${sc.id}`]); return }
     e.stopPropagation()
     ;(e.target as Element).setPointerCapture?.(e.pointerId)
@@ -590,6 +622,7 @@ export function CanvasView() {
           const nid = idMap.get(s0.id)!
           p.sections.push({
             ...s0, id: nid, name: s0.id === sc.id ? `${s0.name} copy` : s0.name,
+            fieldValues: structuredClone(s0.fieldValues ?? {}),
           })
           orig.set(nid, { start: s0.start, end: s0.end })
         }
@@ -967,6 +1000,7 @@ export function CanvasView() {
 
   const itemPointerDown = (e: React.PointerEvent, item: Item) => {
     if (e.button !== 0) return
+    if (tryPick(item.id)) { e.stopPropagation(); return }
     if (ui.readOnly) {
       e.stopPropagation()
       select(e.shiftKey ? [...ui.selection.filter(s0 => !s0.includes(':')), item.id] : [item.id])
@@ -1135,10 +1169,8 @@ export function CanvasView() {
 
   const menuDelete = () => {
     const ids = selectedItemIds()
-    mutate(p => { p.items = p.items.filter(i => !ids.includes(i.id)) })
-    select([])
-    showToast('Deleted.', true)
     setMenu(null)
+    requestDelete({ itemIds: ids }, () => { select([]); showToast('Deleted.', true) })
   }
 
   const menuSplitSection = (id: string, rawPos: number) => {
@@ -1146,7 +1178,7 @@ export function CanvasView() {
       const sc = p.sections.find(s0 => s0.id === id)
       if (!sc) return
       const cut = clamp(ui.snap ? snapPos(rawPos, cam.s) : rawPos, sc.start + 0.05, sc.end - 0.05)
-      p.sections.push({ ...sc, id: uid(), name: `${sc.name} (2)`, start: cut })
+      p.sections.push({ ...sc, id: uid(), name: `${sc.name} (2)`, start: cut, fieldValues: structuredClone(sc.fieldValues ?? {}) })
       sc.end = cut
     })
     showToast('Section split.', true)
@@ -1187,6 +1219,39 @@ export function CanvasView() {
   // ---- render helpers
   const hoverItem = hover ? proj.items.find(i => i.id === hover.id) : null
   const hoverType = hoverItem ? typeOf(proj, hoverItem) : null
+  const hoverFields = hoverItem
+    ? attachmentsFor(proj, { kind: 'item', entity: hoverItem })
+      .filter(a => a.field.showInTooltip)
+      .map(a => ({ field: a.field, text: formatValue(proj, a.field, effectiveValue(a.field, a.att, hoverItem.fieldValues[a.field.id])) }))
+      .filter(a => a.text)
+    : []
+
+  // Processor results flagged "show on band", per section. Recomputed only
+  // when the document changes, never per pointer move.
+  const badges = useMemo(
+    () => new Map(proj.sections.map(sc => [sc.id, bandBadge(proj, sc)])),
+    [proj.sections, proj.items, proj.fields, proj.processors, proj.hierarchyLevels, proj.types],
+  )
+
+  // Reference connectors for the single selected entry: outgoing links of its
+  // own ref fields and incoming links, both only for fields that opt in.
+  const links = useMemo(() => {
+    if (ui.selection.length !== 1) return []
+    const key = ui.selection[0]
+    const selId = key.startsWith('S:') ? key.slice(2) : key.includes(':') ? null : key
+    if (!selId) return []
+    const owner = ownerOf(proj, selId)
+    if (!owner) return []
+    const out: { from: string; to: string }[] = []
+    for (const { att, field } of attachmentsFor(proj, owner)) {
+      if (field.kind !== 'ref' || !field.refShowLinks) continue
+      const v = effectiveValue(field, att, owner.entity.fieldValues?.[field.id])
+      if (Array.isArray(v)) for (const id of v) out.push({ from: selId, to: id })
+    }
+    for (const bl of backlinks(proj, selId)) if (bl.field.refShowLinks) out.push({ from: bl.owner.entity.id, to: selId })
+    return out
+  }, [proj, ui.selection])
+  const highlightId = ui.highlightId
 
   const sectionsSorted = useMemo(
     () => [...(effective.sections)].sort((a, b) => a.depth - b.depth),
@@ -1219,15 +1284,22 @@ export function CanvasView() {
       ? formatUnit(dur, dur, unitSuffix(st.unit.preset, st.unit.custom), st.unit.preset)
       : ''
     const durPx = Math.max(labelPx - 2.5, 9)
+    // Processor badge sits right-aligned in the visible part of the bar and
+    // shows only when it clears the name (and the duration, if shown).
+    const badge = badges.get(sc.id) ?? ''
+    const showDur = !!durText && avail >= nameW + 8 + durText.length * durPx * 0.62 + 10
+    const textEnd = Math.max(x1, 0) + 8 + nameW + (showDur ? 8 + durText.length * durPx * 0.62 : 0)
+    const badgeX = Math.min(x2, size.w) - 8
+    const showBadge = !!badge && avail >= nameW + 8 && badgeX - badge.length * durPx * 0.62 >= textEnd + 14
     return [{
-      sc, x1, x2, w, sel, labelPx,
+      sc, x1, x2, w, sel, labelPx, hl: highlightId === sc.id, badge, badgeX, showBadge,
       hue: sectionHue(depthIndex.get(sc.id) ?? 0),
       barTop: -spineY + barTopFor(sc.depth),
       barH: labelPx + 10,
       showText: avail >= nameW + 8,
       durText, durPx,
       durX: Math.max(x1, 0) + 8 + nameW + 8,
-      showDur: !!durText && avail >= nameW + 8 + durText.length * durPx * 0.62 + 10,
+      showDur,
       edgeAlpha: sel ? 0.8 : clamp(st.sectionStyle.edgeStrength * Math.max(1 - 0.3 * sc.depth, 0.25), 0, 1),
       edgeW: sc.depth === 0 ? 1.6 : 1,
     }]
@@ -1236,7 +1308,7 @@ export function CanvasView() {
   return (
     <div
       ref={wrapRef}
-      className={`canvas-wrap tool-${ui.tool} ${drag?.kind === 'pan' ? 'panning' : ''}`}
+      className={`canvas-wrap tool-${ui.tool} ${drag?.kind === 'pan' ? 'panning' : ''} ${ui.pickRef ? 'picking' : ''}`}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onContextMenu={bgContextMenu}
@@ -1300,7 +1372,7 @@ export function CanvasView() {
           {/* section header bars — a padding-free, fully opaque strip spanning
               the whole section at its depth row, drawn above everything else in
               the band so nothing cuts through it. Also the section's drag target. */}
-          {bandGeo.map(({ sc, x1, w, hue, sel, labelPx, barTop, barH, showText, showDur, durText, durX, durPx }) => (
+          {bandGeo.map(({ sc, x1, w, hue, sel, hl, labelPx, barTop, barH, showText, showDur, durText, durX, durPx, badge, badgeX, showBadge }) => (
             <g
               key={`hdr-${sc.id}`}
               className="band-label-g"
@@ -1308,7 +1380,7 @@ export function CanvasView() {
             >
               <rect
                 x={x1} y={barTop} width={w} height={barH}
-                className="band-label-box"
+                className={`band-label-box ${hl ? 'hl' : ''}`}
                 style={{
                   fill: `color-mix(in srgb, hsl(${hue} 60% 55%) 16%, var(--panel))`,
                   stroke: `hsl(${hue} 55% 55% / ${sel ? 0.95 : 0.45})`,
@@ -1334,6 +1406,15 @@ export function CanvasView() {
                   style={{ fill: `hsl(${hue} 45% var(--band-label-l) / 0.55)`, fontSize: durPx }}
                 >
                   {durText}
+                </text>
+              )}
+              {showBadge && (
+                <text
+                  x={badgeX} y={barTop + labelPx + 3} textAnchor="end"
+                  className="band-badge"
+                  style={{ fill: `hsl(${hue} 50% var(--band-label-l) / 0.85)`, fontSize: durPx }}
+                >
+                  {badge}
                 </text>
               )}
             </g>
@@ -1380,6 +1461,41 @@ export function CanvasView() {
             })}
           </g>
 
+          {/* reference connectors (selected entry ↔ its referenced / referencing entries) */}
+          {links.length > 0 && (() => {
+            const anchor = (id: string): { x: number; y: number } | null => {
+              const pl = layout.placed.find(x => x.item.id === id)
+              if (pl) return { x: pl.x, y: rowY(pl.row) }
+              const dot = layout.dots.find(x => x.item.id === id)
+              if (dot) return { x: dot.x, y: 0 }
+              for (const bl of layout.branches) {
+                if (bl.collapsed) continue
+                for (const list of bl.items) for (const pi of list) if (pi.item.id === id) return { x: pi.x, y: pi.y }
+              }
+              const bg = bandGeo.find(g => g.sc.id === id)
+              if (bg) return { x: (Math.max(bg.x1, 0) + Math.min(bg.x2, size.w)) / 2, y: bg.barTop + bg.barH / 2 }
+              return null
+            }
+            return (
+              <g className="ref-links" pointerEvents="none">
+                {links.map((l, i) => {
+                  const a = anchor(l.from)
+                  const b = anchor(l.to)
+                  if (!a || !b) return null
+                  const mx = (a.x + b.x) / 2
+                  const lift = Math.min(Math.abs(b.x - a.x) * 0.25, 120)
+                  const my = Math.min(a.y, b.y) - lift
+                  return (
+                    <g key={`${l.from}-${l.to}-${i}`}>
+                      <path d={`M ${a.x} ${a.y} Q ${mx} ${my} ${b.x} ${b.y}`} className="ref-link" />
+                      <circle cx={b.x} cy={b.y} r={3.5} className="ref-link-end" />
+                    </g>
+                  )
+                })}
+              </g>
+            )
+          })()}
+
           {/* branches */}
           {layout.branches.map(bl => (
             <BranchG
@@ -1388,6 +1504,7 @@ export function CanvasView() {
               selected={selection.has(`B:${bl.branch.id}`)}
               selectBranch={() => { select([`B:${bl.branch.id}`]); sfx.select() }}
               itemSelection={selection}
+              highlightId={highlightId}
               proj={proj}
               itemPointerDown={itemPointerDown}
               itemContextMenu={itemContextMenu}
@@ -1431,6 +1548,7 @@ export function CanvasView() {
               pl={pl}
               proj={proj}
               selected={selection.has(pl.item.id)}
+              highlight={highlightId === pl.item.id}
               anim={ui.animLevel !== 'off'}
               onPointerDown={e => itemPointerDown(e, pl.item)}
               onContextMenu={e => itemContextMenu(e, pl.item)}
@@ -1453,7 +1571,7 @@ export function CanvasView() {
           {layout.dots.map(dot => (
             <g
               key={dot.item.id}
-              className={`layer-dot ${dot.ghost ? 'ghost' : ''}`}
+              className={`layer-dot ${dot.ghost ? 'ghost' : ''} ${highlightId === dot.item.id ? 'hl' : ''}`}
               transform={`translate(${dot.x}, 0)`}
               onPointerDown={e => itemPointerDown(e, dot.item)}
               onContextMenu={e => itemContextMenu(e, dot.item)}
@@ -1563,6 +1681,7 @@ export function CanvasView() {
       <div className="canvas-status">
         showing {layout.shownCount} of {layout.totalCount} items
         {ui.tool === 'branch' && <span className="status-hint"> — drag along the line to create a branch (Esc to cancel)</span>}
+        {ui.pickRef && <span className="status-hint"> — click an item or section header to reference it (Esc to cancel)</span>}
       </div>
 
       {/* tooltip */}
@@ -1575,6 +1694,11 @@ export function CanvasView() {
           <div className="tt-type">{hoverType.name}{hoverItem.duration > 0 ? ` · span ${hoverItem.duration.toFixed(1)}` : ''}</div>
           {hoverItem.tags.length > 0 && (
             <div className="tt-tags">{hoverItem.tags.map(t => <span key={t} className="tag">{t}</span>)}</div>
+          )}
+          {hoverFields.length > 0 && (
+            <div className="tt-fields">
+              {hoverFields.map(f => <div key={f.field.id}><span className="muted">{f.field.name}</span> {f.text}</div>)}
+            </div>
           )}
           {hoverItem.images[0] && <img src={hoverItem.images[0]} alt="" className="tt-img" />}
           {hoverItem.description && <div className="tt-desc"><Markdown text={hoverItem.description.slice(0, 400)} /></div>}
@@ -1599,11 +1723,11 @@ export function CanvasView() {
                   setMenu(null)
                 }}><Plus width={13} height={13} /> New item here</button>
                 <button onClick={() => {
-                  const levelName = proj.hierarchyLevels[0] ?? 'Section'
+                  const levelName = proj.hierarchyLevels[0]?.name ?? 'Section'
                   const span = (size.w * 0.25) / cam.s
                   const id = uid()
                   mutate(p => p.sections.push({
-                    id, name: `New ${levelName.toLowerCase()}`, depth: 0, start: pos, end: pos + span,
+                    id, name: `New ${levelName.toLowerCase()}`, depth: 0, start: pos, end: pos + span, fieldValues: {},
                   }))
                   select([`S:${id}`])
                   setMenu(null)
@@ -1646,6 +1770,7 @@ function ItemG(props: {
   pl: PlacedItem
   proj: ReturnType<typeof useActiveProject>
   selected: boolean
+  highlight: boolean
   anim: boolean
   onPointerDown: (e: React.PointerEvent) => void
   onContextMenu: (e: React.MouseEvent) => void
@@ -1662,7 +1787,7 @@ function ItemG(props: {
   const barY = 3 + 14 * z
   return (
     <g
-      className={`node ${pl.ghost ? 'ghost' : ''} ${selected ? 'sel' : ''}`}
+      className={`node ${pl.ghost ? 'ghost' : ''} ${selected ? 'sel' : ''} ${props.highlight ? 'hl' : ''}`}
       transform={`translate(${pl.x}, ${y})`}
       onPointerDown={props.onPointerDown}
       onContextMenu={props.onContextMenu}
@@ -1684,6 +1809,7 @@ function ItemG(props: {
           </g>
         )}
         {selected && <circle r={19 * z} className="sel-ring" style={{ stroke: color }} />}
+        {props.highlight && <circle r={22 * z} className="hl-ring" />}
         <circle r={14 * z} className="node-under" />
         <circle r={14 * z} className="node-bg" style={{ fill: `${color}26`, stroke: color }} />
         <Icon x={-8 * z} y={-8 * z} width={16 * z} height={16 * z} color={color} strokeWidth={2} />
@@ -1707,6 +1833,7 @@ function BranchG(props: {
   selected: boolean
   selectBranch: () => void
   itemSelection: Set<string>
+  highlightId: string | null
   proj: ReturnType<typeof useActiveProject>
   itemPointerDown: (e: React.PointerEvent, item: Item) => void
   itemContextMenu: (e: React.MouseEvent, item: Item) => void
@@ -1768,7 +1895,7 @@ function BranchG(props: {
               return (
                 <g
                   key={pi.item.id}
-                  className={`node ${pi.ghost ? 'ghost' : ''} ${sel ? 'sel' : ''}`}
+                  className={`node ${pi.ghost ? 'ghost' : ''} ${sel ? 'sel' : ''} ${props.highlightId === pi.item.id ? 'hl' : ''}`}
                   transform={`translate(${pi.x}, ${pi.y})`}
                   onPointerDown={e => props.itemPointerDown(e, pi.item)}
                   onContextMenu={e => props.itemContextMenu(e, pi.item)}
@@ -1777,6 +1904,7 @@ function BranchG(props: {
                 >
                   <g className="node-inner pop">
                     {sel && <circle r={16 * z} className="sel-ring" style={{ stroke: t?.color }} />}
+                    {props.highlightId === pi.item.id && <circle r={18 * z} className="hl-ring" />}
                     <circle r={11 * z} className="node-under" />
                     <circle r={11 * z} className="node-bg" style={{ fill: `${t?.color}26`, stroke: t?.color }} />
                     <Icon x={-6.5 * z} y={-6.5 * z} width={13 * z} height={13 * z} color={t?.color} strokeWidth={2} />

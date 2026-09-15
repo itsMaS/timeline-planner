@@ -8,8 +8,8 @@ import type { Project } from './types'
  * activeViewId) is deliberately excluded so it never syncs between people.
  */
 
-export const SYNC_COLLECTIONS = ['types', 'typeFolders', 'layers', 'sections', 'branches', 'items', 'views'] as const
-export const SYNC_SCALARS = ['name', 'hierarchyLevels', 'settings'] as const
+export const SYNC_COLLECTIONS = ['hierarchyLevels', 'fields', 'processors', 'types', 'typeFolders', 'layers', 'sections', 'branches', 'items', 'views'] as const
+export const SYNC_SCALARS = ['name', 'settings'] as const
 
 export type ColKey = typeof SYNC_COLLECTIONS[number]
 export type ScalarKey = typeof SYNC_SCALARS[number]

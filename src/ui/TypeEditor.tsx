@@ -4,8 +4,9 @@ import { folderTree } from '../model/folders'
 import { iconByName } from '../model/icons'
 import { useActiveProject, useStore } from '../model/store'
 import type { ItemType } from '../model/types'
-import { PALETTE, uid } from '../model/util'
+import { PALETTE } from '../model/util'
 import { IconPicker } from './IconPicker'
+import { FieldAttachList } from './SchemaEditors'
 
 export function TypeEditor() {
   const proj = useActiveProject()
@@ -100,25 +101,8 @@ export function TypeEditor() {
         )}
 
         <div className="field">
-          <label>Custom fields</label>
-          {type.fields.map(f => (
-            <div key={f.id} className="row gap">
-              <input
-                className="input grow"
-                value={f.name}
-                onChange={e => edit(t => {
-                  const fd = t.fields.find(x => x.id === f.id)
-                  if (fd) fd.name = e.target.value
-                })}
-              />
-              <button className="ghost-btn" onClick={() => edit(t => { t.fields = t.fields.filter(x => x.id !== f.id) })}>
-                <Trash2 width={14} height={14} />
-              </button>
-            </div>
-          ))}
-          <button className="ghost-btn add" onClick={() => edit(t => t.fields.push({ id: uid(), name: 'New field' }))}>
-            + Add field
-          </button>
+          <label>Fields</label>
+          <FieldAttachList list={type.fields} onChange={list => edit(t => { t.fields = list })} />
         </div>
 
         <div className="modal-foot">

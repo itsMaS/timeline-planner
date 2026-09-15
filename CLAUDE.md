@@ -43,3 +43,21 @@
 - Type folders nest via `TypeFolder.parentId`; helpers live in
   `src/model/folders.ts` and `repairFolders` runs on load/mutate/remote patch to
   cut cycles and dangling links.
+
+## Fields & processors
+
+- Fields are project-global (`Project.fields`, kinds text / int / float / ref).
+  Item types and hierarchy levels attach them via `FieldAttachment` (with an
+  optional per-attachment default that overrides the field's default); items
+  and sections store explicit values in `fieldValues`. Helpers, validation,
+  reference lookups and `repairSchema` live in `src/model/fields.ts`.
+- `Project.hierarchyLevels` are objects (`HierarchyLevel`, id'd); old string
+  arrays and per-type `{id,name}` fields are migrated in `normalizeProject`
+  (deterministically, so shared docs migrate identically on every client).
+- Processors (`Project.processors`, evaluated in `src/model/processors.ts`)
+  are attached to hierarchy levels and aggregate items / nested sections whose
+  start lies inside a section. Results are computed on read, never stored.
+- Reference pick mode, hover highlight and the confirm dialog run through
+  `ui.pickRef`, `ui.highlightId` and `ui.confirm`; deletes of items/sections
+  go through `requestDelete` (`src/ui/deletion.ts`) so referenced entries warn.
+- Panel widths (`ui.sidebarW` / `ui.inspectorW`) persist per browser only.

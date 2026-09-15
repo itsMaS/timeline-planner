@@ -1,5 +1,6 @@
+import { newFieldDef } from './fields'
+import { blankProject, newLevel } from './store'
 import type { Item, Project } from './types'
-import { blankProject } from './store'
 import { uid } from './util'
 
 function item(p: Project, typeName: string, pos: number, title: string, extra?: Partial<Item>): Item {
@@ -13,42 +14,54 @@ function item(p: Project, typeName: string, pos: number, title: string, extra?: 
 
 export function linearGameTemplate(): Project {
   const p = blankProject('Linear game')
-  p.hierarchyLevels = ['Chapter', 'Level', 'Section']
+  p.hierarchyLevels = ['Chapter', 'Level', 'Section'].map(n => newLevel(n))
   const [critical, major, minor, detail] = p.layers.map(l => l.id)
+  // Global fields + processors: a small demo of the coin-counting workflow.
+  const howDies = newFieldDef(uid(), 'How the player dies', 'text')
+  const coins = { ...newFieldDef(uid(), 'Coins', 'int'), min: 0, unit: 'coins', showInTooltip: true, help: 'Currency the player can earn here.' }
+  p.fields = [howDies, coins]
   p.types = [
     { id: uid(), name: 'Story beat', icon: 'BookOpen', color: '#3b82f6', defaultLayerId: critical, fields: [] },
-    { id: uid(), name: 'Death opportunity', icon: 'Skull', color: '#ef4444', defaultLayerId: major, fields: [{ id: uid(), name: 'How the player dies' }] },
-    { id: uid(), name: 'Encounter', icon: 'Swords', color: '#f97316', defaultLayerId: major, fields: [] },
+    { id: uid(), name: 'Death opportunity', icon: 'Skull', color: '#ef4444', defaultLayerId: major, fields: [{ fieldId: howDies.id, defaultValue: null }] },
+    { id: uid(), name: 'Encounter', icon: 'Swords', color: '#f97316', defaultLayerId: major, fields: [{ fieldId: coins.id, defaultValue: 3 }] },
     { id: uid(), name: 'Mechanic unlock', icon: 'Key', color: '#22c55e', defaultLayerId: major, fields: [] },
     { id: uid(), name: 'Cutscene', icon: 'Clapperboard', color: '#a855f7', defaultLayerId: minor, fields: [] },
     { id: uid(), name: 'Checkpoint', icon: 'Flag', color: '#14b8a6', defaultLayerId: detail, fields: [] },
     { id: uid(), name: 'Ambient detail', icon: 'Sparkles', color: '#eab308', defaultLayerId: detail, fields: [] },
   ]
+  const encounter = p.types.find(t => t.name === 'Encounter')!
+  const coinTotal = { id: uid(), name: 'Coin total', op: 'sum' as const, fieldId: coins.id, targets: [] }
+  const enemies = { id: uid(), name: 'Enemies', op: 'count' as const, fieldId: null, targets: [encounter.id] }
+  p.processors = [coinTotal, enemies]
+  p.hierarchyLevels[0].processors = [
+    { processorId: coinTotal.id, showOnBand: true },
+    { processorId: enemies.id, showOnBand: true },
+  ]
   p.sections = [
-    { id: uid(), name: 'Chapter 1 — The Descent', depth: 0, start: 0, end: 25 },
-    { id: uid(), name: 'Chapter 2 — The City', depth: 0, start: 25, end: 50 },
-    { id: uid(), name: 'Chapter 3 — The Truth', depth: 0, start: 50, end: 75 },
-    { id: uid(), name: 'Chapter 4 — The Ascent', depth: 0, start: 75, end: 100 },
-    { id: uid(), name: 'Tutorial cave', depth: 1, start: 0, end: 10 },
-    { id: uid(), name: 'The chasm', depth: 1, start: 10, end: 25 },
-    { id: uid(), name: 'Market district', depth: 1, start: 25, end: 38 },
-    { id: uid(), name: 'Undercity', depth: 1, start: 38, end: 50 },
-    { id: uid(), name: 'First steps', depth: 2, start: 0, end: 4 },
-    { id: uid(), name: 'The drop', depth: 2, start: 4, end: 10 },
+    { id: uid(), name: 'Chapter 1 — The Descent', depth: 0, start: 0, end: 25, fieldValues: {} },
+    { id: uid(), name: 'Chapter 2 — The City', depth: 0, start: 25, end: 50, fieldValues: {} },
+    { id: uid(), name: 'Chapter 3 — The Truth', depth: 0, start: 50, end: 75, fieldValues: {} },
+    { id: uid(), name: 'Chapter 4 — The Ascent', depth: 0, start: 75, end: 100, fieldValues: {} },
+    { id: uid(), name: 'Tutorial cave', depth: 1, start: 0, end: 10, fieldValues: {} },
+    { id: uid(), name: 'The chasm', depth: 1, start: 10, end: 25, fieldValues: {} },
+    { id: uid(), name: 'Market district', depth: 1, start: 25, end: 38, fieldValues: {} },
+    { id: uid(), name: 'Undercity', depth: 1, start: 38, end: 50, fieldValues: {} },
+    { id: uid(), name: 'First steps', depth: 2, start: 0, end: 4, fieldValues: {} },
+    { id: uid(), name: 'The drop', depth: 2, start: 4, end: 10, fieldValues: {} },
   ]
   p.items = [
     item(p, 'Story beat', 1, 'Opening — waking up'),
     item(p, 'Cutscene', 2, 'Intro cinematic'),
     item(p, 'Mechanic unlock', 3.5, 'Learn to move & jump'),
     item(p, 'Checkpoint', 4, 'CP: cave mouth'),
-    item(p, 'Death opportunity', 5, 'Falling rocks', { duration: 4, fieldValues: {}, description: 'Player can be crushed while crossing the scree field.' }),
-    item(p, 'Encounter', 7, 'First creature'),
+    item(p, 'Death opportunity', 5, 'Falling rocks', { duration: 4, fieldValues: { [howDies.id]: 'Crushed by rockfall' }, description: 'Player can be crushed while crossing the scree field.' }),
+    item(p, 'Encounter', 7, 'First creature', { fieldValues: { [coins.id]: 1 } }),
     item(p, 'Story beat', 10, 'Meet the guide'),
     item(p, 'Mechanic unlock', 12, 'Grapple hook'),
     item(p, 'Death opportunity', 13, 'The chasm', { duration: 10, description: 'Any missed grapple over the chasm is fatal.' }),
     item(p, 'Checkpoint', 15, 'CP: ledge'),
     item(p, 'Ambient detail', 16, 'Distant city lights'),
-    item(p, 'Encounter', 18, 'Nest ambush'),
+    item(p, 'Encounter', 18, 'Nest ambush', { fieldValues: { [coins.id]: 8 } }),
     item(p, 'Story beat', 24, 'First sight of the city'),
     item(p, 'Story beat', 25.5, 'Arrival at the gates'),
     item(p, 'Cutscene', 26, 'Gate confrontation'),
@@ -99,7 +112,7 @@ export function linearGameTemplate(): Project {
 
 export function filmTemplate(): Project {
   const p = blankProject('Film script')
-  p.hierarchyLevels = ['Act', 'Sequence', 'Scene']
+  p.hierarchyLevels = ['Act', 'Sequence', 'Scene'].map(n => newLevel(n))
   const [critical, major, minor] = p.layers.map(l => l.id)
   p.types = [
     { id: uid(), name: 'Plot point', icon: 'Star', color: '#f59e0b', defaultLayerId: critical, fields: [] },
@@ -108,9 +121,9 @@ export function filmTemplate(): Project {
     { id: uid(), name: 'Setpiece', icon: 'Flame', color: '#ef4444', defaultLayerId: minor, fields: [] },
   ]
   p.sections = [
-    { id: uid(), name: 'Act I', depth: 0, start: 0, end: 25 },
-    { id: uid(), name: 'Act II', depth: 0, start: 25, end: 75 },
-    { id: uid(), name: 'Act III', depth: 0, start: 75, end: 100 },
+    { id: uid(), name: 'Act I', depth: 0, start: 0, end: 25, fieldValues: {} },
+    { id: uid(), name: 'Act II', depth: 0, start: 25, end: 75, fieldValues: {} },
+    { id: uid(), name: 'Act III', depth: 0, start: 75, end: 100, fieldValues: {} },
   ]
   p.items = [
     item(p, 'Plot point', 3, 'Opening image'),
@@ -128,7 +141,7 @@ export function filmTemplate(): Project {
 
 export function projectPlanTemplate(): Project {
   const p = blankProject('Project plan')
-  p.hierarchyLevels = ['Phase', 'Milestone', 'Sprint']
+  p.hierarchyLevels = ['Phase', 'Milestone', 'Sprint'].map(n => newLevel(n))
   const [critical, major, minor] = p.layers.map(l => l.id)
   p.types = [
     { id: uid(), name: 'Milestone', icon: 'Milestone', color: '#3b82f6', defaultLayerId: critical, fields: [] },
@@ -137,9 +150,9 @@ export function projectPlanTemplate(): Project {
     { id: uid(), name: 'Decision', icon: 'GitFork', color: '#a855f7', defaultLayerId: minor, fields: [] },
   ]
   p.sections = [
-    { id: uid(), name: 'Discovery', depth: 0, start: 0, end: 20 },
-    { id: uid(), name: 'Build', depth: 0, start: 20, end: 70 },
-    { id: uid(), name: 'Launch', depth: 0, start: 70, end: 100 },
+    { id: uid(), name: 'Discovery', depth: 0, start: 0, end: 20, fieldValues: {} },
+    { id: uid(), name: 'Build', depth: 0, start: 20, end: 70, fieldValues: {} },
+    { id: uid(), name: 'Launch', depth: 0, start: 70, end: 100, fieldValues: {} },
   ]
   p.items = [
     item(p, 'Milestone', 20, 'Spec approved'),

@@ -90,7 +90,8 @@ export function itemMatchesFilters(p: Project, it: Item, f: Filters): boolean {
   if (f.tags.length && !f.tags.some(t => it.tags.includes(t))) return false
   if (f.text.trim()) {
     const q = f.text.trim().toLowerCase()
-    const hay = `${it.title} ${it.description} ${it.tags.join(' ')}`.toLowerCase()
+    const extra = Object.values(it.fieldValues ?? {}).filter(v => typeof v === 'string' || typeof v === 'number').join(' ')
+    const hay = `${it.title} ${it.description} ${it.tags.join(' ')} ${extra}`.toLowerCase()
     if (!hay.includes(q)) return false
   }
   return true

@@ -1,8 +1,9 @@
 import { create } from 'zustand'
 import { repairFolders } from './folders'
+import { newFieldDef, normalizeFieldDef, repairSchema } from './fields'
 import { refreshSectionDepths } from './layout'
 import { applyPatch, diffProject, type Patch } from './patch'
-import type { Camera, Filters, Id, Project, TimelineSettings } from './types'
+import type { Camera, FieldAttachment, FieldDef, FieldValue, Filters, HierarchyLevel, Id, Project, TimelineSettings } from './types'
 import { uid } from './util'
 
 export const emptyFilters = (): Filters => ({ offTypes: [], offLayers: [], tags: [], text: '' })
@@ -28,7 +29,10 @@ export function normalizeProject(p: Project): Project {
     bandStrength: s.bandStrength ?? d.bandStrength,
     sectionStyle: { ...d.sectionStyle, ...s.sectionStyle },
   }
-  p.hierarchyLevels ??= ['Chapter', 'Level', 'Section']
+  p.hierarchyLevels = normalizeLevels(p.hierarchyLevels)
+  p.fields = Array.isArray(p.fields) ? p.fields.map(f => normalizeFieldDef(f)) : []
+  p.processors = Array.isArray(p.processors) ? p.processors : []
+  for (const pr of p.processors) { pr.targets ??= []; pr.fieldId ??= null }
   p.types ??= []
   p.layers ??= []
   p.sections ??= []
@@ -42,13 +46,70 @@ export function normalizeProject(p: Project): Project {
     l.size ??= 1
     l.minZoom ??= 0
   }
-  for (const sc of p.sections) sc.description ??= ''
+  for (const sc of p.sections) { sc.description ??= ''; sc.fieldValues ??= {} }
+  for (const it of p.items) it.fieldValues ??= {}
   p.typeFolders ??= []
   for (const f of p.typeFolders) f.parentId ??= null
   for (const t of p.types) t.folderId ??= null
+  migrateLegacyFields(p)
   repairFolders(p)
   refreshSectionDepths(p)
+  repairSchema(p)
   return p
+}
+
+export const DEFAULT_LEVEL_NAMES = ['Chapter', 'Level', 'Section']
+
+export const newLevel = (name: string, id = uid()): HierarchyLevel => ({ id, name, fields: [], processors: [] })
+
+/**
+ * Hierarchy levels used to be plain strings. Migrated ids are derived from
+ * the index so every collaborator's copy of a shared document migrates to
+ * the same ids and later patches line up.
+ */
+function normalizeLevels(raw: unknown): HierarchyLevel[] {
+  const list = Array.isArray(raw) && raw.length ? raw : DEFAULT_LEVEL_NAMES
+  return list.map((l, i) => {
+    if (typeof l === 'string') return newLevel(l, `level-${i}`)
+    const o = (l ?? {}) as Partial<HierarchyLevel>
+    return {
+      id: o.id ?? `level-${i}`,
+      name: o.name ?? `Level ${i + 1}`,
+      fields: Array.isArray(o.fields) ? o.fields.map(a => ({ fieldId: a.fieldId, defaultValue: a.defaultValue ?? null })) : [],
+      processors: Array.isArray(o.processors) ? o.processors.map(a => ({ processorId: a.processorId, showOnBand: !!a.showOnBand })) : [],
+    }
+  })
+}
+
+/**
+ * Per-type text fields ({ id, name }) become global fields; same-named ones
+ * merge into a single definition (first occurrence wins the id, so the
+ * migration is deterministic across collaborators) and item values follow.
+ */
+function migrateLegacyFields(p: Project) {
+  const remap = new Map<Id, Id>()
+  for (const t of p.types) {
+    t.fields ??= []
+    const next: FieldAttachment[] = []
+    for (const raw of t.fields as unknown as ({ id: Id; name: string } | FieldAttachment)[]) {
+      if ('fieldId' in raw) { next.push({ fieldId: raw.fieldId, defaultValue: raw.defaultValue ?? null }); continue }
+      const key = (raw.name ?? '').trim().toLowerCase()
+      let def: FieldDef | undefined = p.fields.find(f => f.kind === 'text' && f.name.trim().toLowerCase() === key)
+      if (!def) { def = newFieldDef(raw.id, raw.name || 'Field', 'text'); p.fields.push(def) }
+      if (def.id !== raw.id) remap.set(raw.id, def.id)
+      next.push({ fieldId: def.id, defaultValue: null })
+    }
+    t.fields = next
+  }
+  if (!remap.size) return
+  for (const it of p.items) {
+    for (const [from, to] of remap) {
+      const v = it.fieldValues[from] as FieldValue | undefined
+      if (v === undefined) continue
+      delete it.fieldValues[from]
+      if (it.fieldValues[to] === undefined) it.fieldValues[to] = v
+    }
+  }
 }
 
 export function blankProject(name: string): Project {
@@ -62,7 +123,9 @@ export function blankProject(name: string): Project {
     schemaVersion: 1,
     id: uid(),
     name,
-    hierarchyLevels: ['Chapter', 'Level', 'Section'],
+    hierarchyLevels: DEFAULT_LEVEL_NAMES.map(n => newLevel(n)),
+    fields: [],
+    processors: [],
     types: [
       { id: uid(), name: 'Note', icon: 'StickyNote', color: '#0ea5e9', defaultLayerId: layers[1].id, fields: [] },
     ],
@@ -87,6 +150,21 @@ export interface Toast {
   undo?: boolean
   key: number
 }
+
+export interface ConfirmRequest {
+  title: string
+  message: string
+  /** Affected things, listed under the message. */
+  list?: string[]
+  okLabel?: string
+  danger?: boolean
+  onOk: () => void
+}
+
+export const SIDEBAR_W = 271
+export const INSPECTOR_W = 292
+export const clampSidebarW = (w: number) => Math.round(Math.max(200, Math.min(600, w)))
+export const clampInspectorW = (w: number) => Math.round(Math.max(240, Math.min(720, w)))
 
 // ---------------------------------------------------------------- sharing
 
@@ -143,6 +221,19 @@ interface UIState {
   tool: Tool
   overlay: 'templates' | 'cheatsheet' | 'settings' | 'share' | null
   editTypeId: Id | null
+  /** Field / processor / hierarchy-level editor modals. */
+  editFieldId: Id | null
+  editProcessorId: Id | null
+  editLevelId: Id | null
+  /** Entity glowing on the canvas (hovered in a reference search). */
+  highlightId: Id | null
+  /** Reference pick mode: the next canvas click fills this field. */
+  pickRef: { ownerId: Id; fieldId: Id } | null
+  /** Pending confirmation dialog. */
+  confirm: ConfirmRequest | null
+  /** Panel widths in px (per browser, never synced). */
+  sidebarW: number
+  inspectorW: number
   dragTypeId: Id | null
   /** A sidebar folder being dragged onto another folder (or out to the top level). */
   dragFolderId: Id | null
@@ -218,6 +309,7 @@ function persistSoon(get: () => Store) {
         prefs: {
           ghostHidden: s.ui.ghostHidden, density: s.ui.density, theme: s.ui.theme,
           soundOn: s.ui.soundOn, animLevel: s.ui.animLevel, snap: s.ui.snap, magnet: s.ui.magnet, ripple: s.ui.ripple,
+          sidebarW: s.ui.sidebarW, inspectorW: s.ui.inspectorW,
         },
       }))
       for (const p of s.projects) {
@@ -286,6 +378,14 @@ export const useStore = create<Store>((set, get) => ({
     tool: 'select',
     overlay: init.fresh ? 'templates' : null,
     editTypeId: null,
+    editFieldId: null,
+    editProcessorId: null,
+    editLevelId: null,
+    highlightId: null,
+    pickRef: null,
+    confirm: null,
+    sidebarW: clampSidebarW(init.prefs.sidebarW ?? SIDEBAR_W),
+    inspectorW: clampInspectorW(init.prefs.inspectorW ?? INSPECTOR_W),
     dragTypeId: null,
     dragFolderId: null,
     lastTypeId: init.projects[0]?.types[0]?.id ?? null,
@@ -295,7 +395,8 @@ export const useStore = create<Store>((set, get) => ({
   } as UIState,
 
   setUI: patch => { set(s => ({ ui: { ...s.ui, ...patch } })); persistSoon(get) },
-  select: ids => set(s => ({ ui: { ...s.ui, selection: ids } })),
+  // Changing the selection always leaves reference pick mode and clears any glow.
+  select: ids => set(s => ({ ui: { ...s.ui, selection: ids, pickRef: null, highlightId: null } })),
   active: () => {
     const s = get()
     return s.projects.find(p => p.id === s.activeId) ?? s.projects[0]
@@ -309,6 +410,7 @@ export const useStore = create<Store>((set, get) => ({
     recipe(draft)
     repairFolders(draft)
     refreshSectionDepths(draft)
+    repairSchema(draft)
     const fwd = diffProject(cur, draft)
     if (fwd) {
       const inv = diffProject(draft, cur)!
@@ -354,6 +456,7 @@ export const useStore = create<Store>((set, get) => ({
     const draft = structuredClone(cur)
     applyPatch(draft, entry.inv)
     refreshSectionDepths(draft)
+    repairSchema(draft)
     set({ projects: s.projects.map(p => (p.id === cur.id ? draft : p)), ui: { ...s.ui, selection: [] } })
     persistSoon(get)
     syncHooks.onLocalPatch?.(cur.id, entry.inv)
@@ -370,6 +473,7 @@ export const useStore = create<Store>((set, get) => ({
     const draft = structuredClone(cur)
     applyPatch(draft, entry.fwd)
     refreshSectionDepths(draft)
+    repairSchema(draft)
     set({ projects: s.projects.map(p => (p.id === cur.id ? draft : p)), ui: { ...s.ui, selection: [] } })
     persistSoon(get)
     syncHooks.onLocalPatch?.(cur.id, entry.fwd)
@@ -459,6 +563,7 @@ export const useStore = create<Store>((set, get) => ({
     applyPatch(draft, patch)
     repairFolders(draft)
     refreshSectionDepths(draft)
+    repairSchema(draft)
     set({ projects: s.projects.map(p => (p.id === projectId ? draft : p)) })
     persistSoon(get)
   },
@@ -474,6 +579,7 @@ export const useStore = create<Store>((set, get) => ({
     next.activeViewId = cur.activeViewId
     for (const p of reapply) applyPatch(next, p)
     refreshSectionDepths(next)
+    repairSchema(next)
     const share = s.shares[projectId]
     set({
       projects: s.projects.map(p => (p.id === projectId ? next : p)),

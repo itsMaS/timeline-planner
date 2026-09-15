@@ -1,10 +1,15 @@
 import React, { useMemo, useState } from 'react'
 import { ArrowDown, ArrowUp, Copy, Trash2, X } from 'lucide-react'
+import { ChevronDown, ChevronRight } from 'lucide-react'
+import { attachmentsFor, effectiveValue, levelOf, type Owner } from '../model/fields'
 import { iconByName } from '../model/icons'
 import { typeOf } from '../model/layout'
+import { processorResults, type ProcessorResult } from '../model/processors'
 import { useActiveProject, useCanEdit, useStore } from '../model/store'
 import type { Branch, Item, Section } from '../model/types'
 import { formatUnit, uid, unitSuffix } from '../model/util'
+import { requestDelete } from './deletion'
+import { entityLook, FieldRow, jumpTo, ReadFieldValue, ReferencedBy } from './FieldInputs'
 import { Markdown } from './Markdown'
 import { nav } from './nav'
 import { uploadImage } from '../sync/share'
@@ -23,7 +28,7 @@ export function Inspector() {
   if (!canEdit) {
     // View mode: everything is readable, nothing is editable.
     return (
-      <aside className="inspector readonly">
+      <aside className="inspector readonly" style={{ width: ui.inspectorW, minWidth: ui.inspectorW }}>
         {branch && <ReadBranchPanel branch={branch} />}
         {section && <ReadSectionPanel section={section} />}
         {itemIds.length === 1 && <ReadItemPanel id={itemIds[0]} />}
@@ -32,7 +37,7 @@ export function Inspector() {
     )
   }
   return (
-    <aside className="inspector">
+    <aside className="inspector" style={{ width: ui.inspectorW, minWidth: ui.inspectorW }}>
       {branch && <BranchPanel branch={branch} />}
       {section && <SectionPanel section={section} />}
       {itemIds.length === 1 && <ItemPanel id={itemIds[0]} />}
@@ -93,7 +98,10 @@ function ReadItemPanel({ id }: { id: string }) {
     : null
   const suffix = unitSuffix(proj.settings.unit.preset, proj.settings.unit.custom)
   const fmt = (v: number) => formatUnit(v, Math.max(Math.abs(v), 0.01), suffix, proj.settings.unit.preset)
-  const fields = (type?.fields ?? []).filter(f => (item.fieldValues[f.id] ?? '').trim())
+  const owner: Owner = { kind: 'item', entity: item }
+  const fields = attachmentsFor(proj, owner)
+    .map(a => ({ ...a, value: effectiveValue(a.field, a.att, item.fieldValues[a.field.id]) }))
+    .filter(a => a.value !== null)
   return (
     <>
       <Head title={type?.name ?? 'Item'} />
@@ -126,8 +134,9 @@ function ReadItemPanel({ id }: { id: string }) {
           </ReadField>
         )}
         {fields.map(f => (
-          <ReadField key={f.id} label={f.name}>{item.fieldValues[f.id]}</ReadField>
+          <ReadField key={f.field.id} label={f.field.name}><ReadFieldValue field={f.field} value={f.value} /></ReadField>
         ))}
+        <ReferencedBy id={item.id} />
         <div className="field">
           <label>Description</label>
           <div className="md-preview"><Markdown text={item.description || '*no description*'} /></div>
@@ -218,9 +227,13 @@ function ReadSectionPanel({ section }: { section: Section }) {
   )
   const suffix = unitSuffix(proj.settings.unit.preset, proj.settings.unit.custom)
   const fmt = (v: number) => formatUnit(v, Math.max(Math.abs(v), 0.01), suffix, proj.settings.unit.preset)
+  const owner: Owner = { kind: 'section', entity: section }
+  const fields = attachmentsFor(proj, owner)
+    .map(a => ({ ...a, value: effectiveValue(a.field, a.att, section.fieldValues?.[a.field.id]) }))
+    .filter(a => a.value !== null)
   return (
     <>
-      <Head title={proj.hierarchyLevels[section.depth] ?? 'Section'} />
+      <Head title={levelOf(proj, section)?.name ?? 'Section'} />
       <div className="insp-body">
         <div className="read-title"><h3>{section.name || <span className="muted">Untitled</span>}</h3></div>
         <div className="row gap">
@@ -228,6 +241,11 @@ function ReadSectionPanel({ section }: { section: Section }) {
           <ReadField label="Ends">{fmt(section.end)}</ReadField>
           <ReadField label="Length">{fmt(section.end - section.start)}</ReadField>
         </div>
+        {fields.map(f => (
+          <ReadField key={f.field.id} label={f.field.name}><ReadFieldValue field={f.field} value={f.value} /></ReadField>
+        ))}
+        <ProcessorPanel section={section} />
+        <ReferencedBy id={section.id} />
         <div className="field">
           <label>Description</label>
           <div className="md-preview"><Markdown text={section.description || '*no description*'} /></div>
@@ -285,7 +303,7 @@ function ItemPanel({ id }: { id: string }) {
         ><Copy width={14} height={14} /></button>
         <button
           className="ghost-btn danger" title="Delete (Del)"
-          onClick={() => { mutate(p => { p.items = p.items.filter(i => i.id !== id) }); select([]); showToast('Item deleted.', true) }}
+          onClick={() => requestDelete({ itemIds: [id] }, () => { select([]); showToast('Item deleted.', true) })}
         ><Trash2 width={14} height={14} /></button>
       </Head>
       <div className="insp-body">
@@ -359,16 +377,14 @@ function ItemPanel({ id }: { id: string }) {
           />
           {item.link && <a className="link-btn" href={item.link} target="_blank" rel="noreferrer noopener">open ↗</a>}
         </div>
-        {type?.fields.map(f => (
-          <div key={f.id} className="field">
-            <label>{f.name}</label>
-            <input
-              className="input"
-              value={item.fieldValues[f.id] ?? ''}
-              onChange={e => edit(it => { it.fieldValues[f.id] = e.target.value })}
-            />
-          </div>
+        {attachmentsFor(proj, { kind: 'item', entity: item }).map(({ att, field }) => (
+          <FieldRow
+            key={field.id} field={field} att={att} ownerId={item.id}
+            raw={item.fieldValues[field.id]}
+            onChange={v => edit(it => { if (v === null) delete it.fieldValues[field.id]; else it.fieldValues[field.id] = v })}
+          />
         ))}
+        <ReferencedBy id={item.id} />
         <div className="field">
           <label>
             Description <span className="muted">(markdown · paste images)</span>
@@ -431,7 +447,7 @@ function BulkPanel({ ids }: { ids: string[] }) {
       <Head title={`${ids.length} items`}>
         <button
           className="ghost-btn danger" title="Delete all"
-          onClick={() => { mutate(p => { p.items = p.items.filter(i => !ids.includes(i.id)) }); select([]); showToast(`${ids.length} items deleted.`, true) }}
+          onClick={() => requestDelete({ itemIds: ids }, () => { select([]); showToast(`${ids.length} items deleted.`, true) })}
         ><Trash2 width={14} height={14} /></button>
       </Head>
       <div className="insp-body">
@@ -483,15 +499,10 @@ function BranchPanel({ branch }: { branch: Branch }) {
       <Head title="Branch">
         <button
           className="ghost-btn danger" title="Delete branch"
-          onClick={() => {
-            const pathIds = branch.paths.map(p => p.id)
-            mutate(p => {
-              p.branches = p.branches.filter(b => b.id !== branch.id)
-              for (const it of p.items) if (it.pathId && pathIds.includes(it.pathId)) it.pathId = null
-            })
+          onClick={() => requestDelete({ branchIds: [branch.id] }, () => {
             select([])
             showToast('Branch deleted — its items moved to the main line.', true)
-          }}
+          })}
         ><Trash2 width={14} height={14} /></button>
       </Head>
       <div className="insp-body">
@@ -580,10 +591,10 @@ function SectionPanel({ section }: { section: Section }) {
   const suffix = unitSuffix(proj.settings.unit.preset, proj.settings.unit.custom)
   return (
     <>
-      <Head title={proj.hierarchyLevels[section.depth] ?? 'Section'}>
+      <Head title={levelOf(proj, section)?.name ?? 'Section'}>
         <button
           className="ghost-btn danger" title="Delete section"
-          onClick={() => { mutate(p => { p.sections = p.sections.filter(s => s.id !== section.id) }); select([]); showToast('Section deleted.', true) }}
+          onClick={() => requestDelete({ sectionIds: [section.id] }, () => { select([]); showToast('Section deleted.', true) })}
         ><Trash2 width={14} height={14} /></button>
       </Head>
       <div className="insp-body">
@@ -603,9 +614,19 @@ function SectionPanel({ section }: { section: Section }) {
         <div className="field">
           <label>Level</label>
           <select className="input" value={section.depth} onChange={e => edit(s => { s.depth = Number(e.target.value) })}>
-            {proj.hierarchyLevels.map((n, d) => <option key={d} value={d}>{n}</option>)}
+            {proj.hierarchyLevels.map((l, d) => <option key={l.id} value={d}>{l.name}</option>)}
           </select>
+          <div className="sb-hint">nesting is geometric — a section inside another sits one level deeper</div>
         </div>
+        {attachmentsFor(proj, { kind: 'section', entity: section }).map(({ att, field }) => (
+          <FieldRow
+            key={field.id} field={field} att={att} ownerId={section.id}
+            raw={section.fieldValues?.[field.id]}
+            onChange={v => edit(sc => { sc.fieldValues ??= {}; if (v === null) delete sc.fieldValues[field.id]; else sc.fieldValues[field.id] = v })}
+          />
+        ))}
+        <ProcessorPanel section={section} />
+        <ReferencedBy id={section.id} />
         <div className="field">
           <label>
             Description <span className="muted">(markdown)</span>
@@ -651,3 +672,72 @@ function SectionPanel({ section }: { section: Section }) {
 }
 
 const round2 = (n: number) => Math.round(n * 100) / 100
+
+// ------------------------------------------------------------------ processors
+
+/** Results of the processors attached to the section's level, each expandable to its matches. */
+function ProcessorPanel({ section }: { section: Section }) {
+  const proj = useActiveProject()
+  const canEdit = useCanEdit()
+  const setUI = useStore(s => s.setUI)
+  const results = useMemo(() => processorResults(proj, section), [proj, section])
+  const [openId, setOpenId] = useState<string | null>(null)
+  const level = levelOf(proj, section)
+  if (!results.length) {
+    if (!canEdit || !level) return null
+    return (
+      <div className="field">
+        <label>Processors</label>
+        <div className="sb-hint">
+          none on this level yet — <button className="link-btn" onClick={() => setUI({ editLevelId: level.id })}>edit “{level.name}”</button>
+        </div>
+      </div>
+    )
+  }
+  return (
+    <div className="field">
+      <label>
+        Processors
+        {canEdit && level && (
+          <button className="link-btn right" onClick={() => setUI({ editLevelId: level.id })}>edit level</button>
+        )}
+      </label>
+      <div className="proc-list">
+        {results.map(r => <ProcessorRow key={r.proc.id} r={r} open={openId === r.proc.id} toggle={() => setOpenId(o => (o === r.proc.id ? null : r.proc.id))} />)}
+      </div>
+    </div>
+  )
+}
+
+function ProcessorRow({ r, open, toggle }: { r: ProcessorResult; open: boolean; toggle: () => void }) {
+  const proj = useActiveProject()
+  const Chev = open ? ChevronDown : ChevronRight
+  return (
+    <div className={`proc-row ${r.error ? 'err' : ''}`}>
+      <button className="proc-head" onClick={toggle} title={r.error ?? `${r.matched.length} matched`}>
+        <Chev width={12} height={12} />
+        <span className="proc-name">{r.proc.name}</span>
+        <span className="grow" />
+        <span className="proc-value">{r.error ? r.error : r.text}</span>
+        <span className="count">{r.matched.length}</span>
+      </button>
+      {open && (
+        <div className="insp-items">
+          {r.matched.length === 0 && <div className="sb-hint">nothing inside matches</div>}
+          {r.matched.map(o => {
+            const look = entityLook(proj, o)
+            const Icon = iconByName(look.icon)
+            const title = o.kind === 'item' ? o.entity.title : o.entity.name
+            return (
+              <button key={o.entity.id} className="insp-item-row" title="Jump" onClick={() => jumpTo(proj, o.entity.id)}>
+                <Icon width={13} height={13} color={look.color} strokeWidth={2} />
+                <span className="insp-item-title">{title || '…'}</span>
+                <span className="insp-item-pos">{look.typeName}</span>
+              </button>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}

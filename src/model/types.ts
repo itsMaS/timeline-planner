@@ -1,8 +1,72 @@
 export type Id = string
 
+export type FieldKind = 'text' | 'int' | 'float' | 'ref'
+
+/** Stored value: text → string, int/float → number, ref → target ids. */
+export type FieldValue = string | number | Id[]
+
+/** A project-wide field definition. Types and hierarchy levels attach these. */
 export interface FieldDef {
   id: Id
   name: string
+  kind: FieldKind
+  /** Short hint shown under the input. */
+  help: string
+  /** Warn (red outline) when the owner leaves it empty. */
+  required: boolean
+  /** Show the value in the canvas hover tooltip. */
+  showInTooltip: boolean
+  /** Global fallback default; an attachment may override it. null = none. */
+  defaultValue: FieldValue | null
+  /** text: hard character limit; null = unlimited. */
+  maxLength: number | null
+  /** int / float bounds; null = unbounded. */
+  min: number | null
+  max: number | null
+  /** float: digits after the decimal point; null = free. */
+  decimals: number | null
+  /** int / float: suffix shown after the value (e.g. "coins"). */
+  unit: string
+  /** ref: allowed item type ids and hierarchy level ids; empty = anything. */
+  refTargets: Id[]
+  /** ref: several targets instead of one. */
+  refMultiple: boolean
+  /** ref: draw connector lines on the canvas while the owner is selected. */
+  refShowLinks: boolean
+}
+
+/** A field attached to a type or a hierarchy level. */
+export interface FieldAttachment {
+  fieldId: Id
+  /** Overrides the field's own default for this type/level; null = inherit. */
+  defaultValue: FieldValue | null
+}
+
+export type ProcessorOp = 'sum' | 'count' | 'avg' | 'min' | 'max' | 'distinct'
+
+/** A project-wide aggregation over the items (and child sections) inside a section. */
+export interface ProcessorDef {
+  id: Id
+  name: string
+  op: ProcessorOp
+  /** Field aggregated; null for count. */
+  fieldId: Id | null
+  /** Item type ids / hierarchy level ids to include; empty = everything. */
+  targets: Id[]
+}
+
+export interface ProcessorAttachment {
+  processorId: Id
+  /** Append the result to the section's band label on the canvas. */
+  showOnBand: boolean
+}
+
+/** One level of the section hierarchy (Chapter, Level, …); Section.depth indexes into these. */
+export interface HierarchyLevel {
+  id: Id
+  name: string
+  fields: FieldAttachment[]
+  processors: ProcessorAttachment[]
 }
 
 export interface ItemType {
@@ -11,7 +75,7 @@ export interface ItemType {
   icon: string
   color: string
   defaultLayerId: Id | null
-  fields: FieldDef[]
+  fields: FieldAttachment[]
   /** Folder this type is filed under in the sidebar; null/undefined = root. */
   folderId?: Id | null
 }
@@ -54,6 +118,8 @@ export interface Section {
   end: number
   /** Markdown notes, like an item's description. Normalized to '' on load. */
   description?: string
+  /** Values of the fields attached to the section's hierarchy level. */
+  fieldValues: Record<Id, FieldValue>
 }
 
 export interface BranchPath {
@@ -84,7 +150,7 @@ export interface Item {
   tags: string[]
   link: string
   images: string[]
-  fieldValues: Record<Id, string>
+  fieldValues: Record<Id, FieldValue>
 }
 
 export interface Filters {
@@ -150,7 +216,9 @@ export interface Project {
   schemaVersion: 1
   id: Id
   name: string
-  hierarchyLevels: string[]
+  hierarchyLevels: HierarchyLevel[]
+  fields: FieldDef[]
+  processors: ProcessorDef[]
   types: ItemType[]
   typeFolders: TypeFolder[]
   layers: Layer[]

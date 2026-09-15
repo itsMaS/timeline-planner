@@ -12,7 +12,11 @@ import { uid } from '../model/util'
 import { exportCSV, exportFullSVG, exportJSON, exportPNG } from './export'
 import { CanvasView } from './Canvas'
 import { getClipboard, setClipboard } from './clipboard'
+import { ConfirmDialog } from './Confirm'
+import { requestDelete } from './deletion'
 import { Inspector } from './Inspector'
+import { PanelDivider } from './Panels'
+import { FieldEditor, LevelEditor, ProcessorEditor } from './SchemaEditors'
 import { PresenceBar, ShareModal, TabSyncIcon } from './Share'
 import { Sidebar } from './Sidebar'
 import { TypeEditor } from './TypeEditor'
@@ -38,7 +42,12 @@ export function App() {
       const mod = e.ctrlKey || e.metaKey
 
       if (e.key === 'Escape') {
-        if (s.ui.overlay) setUI({ overlay: null })
+        if (s.ui.confirm) setUI({ confirm: null })
+        else if (s.ui.pickRef) setUI({ pickRef: null })
+        else if (s.ui.overlay) setUI({ overlay: null })
+        else if (s.ui.editFieldId) setUI({ editFieldId: null })
+        else if (s.ui.editProcessorId) setUI({ editProcessorId: null })
+        else if (s.ui.editLevelId) setUI({ editLevelId: null })
         else if (s.ui.editTypeId) setUI({ editTypeId: null })
         else if (s.ui.tool !== 'select') setUI({ tool: 'select' })
         else s.select([])
@@ -145,19 +154,10 @@ export function App() {
     const itemIds = sel.filter(x => !x.includes(':'))
     const branchIds = sel.filter(x => x.startsWith('B:')).map(x => x.slice(2))
     const sectionIds = sel.filter(x => x.startsWith('S:')).map(x => x.slice(2))
-    s.mutate(p => {
-      if (itemIds.length) p.items = p.items.filter(i => !itemIds.includes(i.id))
-      for (const bid of branchIds) {
-        const br = p.branches.find(b => b.id === bid)
-        if (!br) continue
-        const pathIds = br.paths.map(pp => pp.id)
-        for (const it of p.items) if (it.pathId && pathIds.includes(it.pathId)) it.pathId = null
-        p.branches = p.branches.filter(b => b.id !== bid)
-      }
-      if (sectionIds.length) p.sections = p.sections.filter(sc => !sectionIds.includes(sc.id))
+    requestDelete({ itemIds, branchIds, sectionIds }, () => {
+      s.select([])
+      s.showToast('Deleted.', true)
     })
-    s.select([])
-    s.showToast('Deleted.', true)
   }
 
   const applyView = (viewId: string | null) => {
@@ -176,14 +176,20 @@ export function App() {
       <Toolbar applyView={applyView} />
       <div className="main">
         <Sidebar />
+        {ui.sidebarOpen && <PanelDivider side="left" />}
         <CanvasView />
+        {ui.selection.length > 0 && <PanelDivider side="right" />}
         <Inspector />
       </div>
       {ui.editTypeId && <TypeEditor />}
+      {ui.editLevelId && <LevelEditor />}
+      {ui.editProcessorId && <ProcessorEditor />}
+      {ui.editFieldId && <FieldEditor />}
       {ui.overlay === 'templates' && <TemplateModal />}
       {ui.overlay === 'cheatsheet' && <Cheatsheet />}
       {ui.overlay === 'settings' && <SettingsModal />}
       {ui.overlay === 'share' && <ShareModal />}
+      <ConfirmDialog />
       <ToastView />
       <DragGhost />
     </div>
@@ -615,6 +621,7 @@ function Cheatsheet() {
     ['Ctrl+Z / Ctrl+Shift+Z', 'Undo / redo (everything)'],
     ['Ctrl+C / V / D', 'Copy · paste at view center · duplicate'],
     ['Delete', 'Delete selection'],
+    ['Drag the panel edges', 'Resize the sidebar / inspector (double-click to reset)'],
     ['Esc', 'Deselect · close panels · cancel tool'],
   ]
   return (
