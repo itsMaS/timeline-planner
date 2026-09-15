@@ -65,8 +65,10 @@ To ship an update: `npm run build`, commit the regenerated
   a printable outline: sections become headings (outermost level H1, next H2,
   …), items are sub-headings one level below their section with the type's
   icon and name beside the title, and descriptions, custom fields, tags, links
-  and images follow as body text — readable by people and AI agents alike. It
-  opens in a new tab with the print dialog up; pick *Save as PDF*. With a
+  and images follow as body text — readable by people and AI agents alike.
+  Only items currently visible on the canvas are included (filtered-out and
+  hidden-layer items are skipped, so a saved view doubles as an export
+  preset). It opens in a new tab with the print dialog up; pick *Save as PDF*. With a
   section selected (or via the section inspector's document button) only that
   section and everything inside it is exported, starting at H1.
 

@@ -1,7 +1,7 @@
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { iconByName } from '../model/icons'
-import { typeOf } from '../model/layout'
+import { itemMatchesFilters, typeOf } from '../model/layout'
 import type { Item, Project, Section } from '../model/types'
 import { formatUnit, unitSuffix } from '../model/util'
 import { Markdown } from './Markdown'
@@ -16,9 +16,20 @@ import { Markdown } from './Markdown'
  * link and images. Everything is real text so the result reads well for both
  * people and AI agents.
  *
+ * Only items currently visible on the canvas are included: items on a layer
+ * hidden with the eye toggle and items filtered out (types, layers, tags,
+ * text — i.e. ghosted or hidden) are skipped. Sections are always kept.
+ *
  * The PDF itself comes from the browser: the document opens in a new tab with
  * the print dialog already up, where "Save as PDF" is the destination.
  */
+
+/** Same rule the canvas uses to hide an item outright or ghost it. */
+export function isItemVisible(proj: Project, it: Item): boolean {
+  const layerId = it.layerId ?? typeOf(proj, it)?.defaultLayerId ?? null
+  if (layerId && proj.layers.find(l => l.id === layerId)?.eye) return false
+  return itemMatchesFilters(proj, it, proj.filters)
+}
 
 interface SectionNode {
   section: Section
@@ -53,6 +64,7 @@ function buildTree(proj: Project, rootIds: string[] | null): { roots: SectionNod
   }
   const loose: Item[] = []
   for (const it of proj.items) {
+    if (!isItemVisible(proj, it)) continue
     let best: Section | null = null
     for (const sc of proj.sections) {
       if (!contains(sc, it.pos)) continue
@@ -228,6 +240,15 @@ export function buildDocHTML(proj: Project, sectionIds: string[] | null): { html
   const rootNames = roots.map(r => r.section.name || 'Untitled')
   const title = sectionIds && rootNames.length ? `${proj.name} — ${rootNames.join(', ')}` : proj.name
   const total = roots.reduce((s, r) => s + countItems(r), 0) + loose.length
+  const hidden = proj.items.filter(it => !isItemVisible(proj, it)).length
+  const f = proj.filters
+  const activeFilters = [
+    f.offTypes.length && 'types', f.offLayers.length && 'layers', f.tags.length && 'tags',
+    f.text.trim() && `text “${f.text.trim()}”`, proj.layers.some(l => l.eye) && 'hidden layers',
+  ].filter(Boolean)
+  const visibility = hidden > 0
+    ? `${total} visible item${total === 1 ? '' : 's'} (${hidden} hidden by ${activeFilters.join(', ') || 'filters'})`
+    : `${total} item${total === 1 ? '' : 's'}`
   const scope = sectionIds
     ? `${rootNames.length === 1 ? (proj.hierarchyLevels[roots[0].section.depth] ?? 'Section') : 'Sections'}: ${rootNames.join(', ')}`
     : 'Whole timeline'
@@ -239,10 +260,10 @@ export function buildDocHTML(proj: Project, sectionIds: string[] | null): { html
       </div>
       <header className="cover">
         <h1>{title}</h1>
-        <p>{scope} · {total} item{total === 1 ? '' : 's'} · Timeline Planner export, {new Date().toISOString().slice(0, 10)}</p>
+        <p>{scope} · {visibility} · Timeline Planner export, {new Date().toISOString().slice(0, 10)}</p>
       </header>
       {roots.length === 0 && loose.length === 0
-        ? <p className="empty">Nothing to export.</p>
+        ? <p className="empty">{hidden > 0 ? 'Nothing visible to export — every item is hidden by the current filters.' : 'Nothing to export.'}</p>
         : <DocBody proj={proj} roots={roots} loose={loose} />}
     </>,
   )

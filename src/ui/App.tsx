@@ -348,7 +348,7 @@ function Toolbar({ applyView }: { applyView: (id: string | null) => void }) {
                   <Download width={13} height={13} /> CSV of all items
                 </button>
                 <button
-                  title="Sections become headings, items sub-headings with their type and icon. Opens the print dialog — choose “Save as PDF”."
+                  title="Sections become headings, items sub-headings with their type and icon. Only currently visible items are included. Opens the print dialog — choose “Save as PDF”."
                   onClick={() => {
                     if (!exportDocPDF(proj, docSections.length ? docSections.map(sc => sc.id) : null)) {
                       showToast('Pop-up blocked — allow pop-ups for this site to export the document.')
