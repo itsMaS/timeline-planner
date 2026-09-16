@@ -226,7 +226,7 @@ interface UIState {
   /** Dragging one item moves every other item by the same amount. */
   ripple: boolean
   tool: Tool
-  overlay: 'templates' | 'cheatsheet' | 'settings' | 'share' | 'suggest' | null
+  overlay: 'templates' | 'cheatsheet' | 'settings' | 'share' | 'apihelp' | 'suggest' | null
   editTypeId: Id | null
   /** Field / processor / hierarchy-level editor modals. */
   editFieldId: Id | null

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { Check, Cloud, CloudOff, Copy, KeyRound, Link2, RefreshCw, Trash2, X } from 'lucide-react'
+import { Check, Cloud, CloudOff, Copy, HelpCircle, KeyRound, Link2, RefreshCw, Trash2, X } from 'lucide-react'
 import { useActiveProject, useActiveShare, useActiveSync, useStore, type SyncStatus } from '../model/store'
 import { getIdentity, setIdentity } from '../sync/client'
 import { manageApiToken, refreshPresence, regenerateLink, shareLink, shareProject, stopSharing } from '../sync/share'
@@ -48,8 +48,8 @@ export function PresenceBar() {
   )
 }
 
-function CopyField({ label, value, hint, onRegenerate, onRevoke, regenerateTitle = 'Regenerate — the old link stops working' }: {
-  label: string; value: string; hint: string; onRegenerate?: () => void; onRevoke?: () => void; regenerateTitle?: string
+function CopyField({ label, value, hint, onRegenerate, onRevoke, onHelp, regenerateTitle = 'Regenerate — the old link stops working' }: {
+  label: string; value: string; hint: string; onRegenerate?: () => void; onRevoke?: () => void; onHelp?: () => void; regenerateTitle?: string
 }) {
   const [copied, setCopied] = useState(false)
   const copy = async () => {
@@ -62,7 +62,10 @@ function CopyField({ label, value, hint, onRegenerate, onRevoke, regenerateTitle
   }
   return (
     <div className="field">
-      <label>{label} <span className="muted">— {hint}</span></label>
+      <label>
+        {label} <span className="muted">— {hint}</span>
+        {onHelp && <button className="help-btn" title="How to use the API" onClick={onHelp}><HelpCircle width={13} height={13} /></button>}
+      </label>
       <div className="row gap link-row">
         <input className="input grow" readOnly value={value} onFocus={e => e.currentTarget.select()} />
         <button className="ghost-btn" title="Copy" onClick={copy}>
@@ -173,8 +176,9 @@ export function ShareModal() {
               share.apiToken ? (
                 <CopyField
                   label="API token" value={share.apiToken}
-                  hint="for tools such as a Unity editor plugin: reads the timeline, sets fields and tags, adds items"
+                  hint="for tools such as a Unity plugin"
                   regenerateTitle="Rotate — the old token stops working"
+                  onHelp={() => setUI({ overlay: 'apihelp' })}
                   onRegenerate={() => {
                     if (window.confirm('Rotate the API token? Every tool using the old one stops working until it gets the new token.'))
                       run(async () => { await manageApiToken(proj.id, 'rotate') })
@@ -186,10 +190,16 @@ export function ShareModal() {
                 />
               ) : (
                 <div className="field">
-                  <label>API token <span className="muted">— for tools such as a Unity editor plugin (see API.md)</span></label>
+                  <label>
+                    API token <span className="muted">— lets tools such as a Unity plugin read and update this timeline</span>
+                    <button className="help-btn" title="How to use the API" onClick={() => setUI({ overlay: 'apihelp' })}><HelpCircle width={13} height={13} /></button>
+                  </label>
                   <div className="row gap">
                     <button className="ghost-btn" disabled={busy} onClick={() => run(async () => { await manageApiToken(proj.id, 'create') })}>
                       <KeyRound width={13} height={13} /> Create API token
+                    </button>
+                    <button className="ghost-btn" onClick={() => setUI({ overlay: 'apihelp' })}>
+                      <HelpCircle width={13} height={13} /> What can it do?
                     </button>
                   </div>
                 </div>

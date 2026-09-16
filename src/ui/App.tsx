@@ -22,6 +22,7 @@ import { Inspector } from './Inspector'
 import { PanelDivider } from './Panels'
 import { FieldEditor, LevelEditor, ProcessorEditor } from './SchemaEditors'
 import { PresenceBar, ShareModal, TabSyncIcon } from './Share'
+import { ApiHelpModal } from './ApiHelp'
 import { Sidebar } from './Sidebar'
 import { SuggestBar, SuggestModal, exitSuggestSafely } from './Suggest'
 import { TypeEditor } from './TypeEditor'
@@ -198,6 +199,7 @@ export function App() {
       {ui.overlay === 'cheatsheet' && <Cheatsheet />}
       {ui.overlay === 'settings' && <SettingsModal />}
       {ui.overlay === 'share' && <ShareModal />}
+      {ui.overlay === 'apihelp' && <ApiHelpModal />}
       <ConfirmDialog />
       {ui.overlay === 'suggest' && <SuggestModal />}
       <ToastView />

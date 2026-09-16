@@ -62,6 +62,11 @@
   the stored doc, validate values like `src/model/fields.ts` does
   (`api_coerce`), bump `version`, append `timeline_history` rows with source
   `api`, and `realtime.send` the same `patch` message the app broadcasts.
+- In-app reference: the `?` next to the API token row (and "What can it do?"
+  before a token exists) opens `ApiHelpModal` (`src/ui/ApiHelp.tsx`, overlay
+  `apihelp`), which renders capabilities, the call convention, a function
+  table, recipes and copyable examples pre-filled with the real endpoint, key
+  and the tab's token. Keep it in step with `API.md` when the surface changes.
 - The token cannot touch the schema, delete, move items or manage links; keep
   it that way and grow the surface with new `api_*` functions rather than
   widening existing ones. Private helpers are `revoke execute`d from
