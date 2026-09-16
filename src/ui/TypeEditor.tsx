@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { Trash2, X } from 'lucide-react'
+import { Settings2, Trash2, X } from 'lucide-react'
+import { formatValue, kindGlyph, kindLabel, typeAttachments } from '../model/fields'
 import { folderTree } from '../model/folders'
 import { iconByName } from '../model/icons'
 import { useActiveProject, useStore } from '../model/store'
@@ -26,6 +27,7 @@ export function TypeEditor() {
     })
 
   const close = () => setUI({ editTypeId: null })
+  const inherited = typeAttachments(proj, type).filter(a => a.from)
 
   return (
     <div className="modal-scrim" onPointerDown={e => { if (e.target === e.currentTarget) close() }}>
@@ -100,8 +102,26 @@ export function TypeEditor() {
           </div>
         )}
 
+        {inherited.length > 0 && (
+          <div className="field">
+            <label>Inherited fields <span className="muted">(from the type's folders · edit there)</span></label>
+            <div className="attach-list">
+              {inherited.map(({ att, field, from }) => (
+                <div key={field.id} className="attach-row inherited">
+                  <span className="kind-glyph" title={kindLabel(field.kind)}>{kindGlyph(field.kind)}</span>
+                  <span className="attach-name" title={field.name}>{field.name}</span>
+                  <span className="attach-sub muted">
+                    from {from!.name}{att.defaultValue !== null ? ` · default ${formatValue(proj, field, att.defaultValue)}` : ''}
+                  </span>
+                  <button className="ghost-btn" title="Field settings" onClick={() => setUI({ editFieldId: field.id })}><Settings2 width={13} height={13} /></button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         <div className="field">
-          <label>Fields</label>
+          <label>{inherited.length ? 'Own fields' : 'Fields'}</label>
           <FieldAttachList list={type.fields} onChange={list => edit(t => { t.fields = list })} />
         </div>
 

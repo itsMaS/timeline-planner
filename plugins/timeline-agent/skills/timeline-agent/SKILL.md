@@ -55,7 +55,8 @@ Rules for editing `doc`:
   `[a-z0-9]`). Fill every field. An item is `{id, typeId, layerId: null,
   pathId: null, pos, duration: 0, title, description: '', tags: [], link: '',
   images: [], fieldValues: {}}`; a type is `{id, name, icon, color, defaultLayerId,
-  fields: [{fieldId, defaultValue: null}], folderId: null}` (fields are global:
+  fields: [{fieldId, defaultValue: null}], folderId: null}` (a type also
+  inherits the `fields` of its folder and every folder above it; fields are global:
   `doc.fields` holds `{id, name, kind: 'text'|'int'|'float'|'toggle'|'select'|'ref', …}`,
   a select field lists its `options`, and `fieldValues` are strings, numbers,
   booleans, arrays of chosen options or arrays of referenced ids by kind); a

@@ -50,7 +50,10 @@ export function normalizeProject(p: Project): Project {
   for (const sc of p.sections) { sc.description ??= ''; sc.fieldValues ??= {} }
   for (const it of p.items) it.fieldValues ??= {}
   p.typeFolders ??= []
-  for (const f of p.typeFolders) f.parentId ??= null
+  for (const f of p.typeFolders) {
+    f.parentId ??= null
+    f.fields = Array.isArray(f.fields) ? f.fields.map(a => ({ fieldId: a.fieldId, defaultValue: a.defaultValue ?? null })) : []
+  }
   for (const t of p.types) t.folderId ??= null
   migrateLegacyFields(p)
   repairFolders(p)

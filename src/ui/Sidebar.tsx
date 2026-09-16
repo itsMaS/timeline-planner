@@ -14,7 +14,7 @@ import { PALETTE, uid } from '../model/util'
 import { IconPicker } from './IconPicker'
 import { chipDrop, nav } from './nav'
 import { ProposalsPanel } from './Proposals'
-import { describeProcessor } from './SchemaEditors'
+import { describeProcessor, FieldAttachList } from './SchemaEditors'
 import { TypeSearch } from './TypeSearch'
 
 // The min-zoom slider is logarithmic: camera zoom spans several orders of
@@ -267,7 +267,7 @@ export function Sidebar() {
 
   const newFolder = (parentId: string | null, color?: string) => {
     mutate(p => p.typeFolders.push({
-      id: uid(), name: 'New folder', color: color ?? '#8b5cf6', icon: 'Folder', collapsed: false, parentId,
+      id: uid(), name: 'New folder', color: color ?? '#8b5cf6', icon: 'Folder', collapsed: false, parentId, fields: [],
     }))
     if (parentId) tweak(p => { const x = p.typeFolders.find(y => y.id === parentId); if (x) x.collapsed = false })
   }
@@ -419,6 +419,10 @@ export function Sidebar() {
                 ))}
               </select>
             </label>
+            <div className="field folder-fields">
+              <label>Fields <span className="muted">(every type inside inherits them)</span></label>
+              <FieldAttachList list={f.fields ?? []} onChange={list => editFolder(x => { x.fields = list })} />
+            </div>
             <button
               className="ghost-btn add"
               onClick={() => {

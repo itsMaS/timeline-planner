@@ -102,12 +102,17 @@ Things a Unity tool typically needs from `doc`:
   fieldValues, pathId }`. An item belongs to a section when
   `section.start <= item.pos < section.end` (sections nest, so an item is in
   one section per depth). `pathId` is non-null for items on a branch path.
-- `doc.types`: `{ id, name, icon, color, fields: [{ fieldId, defaultValue }] }`.
+- `doc.types`: `{ id, name, icon, color, folderId, fields: [{ fieldId, defaultValue }] }`.
   Resolve `item.typeId` here to know that an item is a *Checkpoint*.
+- `doc.typeFolders`: `{ id, name, parentId, fields: [{ fieldId, defaultValue }] }`.
+  A type inherits the fields of its folder and of every folder above it, on
+  top of its own `fields`; the nearest attachment wins when the same field
+  appears more than once along that chain.
 - `doc.fields`: field definitions (below). `item.fieldValues` is keyed by
   field **id**, and holds only explicitly set values; when a key is missing,
-  the effective value is the type attachment's `defaultValue`, else the
-  field's `defaultValue`, else unset.
+  the effective value is the nearest attachment's `defaultValue` (the type's,
+  else its folders' from the innermost outward), else the field's
+  `defaultValue`, else unset.
 
 Value shapes in `fieldValues`, by field `kind`:
 
@@ -193,7 +198,8 @@ Accepted `p_value` by kind:
 | `ref`    | one id, or an array of ids (array of one unless `refMultiple`); targets must exist and be of an allowed type/level |
 
 Errors: unknown entity or field; the field is not attached to the entity's
-type (items) or hierarchy level (sections); value shape or range.
+type or one of its folders (items) or hierarchy level (sections); value
+shape or range.
 
 ### `api_set_tags`
 

@@ -1,6 +1,7 @@
 import type {
-  FieldAttachment, FieldDef, FieldKind, FieldValue, HierarchyLevel, Id, Item, Project, Section,
+  FieldAttachment, FieldDef, FieldKind, FieldValue, HierarchyLevel, Id, Item, ItemType, Project, Section, TypeFolder,
 } from './types'
+import { folderChain } from './folders'
 import { formatUnit, unitSuffix } from './util'
 
 /**
@@ -59,13 +60,43 @@ export function ownerOf(p: Project, id: Id): Owner | null {
   return null
 }
 
-/** Fields attached to an item's type or a section's level, with their definitions. */
+/** An attachment resolved for a type: `from` is the folder it is inherited from, null for the type's own. */
+export interface TypeAttachment {
+  att: FieldAttachment
+  field: FieldDef
+  from: TypeFolder | null
+}
+
+/**
+ * Every field an item of `type` carries: the attachments of each ancestor
+ * folder (outermost first) followed by the type's own. When the same field is
+ * attached more than once along that chain the nearest attachment wins (so a
+ * type or sub-folder can override an inherited default) but the field keeps
+ * the position where it first appeared.
+ */
+export function typeAttachments(p: Project, type: ItemType | undefined): TypeAttachment[] {
+  if (!type) return []
+  const out: TypeAttachment[] = []
+  const index = new Map<Id, number>()
+  const add = (list: FieldAttachment[] | undefined, from: TypeFolder | null) => {
+    for (const att of list ?? []) {
+      const field = fieldById(p, att.fieldId)
+      if (!field) continue
+      const i = index.get(att.fieldId)
+      if (i === undefined) { index.set(att.fieldId, out.length); out.push({ att, field, from }) }
+      else out[i] = { att, field, from }
+    }
+  }
+  for (const f of folderChain(p, type.folderId ?? null)) add(f.fields, f)
+  add(type.fields, null)
+  return out
+}
+
+/** Fields attached to an item's type (including its folders) or a section's level, with their definitions. */
 export function attachmentsFor(p: Project, owner: Owner): { att: FieldAttachment; field: FieldDef }[] {
-  const list = owner.kind === 'item'
-    ? p.types.find(t => t.id === owner.entity.typeId)?.fields ?? []
-    : levelOf(p, owner.entity)?.fields ?? []
+  if (owner.kind === 'item') return typeAttachments(p, p.types.find(t => t.id === owner.entity.typeId))
   const out: { att: FieldAttachment; field: FieldDef }[] = []
-  for (const att of list) {
+  for (const att of levelOf(p, owner.entity)?.fields ?? []) {
     const field = fieldById(p, att.fieldId)
     if (field) out.push({ att, field })
   }
@@ -223,17 +254,19 @@ export function convertValue(from: FieldKind, to: FieldKind, v: FieldValue | nul
 /** Everything a field touches: attachments, explicit values and processors. */
 export function fieldUsage(p: Project, fieldId: Id) {
   const types = p.types.filter(t => t.fields.some(a => a.fieldId === fieldId))
+  const folders = p.typeFolders.filter(f => (f.fields ?? []).some(a => a.fieldId === fieldId))
   const levels = p.hierarchyLevels.filter(l => l.fields.some(a => a.fieldId === fieldId))
   const items = p.items.filter(it => it.fieldValues?.[fieldId] !== undefined)
   const sections = p.sections.filter(sc => sc.fieldValues?.[fieldId] !== undefined)
   const processors = p.processors.filter(pr => pr.fieldId === fieldId)
-  return { types, levels, items, sections, processors }
+  return { types, folders, levels, items, sections, processors }
 }
 
 /** Detach a field everywhere and drop its values; processors using it lose their field. */
 export function removeField(p: Project, fieldId: Id) {
   p.fields = p.fields.filter(f => f.id !== fieldId)
   for (const t of p.types) t.fields = t.fields.filter(a => a.fieldId !== fieldId)
+  for (const f of p.typeFolders) if (f.fields) f.fields = f.fields.filter(a => a.fieldId !== fieldId)
   for (const l of p.hierarchyLevels) l.fields = l.fields.filter(a => a.fieldId !== fieldId)
   for (const it of p.items) delete it.fieldValues[fieldId]
   for (const sc of p.sections) delete sc.fieldValues[fieldId]
@@ -254,6 +287,7 @@ export function changeFieldKind(p: Project, fieldId: Id, to: FieldKind) {
     else rec[fieldId] = v
   }
   for (const t of p.types) for (const a of t.fields) if (a.fieldId === fieldId) a.defaultValue = convertValue(from, to, a.defaultValue)
+  for (const fo of p.typeFolders) for (const a of fo.fields ?? []) if (a.fieldId === fieldId) a.defaultValue = convertValue(from, to, a.defaultValue)
   for (const l of p.hierarchyLevels) for (const a of l.fields) if (a.fieldId === fieldId) a.defaultValue = convertValue(from, to, a.defaultValue)
   for (const it of p.items) conv(it.fieldValues)
   for (const sc of p.sections) conv(sc.fieldValues)
@@ -422,6 +456,7 @@ export function stripRefs(p: Project, ids: Set<Id>) {
   }
   for (const f of p.fields) if (f.kind === 'ref') f.defaultValue = cleanDefault(f.defaultValue)
   for (const t of p.types) for (const a of t.fields) if (refIds.has(a.fieldId)) a.defaultValue = cleanDefault(a.defaultValue)
+  for (const fo of p.typeFolders) for (const a of fo.fields ?? []) if (refIds.has(a.fieldId)) a.defaultValue = cleanDefault(a.defaultValue)
   for (const l of p.hierarchyLevels) for (const a of l.fields) if (refIds.has(a.fieldId)) a.defaultValue = cleanDefault(a.defaultValue)
 }
 
@@ -438,6 +473,7 @@ export function repairSchema(p: Project) {
     return list.filter(a => fieldIds.has(a.fieldId) && !seen.has(a.fieldId) && seen.add(a.fieldId))
   }
   for (const t of p.types) t.fields = dedupeFields(t.fields)
+  for (const f of p.typeFolders) f.fields = dedupeFields(f.fields ?? [])
   for (const l of p.hierarchyLevels) {
     l.fields = dedupeFields(l.fields)
     const seen = new Set<Id>()
@@ -463,6 +499,7 @@ export function repairSchema(p: Project) {
 export function attachedToNames(p: Project, fieldId: Id): string[] {
   return [
     ...p.types.filter(t => t.fields.some(a => a.fieldId === fieldId)).map(t => t.name),
+    ...p.typeFolders.filter(f => (f.fields ?? []).some(a => a.fieldId === fieldId)).map(f => `${f.name}/`),
     ...p.hierarchyLevels.filter(l => l.fields.some(a => a.fieldId === fieldId)).map(l => l.name),
   ]
 }

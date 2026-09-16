@@ -100,10 +100,17 @@
 - Fields are project-global (`Project.fields`, kinds text / int / float / toggle / select / ref;
   toggles store a boolean, `parseToggle` reads yes/no-ish input, and `sum` over a
   toggle counts the ones switched on).
-  Item types and hierarchy levels attach them via `FieldAttachment` (with an
-  optional per-attachment default that overrides the field's default); items
-  and sections store explicit values in `fieldValues`. Helpers, validation,
-  reference lookups and `repairSchema` live in `src/model/fields.ts`.
+  Item types, type folders and hierarchy levels attach them via
+  `FieldAttachment` (with an optional per-attachment default that overrides
+  the field's default); items and sections store explicit values in
+  `fieldValues`. Helpers, validation, reference lookups and `repairSchema`
+  live in `src/model/fields.ts`.
+- A type inherits the attachments of every folder above it
+  (`TypeFolder.fields`): `typeAttachments()` resolves the full list (outermost
+  folder first, nearest attachment wins on duplicates) and `attachmentsFor()`
+  uses it for items, so anything that renders or validates item fields must go
+  through those rather than `type.fields`. The API mirrors the walk in
+  `api_field_attached` (`0006_folder_fields.sql`).
 - `Project.hierarchyLevels` are objects (`HierarchyLevel`, id'd); old string
   arrays and per-type `{id,name}` fields are migrated in `normalizeProject`
   (deterministically, so shared docs migrate identically on every client).

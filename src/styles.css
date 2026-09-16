@@ -966,3 +966,8 @@ body.col-resizing .inspector { animation: none; }
 .api-kind.read { background: rgb(59 130 246 / 0.15); color: #3b82f6; }
 .api-kind.write { background: rgb(245 158 11 / 0.18); color: #d97706; }
 @media (max-width: 640px) { .api-cols { grid-template-columns: 1fr; } .api-table.fns { display: block; overflow-x: auto; } }
+
+/* folder-level fields (inherited by the types inside) */
+.layer-config .folder-fields { margin-top: 4px; }
+.layer-config .folder-fields .attach-row { padding: 2px 3px; }
+.type-editor .attach-row.inherited { background: var(--panel2); border-style: dashed; }

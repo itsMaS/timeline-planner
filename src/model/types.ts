@@ -99,6 +99,12 @@ export interface TypeFolder {
   collapsed: boolean
   /** Parent folder; null/undefined = top level. */
   parentId?: Id | null
+  /**
+   * Fields every type filed in this folder (at any depth) inherits on top of
+   * its own attachments; a nearer attachment (sub-folder or the type itself)
+   * overrides the default. See `typeAttachments` in fields.ts.
+   */
+  fields?: FieldAttachment[]
 }
 
 /** Order in Project.layers = significance (index 0 is most significant). */

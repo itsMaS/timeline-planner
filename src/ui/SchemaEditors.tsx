@@ -4,6 +4,7 @@ import {
   attachedToNames, changeFieldKind, conversionLoss, FIELD_KINDS, fieldUsage, isNumberKind, kindGlyph, kindLabel,
   newFieldDef, removeField, removeProcessor, targetOptions,
 } from '../model/fields'
+import { folderPath } from '../model/folders'
 import { iconByName } from '../model/icons'
 import { opLabel, PROCESSOR_OPS, processorUsage } from '../model/processors'
 import { useActiveProject, useStore } from '../model/store'
@@ -267,10 +268,14 @@ export function FieldEditor() {
 
   const attachedTo = [
     ...proj.types.map(t => ({ id: t.id, name: t.name, kind: 'type' as const, on: t.fields.some(a => a.fieldId === field.id), icon: t.icon, color: t.color })),
+    ...proj.typeFolders.map(f => ({ id: f.id, name: folderPath(proj, f.id), kind: 'folder' as const, on: (f.fields ?? []).some(a => a.fieldId === field.id), icon: f.icon, color: f.color })),
     ...proj.hierarchyLevels.map(l => ({ id: l.id, name: l.name, kind: 'level' as const, on: l.fields.some(a => a.fieldId === field.id), icon: 'RectangleHorizontal', color: '#8b91a0' })),
   ]
   const toggleAttach = (o: typeof attachedTo[number]) => mutate(p => {
-    const list = o.kind === 'type' ? p.types.find(t => t.id === o.id)?.fields : p.hierarchyLevels.find(l => l.id === o.id)?.fields
+    let list: FieldAttachment[] | undefined
+    if (o.kind === 'type') list = p.types.find(t => t.id === o.id)?.fields
+    else if (o.kind === 'level') list = p.hierarchyLevels.find(l => l.id === o.id)?.fields
+    else { const f = p.typeFolders.find(x => x.id === o.id); if (f) list = f.fields ??= [] }
     if (!list) return
     const i = list.findIndex(a => a.fieldId === field.id)
     if (i >= 0) list.splice(i, 1)
@@ -283,9 +288,10 @@ export function FieldEditor() {
       ...usage.sections.map(sc => `${sc.name || 'Untitled'} (section)`),
     ]
     const run = () => { mutate(p => removeField(p, field.id)); close(); showToast(`Field “${field.name}” deleted.`, true) }
-    if (!usage.types.length && !usage.levels.length && !affected.length && !usage.processors.length) { run(); return }
+    if (!usage.types.length && !usage.folders.length && !usage.levels.length && !affected.length && !usage.processors.length) { run(); return }
     const parts = [
       usage.types.length ? `${usage.types.length} type${usage.types.length === 1 ? '' : 's'}` : '',
+      usage.folders.length ? `${usage.folders.length} folder${usage.folders.length === 1 ? '' : 's'}` : '',
       usage.levels.length ? `${usage.levels.length} level${usage.levels.length === 1 ? '' : 's'}` : '',
       usage.processors.length ? `${usage.processors.length} processor${usage.processors.length === 1 ? '' : 's'}` : '',
     ].filter(Boolean)
@@ -419,6 +425,7 @@ export function FieldEditor() {
                 <Icon width={12} height={12} color={o.color} strokeWidth={2} />
                 <span className="grow">{o.name}</span>
                 {o.kind === 'level' && <span className="muted">level</span>}
+                {o.kind === 'folder' && <span className="muted">folder</span>}
               </label>
             )
           })}

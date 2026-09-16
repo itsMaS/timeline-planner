@@ -41,6 +41,8 @@ To ship an update: `npm run build`, commit the regenerated
   "How the player dies" field on *Death opportunity*). Types can be filed into
   sidebar folders, and folders nest inside each other (drag a type or a folder
   onto a folder to file it); hide/solo on a folder applies to everything inside.
+  A folder can attach fields of its own, which every type inside it (at any
+  depth) inherits on top of its own fields.
 - **Layers** — an ordered significance list. What's visible at each zoom is
   decided automatically by density (the *detail* dial in the toolbar); each
   layer also has hide-always (eye) and show-always (pin) overrides. Items that

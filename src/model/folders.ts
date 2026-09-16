@@ -50,17 +50,22 @@ export function folderTree(p: Project): { folder: TypeFolder; depth: number }[] 
 
 /** "Parent › Child" breadcrumb path for a folder. */
 export function folderPath(p: Project, folderId: Id | null): string {
-  const names: string[] = []
+  return folderChain(p, folderId).map(f => f.name).join(' › ')
+}
+
+/** Ancestors of `folderId`, root-most first, ending with the folder itself. */
+export function folderChain(p: Project, folderId: Id | null): TypeFolder[] {
+  const out: TypeFolder[] = []
   let cur = folderId
   const seen = new Set<Id>()
   while (cur && !seen.has(cur)) {
     seen.add(cur)
     const f = p.typeFolders.find(x => x.id === cur)
     if (!f) break
-    names.unshift(f.name)
+    out.unshift(f)
     cur = f.parentId ?? null
   }
-  return names.join(' › ')
+  return out
 }
 
 /**
