@@ -15,18 +15,21 @@ import { nav } from './nav'
 import { creatorStamp } from '../sync/client'
 import { uploadImage } from '../sync/share'
 import { HistorySection } from './History'
+import { ProposalChangeCard, usePendingChange } from './Proposals'
 
 export function Inspector() {
   const proj = useActiveProject()
   const ui = useStore(s => s.ui)
   const canEdit = useCanEdit()
   const sel = ui.selection
-  if (sel.length === 0) return null
   const branchId = sel.length === 1 && sel[0].startsWith('B:') ? sel[0].slice(2) : null
   const sectionId = sel.length === 1 && sel[0].startsWith('S:') ? sel[0].slice(2) : null
   const itemIds = sel.filter(s => !s.includes(':'))
   const branch = branchId ? proj.branches.find(b => b.id === branchId) : null
   const section = sectionId ? proj.sections.find(s => s.id === sectionId) : null
+  // A proposed item that does not exist yet has no panel of its own: the card stands alone.
+  const proposedItem = usePendingChange('items', itemIds.length === 1 ? itemIds[0] : null)
+  if (sel.length === 0) return null
   if (!canEdit) {
     // View mode: everything is readable, nothing is editable.
     return (
@@ -42,10 +45,22 @@ export function Inspector() {
     <aside className="inspector" style={{ width: ui.inspectorW, minWidth: ui.inspectorW }}>
       {branch && <BranchPanel branch={branch} />}
       {section && <SectionPanel section={section} />}
+      {itemIds.length === 1 && proposedItem?.change.kind === 'add' && (
+        <>
+          <Head title="Proposed item" />
+          <div className="insp-body"><ProposalChangeCard proposal={proposedItem.proposal} change={proposedItem.change} /></div>
+        </>
+      )}
       {itemIds.length === 1 && <ItemPanel id={itemIds[0]} />}
       {itemIds.length > 1 && <BulkPanel ids={itemIds} />}
     </aside>
   )
+}
+
+/** The pending proposal change for the panel's entity, shown at the top of its body. */
+function ProposalSlot({ col, id }: { col: 'items' | 'sections'; id: string }) {
+  const pending = usePendingChange(col, id)
+  return pending ? <ProposalChangeCard proposal={pending.proposal} change={pending.change} /> : null
 }
 
 function Head(props: { title: string; children?: React.ReactNode }) {
@@ -341,6 +356,7 @@ function ItemPanel({ id }: { id: string }) {
         ><Trash2 width={14} height={14} /></button>
       </Head>
       <div className="insp-body">
+        <ProposalSlot col="items" id={item.id} />
         <input
           className="input title-input"
           value={item.title}
@@ -640,6 +656,7 @@ function SectionPanel({ section }: { section: Section }) {
         ><Trash2 width={14} height={14} /></button>
       </Head>
       <div className="insp-body">
+        <ProposalSlot col="sections" id={section.id} />
         <input className="input title-input" value={section.name} onChange={e => edit(s => { s.name = e.target.value })} />
         <div className="row gap">
           <div className="field grow">

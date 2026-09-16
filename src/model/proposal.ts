@@ -159,6 +159,34 @@ export function proposalItemIds(p: Proposal): string[] {
   return p.changes.filter(c => c.col === 'items' && !p.decisions[c.id]).map(c => c.entityId)
 }
 
+/** Undecided changes of one collection keyed by entity id. */
+export function pendingChanges(p: Proposal, col: ColKey): Map<string, ProposalChange> {
+  const out = new Map<string, ProposalChange>()
+  for (const c of p.changes) if (c.col === col && !p.decisions[c.id]) out.set(c.entityId, c)
+  return out
+}
+
+/** Collections the canvas preview applies: what items look like and what they are made of. */
+const PREVIEW_COLS: ColKey[] = ['items', 'types', 'typeFolders', 'layers', 'fields', 'hierarchyLevels', 'processors']
+
+/**
+ * The project as the canvas shows it while a proposal is under review: the
+ * proposal's undecided additions and updates are applied on top of `base`, so
+ * new items appear and moved ones sit at their proposed position. Removals
+ * are *not* applied (the entity stays, to be drawn struck through), and
+ * sections, branches and project scalars keep their live state. Returns
+ * `base` itself when nothing applies.
+ */
+export function previewProject(base: Project, p: Proposal): Project {
+  const pending = p.changes.filter(c =>
+    !p.decisions[c.id] && c.kind !== 'remove' && c.col !== 'project' && PREVIEW_COLS.includes(c.col as ColKey))
+  if (!pending.length) return base
+  const out = { ...base } as Project
+  for (const col of PREVIEW_COLS) (out as unknown as Record<string, unknown>)[col] = [...list(base, col)]
+  applyChanges(out, pending)
+  return out
+}
+
 // ---------------------------------------------------------------- word diff
 
 export interface DiffPart { t: 'eq' | 'add' | 'del'; s: string }

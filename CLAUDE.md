@@ -114,9 +114,19 @@
   (`supabase/migrations/0002_proposals.sql`, RPCs `proposal_*`). Edit tabs fetch
   them with every sync pull (`src/sync/proposals.ts`) and review them in
   Sidebar → Proposals (`src/ui/Proposals.tsx`): per-change word diff, conflict
-  detection against the live doc, checkboxes, "Apply selected" = one `mutate`
-  (undoable, synced), decisions recorded server-side; decided proposals stay
-  as history. Items of the proposal under review get a dashed ring on the canvas.
+  detection against the live doc, apply / reject buttons on every row plus
+  checkboxes with "Apply selected"; every apply is one `mutate` (undoable,
+  synced), decisions recorded server-side (`decideChanges`); decided proposals
+  stay as history.
+- While a proposal is open the canvas previews it: `previewProject()` applies
+  its pending additions and updates (items, types, layers, fields) on top of the
+  document, so `Canvas.tsx` lays out and draws `view` instead of `proj`. Added
+  items get a green dashed ring, moved / resized ones a ghost of their current
+  place, removed ones stay faded and struck through (removals are never applied
+  to the preview); previewed items cannot be dragged. Selecting a previewed item
+  or section shows the same diff with its own Apply / Reject in the Inspector
+  (`ProposalChangeCard`, `usePendingChange`) and scrolls the review panel to
+  that change; clicking a change in the panel selects and flies to its entity.
 - `agent/timeline.ts` (`npx tsx agent/timeline.ts …`) is how an agent works on
   a shared timeline through its edit link: `read`, `outline`, `propose`
   (default), `apply` (direct save with version check via `share_save_if`),

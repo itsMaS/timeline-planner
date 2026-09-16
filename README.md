@@ -161,8 +161,13 @@ themselves with the lightbulb in the toolbar. Every item and section has a
 restore button.
 
 Suggested changes don't touch the timeline: they show up under **Sidebar →
-Proposals** in every edit tab, with a per-change diff. Tick the ones you want
-and press **Apply selected** — a single undoable edit that syncs like any other.
+Proposals** in every edit tab, with a per-change diff. Opening a proposal
+previews it on the timeline — new items appear, moved ones show where they
+would go with a ghost of where they are, deleted ones are struck through — and
+selecting a previewed item shows its diff in the inspector. Apply or reject
+each change on its own (✓ / ✗ on the row or in the inspector), or tick several
+and press **Apply selected**; every apply is an undoable edit that syncs like
+any other.
 Asking to "apply directly" saves straight away (refusing if the timeline changed
 since it was read). PDF exports use the app's document export, printed by the
 Chrome already on your machine.

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, ArrowLeft, Check, ChevronDown, ChevronRight, RefreshCw, Trash2, X } from 'lucide-react'
 import {
   changeLabel, changedFields, conflictOf, fmtValue, wordDiff,
@@ -12,10 +12,44 @@ import { nav } from './nav'
 
 /**
  * Review panel for proposals (suggested changes from agents or collaborators).
- * Lists open proposals; opening one shows every change with a git-style diff
- * and a checkbox, so accepted changes can be applied (one undo step) and the
- * rest rejected. Decided proposals stay in a collapsible history.
+ * Lists open proposals; opening one shows every change with a git-style diff.
+ * Each change can be applied or rejected on its own (buttons on the row, or
+ * in the Inspector when its item is selected), or in bulk through the
+ * checkboxes; every apply is one undo step. While a proposal is open the
+ * canvas previews it, and selecting a previewed item scrolls the panel to its
+ * change. Decided proposals stay in a collapsible history.
  */
+
+/** Decide one or more changes of a proposal and report the outcome as a toast. */
+export async function decideChanges(projectId: string, proposal: Proposal, ids: string[], d: Decision): Promise<void> {
+  if (!ids.length) return
+  const decisions: Record<string, Decision> = {}
+  for (const id of ids) decisions[id] = d
+  await decideProposal(projectId, proposal, decisions)
+  const n = ids.length
+  useStore.getState().showToast(d === 'applied'
+    ? `Applied ${n} change${n === 1 ? '' : 's'}.`
+    : `Rejected ${n} change${n === 1 ? '' : 's'}.`, d === 'applied')
+}
+
+/** The pending change of the proposal under review that targets the given entity, if any. */
+export function usePendingChange(col: ProposalChange['col'], entityId: string | null): { proposal: Proposal; change: ProposalChange } | null {
+  const proposal = useStore(s => (s.ui.reviewProposalId ? s.proposals[s.activeId]?.find(p => p.id === s.ui.reviewProposalId) : undefined))
+  return useMemo(() => {
+    if (!entityId || !proposal || proposal.status !== 'open') return null
+    const change = proposal.changes.find(c => c.col === col && c.entityId === entityId && !proposal.decisions[c.id])
+    return change ? { proposal, change } : null
+  }, [proposal, col, entityId])
+}
+
+/** Selection key → the proposal change it corresponds to (items, sections and branches). */
+function selectionTarget(sel: string[]): { col: ProposalChange['col']; id: string } | null {
+  if (sel.length !== 1) return null
+  const k = sel[0]
+  if (k.startsWith('S:')) return { col: 'sections', id: k.slice(2) }
+  if (k.startsWith('B:')) return { col: 'branches', id: k.slice(2) }
+  return { col: 'items', id: k }
+}
 
 function ago(iso: string): string {
   const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000)
@@ -145,7 +179,6 @@ const CONFLICT_TEXT: Record<Conflict, string> = {
 
 function ProposalReview(props: { proj: Project; projectId: string; proposal: Proposal; back: () => void }) {
   const { proj, projectId, proposal } = props
-  const showToast = useStore(s => s.showToast)
   const pending = useMemo(() => proposal.changes.filter(c => !proposal.decisions[c.id]), [proposal])
   const conflicts = useMemo(() => new Map(pending.map(c => [c.id, conflictOf(proj, c)])), [pending, proj])
   // Everything without a conflict starts ticked.
@@ -165,24 +198,30 @@ function ProposalReview(props: { proj: Project; projectId: string; proposal: Pro
   const all = checked.size === pending.length
   const toggleAll = () => setChecked(all ? new Set() : new Set(pending.map(c => c.id)))
 
-  const decide = async (d: Decision) => {
-    if (!checked.size) return
+  const run = async (ids: string[], d: Decision) => {
+    if (!ids.length) return
     setBusy(true)
     setError(null)
-    const decisions: Record<string, Decision> = {}
-    for (const id of checked) decisions[id] = d
     try {
-      await decideProposal(projectId, proposal, decisions)
-      showToast(d === 'applied'
-        ? `Applied ${checked.size} change${checked.size === 1 ? '' : 's'}.`
-        : `Rejected ${checked.size} change${checked.size === 1 ? '' : 's'}.`, d === 'applied')
-      setChecked(new Set())
+      await decideChanges(projectId, proposal, ids, d)
+      setChecked(prev => { const n = new Set(prev); for (const id of ids) n.delete(id); return n })
     } catch (e) {
       setError((e as Error).message)
     } finally {
       setBusy(false)
     }
   }
+  const decide = (d: Decision) => run([...checked], d)
+
+  // The change whose entity is selected on the canvas is highlighted and scrolled into view.
+  const selection = useStore(s => s.ui.selection)
+  const target = useMemo(() => selectionTarget(selection), [selection])
+  const focusedId = target ? pending.find(c => c.col === target.col && c.entityId === target.id)?.id ?? null : null
+  const rowRefs = useRef(new Map<string, HTMLDivElement>())
+  useEffect(() => {
+    if (!focusedId) return
+    rowRefs.current.get(focusedId)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  }, [focusedId])
 
   const discard = async () => {
     if (!window.confirm(`Discard “${proposal.title}” and all its remaining suggestions?`)) return
@@ -211,6 +250,8 @@ function ProposalReview(props: { proj: Project; projectId: string; proposal: Pro
         <ChangeRow
           key={c.id} proj={proj} change={c} conflict={conflicts.get(c.id) ?? 'none'}
           checked={checked.has(c.id)} onToggle={() => toggle(c.id)}
+          focused={c.id === focusedId} busy={busy} onDecide={d => run([c.id], d)}
+          rowRef={el => { if (el) rowRefs.current.set(c.id, el); else rowRefs.current.delete(c.id) }}
         />
       ))}
       {pending.length === 0 && <div className="sb-hint">every change has been decided</div>}
@@ -339,27 +380,128 @@ export function ChangeBody({ proj, change: c }: { proj: Project; change: Proposa
   )
 }
 
-export function ChangeRow(props: { proj: Project; change: ProposalChange; conflict: Conflict; checked: boolean; onToggle: () => void }) {
+/**
+ * Select the entity a change targets and bring it into view. Items under
+ * review are previewed on the canvas (added ones included), sections are
+ * framed; other entities have no place on the timeline.
+ */
+function jumpToChange(proj: Project, c: ProposalChange): boolean {
+  const st = useStore.getState()
+  if (c.col === 'items') {
+    const previewed = st.ui.reviewProposalId !== null && c.kind === 'add'
+    if (!previewed && !proj.items.some(it => it.id === c.entityId)) return false
+    nav.current?.flyToItem(c.entityId)
+    return true
+  }
+  if (c.col === 'sections' && proj.sections.some(sc => sc.id === c.entityId)) {
+    st.select([`S:${c.entityId}`])
+    nav.current?.flyToSection(c.entityId)
+    return true
+  }
+  return false
+}
+
+const canJumpTo = (proj: Project, c: ProposalChange, reviewing: boolean): boolean => {
+  if (c.col === 'items') return (reviewing && c.kind === 'add') || proj.items.some(it => it.id === c.entityId)
+  if (c.col === 'sections') return proj.sections.some(sc => sc.id === c.entityId)
+  return false
+}
+
+/** Apply / reject buttons for a single change. */
+function DecideButtons({ busy, onDecide, kind }: { busy?: boolean; onDecide: (d: Decision) => void; kind: ChangeKindLike }) {
+  const verb = kind === 'add' ? 'Create' : kind === 'remove' ? 'Delete' : 'Apply'
+  return (
+    <span className="prop-decide">
+      <button className="ghost-btn ok" title={`${verb} this change`} disabled={busy} onClick={e => { e.preventDefault(); e.stopPropagation(); onDecide('applied') }}>
+        <Check width={13} height={13} />
+      </button>
+      <button className="ghost-btn danger" title="Reject this change" disabled={busy} onClick={e => { e.preventDefault(); e.stopPropagation(); onDecide('rejected') }}>
+        <X width={13} height={13} />
+      </button>
+    </span>
+  )
+}
+type ChangeKindLike = ProposalChange['kind']
+
+export function ChangeRow(props: {
+  proj: Project
+  change: ProposalChange
+  conflict: Conflict
+  checked: boolean
+  onToggle: () => void
+  /** The change's entity is selected on the canvas. */
+  focused?: boolean
+  busy?: boolean
+  /** Present when the row can be decided on its own (review panel), absent in the send dialog. */
+  onDecide?: (d: Decision) => void
+  rowRef?: (el: HTMLDivElement | null) => void
+}) {
   const { proj, change: c, conflict } = props
   const label = changeLabel(c)
-  const canJump = c.col === 'items' && c.kind !== 'add' && proj.items.some(it => it.id === c.entityId)
+  const reviewing = useStore(s => s.ui.reviewProposalId !== null)
+  const canJump = !!props.onDecide && canJumpTo(proj, c, reviewing)
   return (
-    <div className={`prop-change ${props.checked ? 'on' : ''} ${c.kind}`}>
+    <div ref={props.rowRef} className={`prop-change ${props.checked ? 'on' : ''} ${props.focused ? 'focus' : ''} ${c.kind}`}>
       <label className="prop-change-head">
         <input type="checkbox" checked={props.checked} onChange={props.onToggle} />
         <span className="prop-kind">{label.kind}</span>
         <span
           className={`prop-name ${canJump ? 'jump' : ''}`}
-          title={canJump ? 'Jump to it on the timeline' : undefined}
-          onClick={e => { if (canJump) { e.preventDefault(); nav.current?.flyToItem(c.entityId) } }}
+          title={canJump ? 'Show it on the timeline' : undefined}
+          onClick={e => { if (canJump) { e.preventDefault(); jumpToChange(proj, c) } }}
         >{label.name}</span>
-        <span className={`prop-verb ${c.kind}`}>{label.verb}</span>
+        <span className="prop-tail">
+          <span className={`prop-verb ${c.kind}`}>{label.verb}</span>
+          {props.onDecide && <DecideButtons busy={props.busy} onDecide={props.onDecide} kind={c.kind} />}
+        </span>
       </label>
       {conflict !== 'none' && (
         <div className="prop-conflict"><AlertTriangle width={12} height={12} /> {CONFLICT_TEXT[conflict]}</div>
       )}
       {c.note && <div className="prop-note">{c.note}</div>}
       <ChangeBody proj={proj} change={c} />
+    </div>
+  )
+}
+
+/**
+ * Inspector card for the pending change that targets the selected entity:
+ * the same diff as the review panel plus its own apply / reject buttons, so
+ * a change can be decided right where its effect is visible.
+ */
+export function ProposalChangeCard({ proposal, change: c }: { proposal: Proposal; change: ProposalChange }) {
+  const proj = useActiveProject()
+  const projectId = useStore(s => s.activeId)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const conflict = useMemo(() => conflictOf(proj, c), [proj, c])
+  const label = changeLabel(c)
+  const decide = async (d: Decision) => {
+    setBusy(true)
+    setError(null)
+    try { await decideChanges(projectId, proposal, [c.id], d) } catch (e) { setError((e as Error).message) } finally { setBusy(false) }
+  }
+  return (
+    <div className={`insp-proposal prop-change ${c.kind}`}>
+      <div className="prop-change-head">
+        <span className="prop-kind">Proposal</span>
+        <span className="prop-name">{proposal.title}</span>
+        <span className={`prop-verb ${c.kind}`}>{label.verb} by {proposal.author}</span>
+      </div>
+      {conflict !== 'none' && (
+        <div className="prop-conflict"><AlertTriangle width={12} height={12} /> {CONFLICT_TEXT[conflict]}</div>
+      )}
+      {c.note && <div className="prop-note">{c.note}</div>}
+      <ChangeBody proj={proj} change={c} />
+      {error && <div className="prop-error">{error}</div>}
+      <div className="prop-buttons row">
+        <button className="primary-btn" disabled={busy} onClick={() => decide('applied')}>
+          <Check width={13} height={13} /> {c.kind === 'add' ? 'Create' : c.kind === 'remove' ? 'Delete' : 'Apply'}
+        </button>
+        <button className="ghost-btn add" disabled={busy} onClick={() => decide('rejected')}>
+          <X width={12} height={12} /> reject
+        </button>
+      </div>
     </div>
   )
 }

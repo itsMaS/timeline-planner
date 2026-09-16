@@ -870,6 +870,28 @@ body.col-resizing .inspector { animation: none; }
   fill: none; stroke: #f59e0b; stroke-width: 2; stroke-dasharray: 5 4; opacity: .9;
   transform-box: fill-box; transform-origin: center; animation: spin 6s linear infinite;
 }
+.prop-ring.add { stroke: #22c55e; }
+.prop-ring.remove { stroke: #ef4444; }
+/* Proposal preview on the canvas: what the item would look like if applied. */
+.node.prop-add .node-bg { stroke-dasharray: 4 3; }
+.node.prop-remove { opacity: .45; }
+.node.prop-remove:hover { opacity: .8; }
+.node.prop-remove .node-label { text-decoration: line-through; }
+.prop-ghost { opacity: .45; }
+.prop-ghost-node { fill: var(--bg); stroke-width: 1.5; stroke-dasharray: 3 3; }
+.prop-ghost-bar { opacity: .35; }
+.prop-ghost-link { stroke: #f59e0b; stroke-width: 1.5; stroke-dasharray: 3 4; }
+/* Review panel rows */
+.prop-change.focus { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); opacity: 1; }
+.prop-decide { display: inline-flex; gap: 2px; margin-left: 4px; }
+.prop-decide .ghost-btn { padding: 2px; }
+.prop-decide .ghost-btn.ok:hover { color: #22c55e; }
+.prop-tail { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; }
+.prop-tail .prop-verb { margin-left: 0; }
+/* Inspector card for the selected entity's pending change */
+.insp-proposal { margin: 0; opacity: 1; border-color: color-mix(in srgb, #f59e0b 45%, var(--line-soft)); }
+.insp-proposal .prop-change-head { cursor: default; }
+.insp-proposal .prop-buttons { flex-direction: row; align-items: center; gap: 6px; }
 
 /* ---------------------------------------------------------------- suggest mode */
 .suggest-bar {

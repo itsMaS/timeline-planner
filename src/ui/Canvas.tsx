@@ -10,7 +10,7 @@ import {
   layoutTimeline, minZoomFor, refreshSectionDepths, rowY, spineD, spineYFor, terminalEndX, typeOf,
 } from '../model/layout'
 import { bandBadge } from '../model/processors'
-import { diffToChanges, proposalItemIds } from '../model/proposal'
+import { diffToChanges, pendingChanges, previewProject, type ChangeKind, type ProposalChange } from '../model/proposal'
 import { useActiveProject, useStore } from '../model/store'
 import type { Camera, Item, Section } from '../model/types'
 import { hideNewTypeInFilters } from '../model/views'
@@ -150,15 +150,21 @@ export function CanvasView() {
   const minS = Math.min(MIN_S, minZoomFor(proj, size.w))
   const spineY = spineYFor(proj, size.h)
   const selection = useMemo(() => new Set(ui.selection), [ui.selection])
-  // Items touched by the proposal open in the review panel get a dashed ring.
+  // While a proposal is open in the review panel the canvas shows it applied:
+  // added items appear, moved ones sit at their proposed position and removed
+  // ones stay, struck through. `view` is what gets laid out and drawn; `proj`
+  // stays the document every edit goes to. `review` maps item id → its
+  // pending change, so touched items can be styled and kept out of drags.
   const reviewProposal = useStore(s => (s.ui.reviewProposalId ? s.proposals[s.activeId]?.find(p => p.id === s.ui.reviewProposalId) : undefined))
-  // In suggest mode, items that differ from the saved document are marked the same way.
+  const view = useMemo(() => (reviewProposal ? previewProject(proj, reviewProposal) : proj), [proj, reviewProposal])
+  const review = useMemo(() => (reviewProposal ? pendingChanges(reviewProposal, 'items') : new Map<string, ProposalChange>()), [reviewProposal])
+  // In suggest mode, items that differ from the saved document get the same dashed ring.
   const baseProj = useStore(s => s.projects.find(p => p.id === s.activeId) ?? s.projects[0])
   const proposed = useMemo(() => {
-    const ids = new Set(reviewProposal ? proposalItemIds(reviewProposal) : [])
+    const ids = new Set(review.keys())
     if (proj !== baseProj) for (const c of diffToChanges(baseProj, proj)) if (c.col === 'items') ids.add(c.entityId)
     return ids
-  }, [reviewProposal, proj, baseProj])
+  }, [review, proj, baseProj])
 
   useEffect(() => { setParticleLevel(ui.animLevel) }, [ui.animLevel])
   useEffect(() => { setSoundOn(ui.soundOn) }, [ui.soundOn])
@@ -184,10 +190,10 @@ export function CanvasView() {
 
   // ---- effective project (ephemeral drag overrides applied)
   const effective = useMemo(() => {
-    if (!posOverride && !durOverride && !branchOverride && !sectionOverride) return proj
-    const p = { ...proj }
+    if (!posOverride && !durOverride && !branchOverride && !sectionOverride) return view
+    const p = { ...view }
     if (posOverride || durOverride) {
-      p.items = proj.items.map(it => {
+      p.items = view.items.map(it => {
         let out = it
         if (posOverride?.has(it.id)) out = { ...out, pos: posOverride.get(it.id)! }
         const dv = durOverride?.find(x => x.id === it.id)
@@ -211,7 +217,7 @@ export function CanvasView() {
       refreshSectionDepths(p)
     }
     return p
-  }, [proj, posOverride, durOverride, branchOverride, sectionOverride])
+  }, [view, posOverride, durOverride, branchOverride, sectionOverride])
 
   // Depth-graded emphasis: top-level sections get bigger labels and stronger
   // borders; each level down shrinks. Header bars stack flush from the very
@@ -285,7 +291,7 @@ export function CanvasView() {
         flyTo({ x: toPos(cx) - cx / s, s }, false)
       },
       flyToItem: id => {
-        const it = proj.items.find(i => i.id === id)
+        const it = view.items.find(i => i.id === id)
         if (!it) return
         const s = Math.max(cam.s, 30)
         flyTo({ x: it.pos - size.w / 2 / s, s })
@@ -1151,7 +1157,8 @@ export function CanvasView() {
   const itemPointerDown = (e: React.PointerEvent, item: Item) => {
     if (e.button !== 0) return
     if (tryPick(item.id)) { e.stopPropagation(); return }
-    if (ui.readOnly) {
+    if (ui.readOnly || review.has(item.id)) {
+      // Viewer mode, or an item whose proposed state is being previewed: select only.
       e.stopPropagation()
       select(e.shiftKey ? [...ui.selection.filter(s0 => !s0.includes(':')), item.id] : [item.id])
       return
@@ -1418,12 +1425,12 @@ export function CanvasView() {
   }, [proj.sections, centerPos])
 
   // ---- render helpers
-  const hoverItem = hover ? proj.items.find(i => i.id === hover.id) : null
-  const hoverType = hoverItem ? typeOf(proj, hoverItem) : null
+  const hoverItem = hover ? view.items.find(i => i.id === hover.id) : null
+  const hoverType = hoverItem ? typeOf(view, hoverItem) : null
   const hoverFields = hoverItem
-    ? attachmentsFor(proj, { kind: 'item', entity: hoverItem })
+    ? attachmentsFor(view, { kind: 'item', entity: hoverItem })
       .filter(a => a.field.showInTooltip)
-      .map(a => ({ field: a.field, text: formatValue(proj, a.field, effectiveValue(a.field, a.att, hoverItem.fieldValues[a.field.id])) }))
+      .map(a => ({ field: a.field, text: formatValue(view, a.field, effectiveValue(a.field, a.att, hoverItem.fieldValues[a.field.id])) }))
       .filter(a => a.text)
     : []
 
@@ -1732,14 +1739,23 @@ export function CanvasView() {
           })}
 
           {/* placed items */}
-          {layout.placed.map(pl => (
+          {layout.placed.map(pl => {
+            const ch = review.get(pl.item.id)
+            // A moved or resized item keeps a faint ghost where it is now.
+            const before = ch?.kind === 'update' ? (ch.before as Item) : null
+            const ghost = before && (before.pos !== pl.item.pos || before.duration !== pl.item.duration)
+              ? { dx: toX(before.pos) - pl.x, spanW: before.duration > 0 ? before.duration * cam.s : 0 }
+              : null
+            return (
             <ItemG
               key={pl.item.id}
               pl={pl}
-              proj={proj}
+              proj={view}
               selected={selection.has(pl.item.id)}
               highlight={highlightId === pl.item.id}
               proposed={proposed.has(pl.item.id)}
+              review={ch?.kind}
+              ghost={ghost}
               showFields={ui.showFields}
               showTitles={ui.showTitles}
               scaleL={!ui.readOnly && groupScale?.firstId === pl.item.id}
@@ -1759,9 +1775,10 @@ export function CanvasView() {
                   startClientX: e.clientX, cands: magnetCands({ items: new Set([pl.item.id]) }),
                 })
               }}
-              startScale={(side, e) => startGroupScale(e, side, typeOf(proj, pl.item)?.color ?? '#888')}
+              startScale={(side, e) => startGroupScale(e, side, typeOf(view, pl.item)?.color ?? '#888')}
             />
-          ))}
+            )
+          })}
 
           {/* minimized layer items (below their layer's min zoom) */}
           {layout.dots.map(dot => (
@@ -1807,9 +1824,9 @@ export function CanvasView() {
               {expandedCluster === cl.key && cl.count > 1 && (
                 <g className="cluster-fan">
                   {cl.ids.slice(0, 8).map((id, i) => {
-                    const it = proj.items.find(x => x.id === id)
+                    const it = view.items.find(x => x.id === id)
                     if (!it) return null
-                    const t = typeOf(proj, it)
+                    const t = typeOf(view, it)
                     const Icon = iconByName(t?.icon ?? 'Circle')
                     return (
                       <g key={id} transform={`translate(0, ${-26 - i * 26})`} className="node"
@@ -2035,8 +2052,12 @@ function ItemG(props: {
   proj: ReturnType<typeof useActiveProject>
   selected: boolean
   highlight: boolean
-  /** Part of the proposal being reviewed. */
+  /** Part of the proposal being reviewed, or edited in the suggest-mode draft. */
   proposed: boolean
+  /** Kind of the pending proposal change previewed on this item (undefined when none). */
+  review?: ChangeKind
+  /** Where the item currently is while its proposed position is previewed (offset in px, current bar width). */
+  ghost?: { dx: number; spanW: number } | null
   /** This item is the first of a multi-selection: its start carries the group scale handle. */
   scaleL: boolean
   /** This item is the last of a multi-selection: its end carries the group scale handle. */
@@ -2058,20 +2079,31 @@ function ItemG(props: {
   const color = type?.color ?? '#888'
   const z = pl.size || 1
   const barY = 3 + 14 * z
+  // Under review the item is a preview: no duration handles, no dragging.
+  const locked = !!props.review
   return (
     <g
-      className={`node ${pl.ghost ? 'ghost' : ''} ${selected ? 'sel' : ''} ${props.highlight ? 'hl' : ''}`}
+      className={`node ${pl.ghost ? 'ghost' : ''} ${selected ? 'sel' : ''} ${props.highlight ? 'hl' : ''} ${props.review ? `prop-${props.review}` : ''}`}
       transform={`translate(${pl.x}, ${pl.ny})`}
       onPointerDown={props.onPointerDown}
       onContextMenu={props.onContextMenu}
       onPointerEnter={props.onHoverStart}
       onPointerLeave={props.onHoverEnd}
     >
+      {props.ghost && (
+        <g className="prop-ghost" pointerEvents="none">
+          <line x1={props.ghost.dx} y1={0} x2={0} y2={0} className="prop-ghost-link" />
+          {props.ghost.spanW > 0 && (
+            <rect x={props.ghost.dx} y={barY} width={props.ghost.spanW} height={6} rx={3} className="prop-ghost-bar" style={{ fill: color }} />
+          )}
+          <circle cx={props.ghost.dx} r={14 * z} className="prop-ghost-node" style={{ stroke: color }} />
+        </g>
+      )}
       <g className={`node-inner ${props.anim ? 'pop' : ''}`}>
         {pl.spanW > 0 && (
           <g>
             <rect x={0} y={barY} width={pl.spanW} height={6} rx={3} style={{ fill: `${color}55`, stroke: `${color}88` }} />
-            {selected && (
+            {selected && !locked && (
               <>
                 {!scaleL && (
                   <circle cx={0} cy={barY + 3} r={6} className="dur-handle" style={{ stroke: color }}
@@ -2103,7 +2135,7 @@ function ItemG(props: {
         )}
         {selected && <circle r={19 * z} className="sel-ring" style={{ stroke: color }} />}
         {props.highlight && <circle r={22 * z} className="hl-ring" />}
-        {props.proposed && <circle r={(selected ? 24 : 20) * z} className="prop-ring" />}
+        {props.proposed && <circle r={(selected ? 24 : 20) * z} className={`prop-ring ${props.review ?? ''}`} />}
         <circle r={14 * z} className="node-under" />
         <circle r={14 * z} className="node-bg" style={{ fill: `${color}26`, stroke: color }} />
         <Icon x={-8 * z} y={-8 * z} width={16 * z} height={16 * z} color={color} strokeWidth={2} />
