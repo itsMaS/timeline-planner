@@ -1,4 +1,4 @@
-import { attachmentsFor, effectiveValue, entityTitle, fieldById, formatNumber, isNumberKind, levelOf, type Owner } from './fields'
+import { attachmentsFor, effectiveValue, entityTitle, fieldById, formatNumber, formatToggle, isNumberKind, levelOf, type Owner } from './fields'
 import type { FieldValue, Id, ProcessorAttachment, ProcessorDef, ProcessorOp, Project, Section } from './types'
 
 /**
@@ -8,7 +8,7 @@ import type { FieldValue, Id, ProcessorAttachment, ProcessorDef, ProcessorOp, Pr
  */
 
 export const PROCESSOR_OPS: { op: ProcessorOp; label: string; needsField: 'number' | 'any' | 'none' }[] = [
-  { op: 'sum', label: 'Sum', needsField: 'number' },
+  { op: 'sum', label: 'Sum', needsField: 'number' }, // toggles sum too: the number switched on
   { op: 'count', label: 'Count', needsField: 'none' },
   { op: 'avg', label: 'Average', needsField: 'number' },
   { op: 'min', label: 'Minimum', needsField: 'number' },
@@ -46,7 +46,9 @@ export function evalProcessor(p: Project, section: Section, proc: ProcessorDef, 
   const field = fieldById(p, proc.fieldId)
   const spec = PROCESSOR_OPS.find(o => o.op === proc.op)!
   if (spec.needsField !== 'none' && !field) return { proc, att, text: '—', matched: [], error: 'needs a field' }
-  if (spec.needsField === 'number' && field && !isNumberKind(field.kind)) return { proc, att, text: '—', matched: [], error: 'needs a number field' }
+  if (spec.needsField === 'number' && field && !isNumberKind(field.kind) && !(proc.op === 'sum' && field.kind === 'toggle')) {
+    return { proc, att, text: '—', matched: [], error: 'needs a number field' }
+  }
 
   const targets = new Set(proc.targets)
   const inside = entitiesInside(p, section)
@@ -73,6 +75,7 @@ export function evalProcessor(p: Project, section: Section, proc: ProcessorDef, 
       const set = new Set<string>()
       for (const v of values) {
         if (Array.isArray(v)) for (const x of v) set.add(field?.kind === 'ref' ? entityTitle(p, x) : x)
+        else if (field?.kind === 'toggle') set.add(formatToggle(v === true))
         else set.add(field && isNumberKind(field.kind) ? formatNumber(field, Number(v)) : String(v))
       }
       const list = [...set]
@@ -80,6 +83,7 @@ export function evalProcessor(p: Project, section: Section, proc: ProcessorDef, 
       break
     }
     default: {
+      if (field?.kind === 'toggle') { text = String(values.filter(v => v === true).length); break }
       const nums = values.map(Number).filter(Number.isFinite)
       if (!nums.length) { text = field ? formatNumber(field, 0) : '0'; break }
       let n: number

@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Crosshair, X } from 'lucide-react'
 import {
-  backlinks, clampValue, coerceValue, defaultFor, effectiveValue, entityTitle, formatValue, kindGlyph, levelOf, locationOf,
+  backlinks, clampValue, coerceValue, defaultFor, effectiveValue, entityTitle, formatToggle, formatValue, kindGlyph, levelOf, locationOf,
   ownerOf, parseInput, refCandidates, type Owner,
 } from '../model/fields'
 import { iconByName } from '../model/icons'
@@ -131,6 +131,34 @@ export function FieldValueInput(props: {
         </div>
         {chosen.length === 0 && placeholder && <div className="sb-hint">{placeholder}</div>}
       </div>
+    )
+  }
+  if (field.kind === 'toggle') {
+    const explicit = typeof value === 'boolean' ? value : null
+    if (props.asDefault) {
+      // Defaults are tri-state: none, on or off.
+      return (
+        <div className={`seg fv-toggle-default ${props.compact ? 'sm' : ''}`}>
+          <button className={explicit === null ? 'on' : ''} onClick={() => props.onChange(null)}>{placeholder || 'no default'}</button>
+          <button className={explicit === true ? 'on' : ''} onClick={() => props.onChange(true)}>Yes</button>
+          <button className={explicit === false ? 'on' : ''} onClick={() => props.onChange(false)}>No</button>
+        </div>
+      )
+    }
+    const inherited = typeof fallback === 'boolean' ? fallback : null
+    const shown = explicit ?? inherited
+    return (
+      <label className={`check-row fv-toggle ${props.compact ? 'sm' : ''} ${explicit === null ? 'inherit' : ''}`}>
+        <input
+          type="checkbox"
+          checked={shown === true}
+          onChange={e => props.onChange(e.target.checked)}
+        />
+        <span className={shown === null ? 'muted' : ''}>
+          {shown === null ? 'not set' : formatToggle(shown)}
+          {explicit === null && inherited !== null && <span className="muted"> (default)</span>}
+        </span>
+      </label>
     )
   }
   if (field.kind === 'text') {

@@ -3784,6 +3784,8 @@ function coerceValue(field, v) {
       const n = typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" ? Number(v) : NaN;
       return Number.isFinite(n) ? n : null;
     }
+    case "toggle":
+      return parseToggle(v);
     case "select":
     case "ref": {
       if (Array.isArray(v)) {
@@ -3794,6 +3796,18 @@ function coerceValue(field, v) {
     }
   }
 }
+var TOGGLE_ON = /* @__PURE__ */ new Set(["true", "yes", "y", "on", "1", "x", "\u2713"]);
+var TOGGLE_OFF = /* @__PURE__ */ new Set(["false", "no", "n", "off", "0"]);
+function parseToggle(v) {
+  if (typeof v === "boolean") return v;
+  if (typeof v === "number") return Number.isFinite(v) ? v !== 0 : null;
+  if (typeof v !== "string") return null;
+  const t = v.trim().toLowerCase();
+  if (TOGGLE_ON.has(t)) return true;
+  if (TOGGLE_OFF.has(t)) return false;
+  return null;
+}
+var formatToggle = (on) => on ? "Yes" : "No";
 function formatNumber(field, n) {
   const s = field.kind === "int" ? String(Math.round(n)) : field.decimals !== null ? n.toFixed(field.decimals) : String(Number(n.toFixed(6)));
   return field.unit ? `${s} ${field.unit}` : s;
@@ -3806,6 +3820,8 @@ function formatValue(p, field, v) {
     case "int":
     case "float":
       return formatNumber(field, Number(v));
+    case "toggle":
+      return formatToggle(v === true);
     case "select":
       return (Array.isArray(v) ? v : [String(v)]).join(", ");
     case "ref":

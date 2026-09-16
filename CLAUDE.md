@@ -97,7 +97,9 @@
 
 ## Fields & processors
 
-- Fields are project-global (`Project.fields`, kinds text / int / float / select / ref).
+- Fields are project-global (`Project.fields`, kinds text / int / float / toggle / select / ref;
+  toggles store a boolean, `parseToggle` reads yes/no-ish input, and `sum` over a
+  toggle counts the ones switched on).
   Item types and hierarchy levels attach them via `FieldAttachment` (with an
   optional per-attachment default that overrides the field's default); items
   and sections store explicit values in `fieldValues`. Helpers, validation,

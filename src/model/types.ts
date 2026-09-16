@@ -1,9 +1,9 @@
 export type Id = string
 
-export type FieldKind = 'text' | 'int' | 'float' | 'select' | 'ref'
+export type FieldKind = 'text' | 'int' | 'float' | 'toggle' | 'select' | 'ref'
 
-/** Stored value: text → string, int/float → number, select → chosen options, ref → target ids. */
-export type FieldValue = string | number | Id[]
+/** Stored value: text → string, int/float → number, toggle → boolean, select → chosen options, ref → target ids. */
+export type FieldValue = string | number | boolean | Id[]
 
 /** A project-wide field definition. Types and hierarchy levels attach these. */
 export interface FieldDef {

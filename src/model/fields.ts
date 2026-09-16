@@ -13,6 +13,7 @@ export const FIELD_KINDS: { kind: FieldKind; label: string; glyph: string }[] = 
   { kind: 'text', label: 'Text', glyph: 'Aa' },
   { kind: 'int', label: 'Whole number', glyph: '#' },
   { kind: 'float', label: 'Decimal number', glyph: '0.0' },
+  { kind: 'toggle', label: 'Toggle', glyph: '✓' },
   { kind: 'select', label: 'Dropdown', glyph: '▾' },
   { kind: 'ref', label: 'Reference', glyph: '→' },
 ]
@@ -32,7 +33,7 @@ export function newFieldDef(id: Id, name: string, kind: FieldKind = 'text'): Fie
 
 /** Fill in anything missing from a field saved by an older build. */
 export function normalizeFieldDef(raw: Partial<FieldDef> & { id: Id }): FieldDef {
-  const base = newFieldDef(raw.id, raw.name ?? 'Field', (['text', 'int', 'float', 'select', 'ref'] as FieldKind[]).includes(raw.kind as FieldKind) ? raw.kind as FieldKind : 'text')
+  const base = newFieldDef(raw.id, raw.name ?? 'Field', (FIELD_KINDS.map(k => k.kind)).includes(raw.kind as FieldKind) ? raw.kind as FieldKind : 'text')
   const f: FieldDef = { ...base, ...raw, kind: base.kind }
   f.refTargets = Array.isArray(f.refTargets) ? f.refTargets : []
   f.options = Array.isArray(f.options) ? f.options.filter(o => typeof o === 'string') : []
@@ -102,6 +103,7 @@ export function coerceValue(field: FieldDef, v: unknown): FieldValue | null {
       const n = typeof v === 'number' ? v : typeof v === 'string' && v.trim() !== '' ? Number(v) : NaN
       return Number.isFinite(n) ? n : null
     }
+    case 'toggle': return parseToggle(v)
     case 'select':
     case 'ref': {
       if (Array.isArray(v)) { const ids = v.filter(x => typeof x === 'string'); return ids.length ? ids : null }
@@ -129,6 +131,7 @@ export function clampValue(field: FieldDef, v: FieldValue | null): FieldValue | 
       if (field.kind === 'int') n = Math.round(n)
       return n
     }
+    case 'toggle': return parseToggle(v)
     case 'select': {
       // Only known options survive, in the field's option order; single-choice keeps the first.
       const chosen = new Set(Array.isArray(v) ? v : [String(v)])
@@ -150,8 +153,25 @@ export function parseInput(field: FieldDef, text: string): FieldValue | null {
   if (!t) return null
   if (field.kind === 'text') return text
   if (isNumberKind(field.kind)) { const n = Number(t.replace(',', '.')); return Number.isFinite(n) ? n : null }
+  if (field.kind === 'toggle') return parseToggle(t)
   return [t]
 }
+
+const TOGGLE_ON = new Set(['true', 'yes', 'y', 'on', '1', 'x', '✓'])
+const TOGGLE_OFF = new Set(['false', 'no', 'n', 'off', '0'])
+
+/** Read a toggle from a boolean, a number (non-zero = on) or a yes/no-ish word; null when unreadable. */
+export function parseToggle(v: unknown): boolean | null {
+  if (typeof v === 'boolean') return v
+  if (typeof v === 'number') return Number.isFinite(v) ? v !== 0 : null
+  if (typeof v !== 'string') return null
+  const t = v.trim().toLowerCase()
+  if (TOGGLE_ON.has(t)) return true
+  if (TOGGLE_OFF.has(t)) return false
+  return null
+}
+
+export const formatToggle = (on: boolean) => (on ? 'Yes' : 'No')
 
 export function formatNumber(field: FieldDef, n: number): string {
   const s = field.kind === 'int' ? String(Math.round(n))
@@ -167,6 +187,7 @@ export function formatValue(p: Project, field: FieldDef, v: FieldValue | null): 
     case 'text': return String(v)
     case 'int':
     case 'float': return formatNumber(field, Number(v))
+    case 'toggle': return formatToggle(v === true)
     case 'select': return (Array.isArray(v) ? v : [String(v)]).join(', ')
     case 'ref': return (Array.isArray(v) ? v : [String(v)]).map(id => entityTitle(p, id)).join(', ')
   }
@@ -182,6 +203,14 @@ export function entityTitle(p: Project, id: Id): string {
 export function convertValue(from: FieldKind, to: FieldKind, v: FieldValue | null): FieldValue | null {
   if (v === null || from === to) return v
   if (to === 'ref' || from === 'ref') return null
+  // Toggle: yes/no words and non-zero numbers read as on; it writes back as Yes/No text or 1/0.
+  if (to === 'toggle') return from === 'select' ? null : parseToggle(v)
+  if (from === 'toggle') {
+    const on = v === true
+    if (to === 'text') return formatToggle(on)
+    if (to === 'select') return null
+    return on ? 1 : 0
+  }
   // Dropdown ↔ text: choices become a comma list and back (unknown choices are dropped by clampValue).
   if (from === 'select') { const s = (Array.isArray(v) ? v : [String(v)]).join(', '); return to === 'text' ? s : null }
   if (to === 'select') return typeof v === 'string' ? v.split(',').map(x => x.trim()).filter(Boolean) : null

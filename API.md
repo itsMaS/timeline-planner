@@ -116,6 +116,7 @@ Value shapes in `fieldValues`, by field `kind`:
 | `text`   | string                                 |
 | `int`    | number (integer)                       |
 | `float`  | number                                 |
+| `toggle` | boolean                                |
 | `select` | array of option strings (single-choice fields still use a one-element array, e.g. `["Done"]`) |
 | `ref`    | array of item/section ids              |
 
@@ -187,6 +188,7 @@ Accepted `p_value` by kind:
 | `text`   | string (`maxLength` enforced); `""` unsets                                                |
 | `int`    | whole number within `min`/`max`                                                            |
 | `float`  | number within `min`/`max`                                                                  |
+| `toggle` | `true` / `false` (also accepts `"yes"`/`"no"`, `"on"`/`"off"`, `1`/`0`)                    |
 | `select` | one option string, or an array of option strings (array of one unless `selectMultiple`)    |
 | `ref`    | one id, or an array of ids (array of one unless `refMultiple`); targets must exist and be of an allowed type/level |
 

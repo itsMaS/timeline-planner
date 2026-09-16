@@ -494,7 +494,9 @@ export function ProcessorEditor() {
   const edit = (recipe: (f: ProcessorDef) => void) => mutate(p => { const f = p.processors.find(x => x.id === proc.id); if (f) recipe(f) })
   const close = () => setUI({ editProcessorId: null })
   const spec = PROCESSOR_OPS.find(o => o.op === proc.op)!
-  const fieldChoices = proj.fields.filter(f => (spec.needsField === 'number' ? isNumberKind(f.kind) : true))
+  // Sum also takes toggles (it counts the ones switched on).
+  const numeric = (k: FieldKind, op: ProcessorOp = proc.op) => isNumberKind(k) || (op === 'sum' && k === 'toggle')
+  const fieldChoices = proj.fields.filter(f => (spec.needsField === 'number' ? numeric(f.kind) : true))
   const levels = processorUsage(proj, proc.id)
 
   const del = () => {
@@ -531,7 +533,7 @@ export function ProcessorEditor() {
           if (need === 'none') f.fieldId = null
           else if (need === 'number') {
             const cur = proj.fields.find(x => x.id === f.fieldId)
-            if (!cur || !isNumberKind(cur.kind)) f.fieldId = proj.fields.find(x => isNumberKind(x.kind))?.id ?? null
+            if (!cur || !numeric(cur.kind, f.op)) f.fieldId = proj.fields.find(x => numeric(x.kind, f.op))?.id ?? null
           } else if (!f.fieldId) f.fieldId = proj.fields[0]?.id ?? null
         })}>
           {PROCESSOR_OPS.map(o => <option key={o.op} value={o.op}>{o.label}</option>)}

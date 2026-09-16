@@ -67,7 +67,7 @@ const FUNCTIONS: Fn[] = [
     params: [
       ['p_entity_id', 'item or section id'],
       ['p_field_id', 'field id (from api_schema)'],
-      ['p_value', 'text: string · int/float: number · select: option string or array · ref: id or array of ids · null to unset'],
+      ['p_value', 'text: string · int/float: number · toggle: true/false · select: option string or array · ref: id or array of ids · null to unset'],
       ['p_author', 'optional, shown in history'],
     ],
     returns: '{ version, changed, entity }',
