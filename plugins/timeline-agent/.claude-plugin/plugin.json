@@ -1,7 +1,7 @@
 {
   "name": "timeline-agent",
   "description": "Work on a shared Timeline Planner project through its edit link: propose reviewable changes, apply edits on request, export filtered PDFs.",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "author": { "name": "Martynas Siskauskas", "url": "https://github.com/itsMaS" },
   "homepage": "https://github.com/itsMaS/timeline-planner",
   "keywords": ["timeline", "planning", "proposals", "pdf"]

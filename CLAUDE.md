@@ -85,6 +85,27 @@
   `ui.pickRef`, `ui.highlightId` and `ui.confirm`; deletes of items/sections
   go through `requestDelete` (`src/ui/deletion.ts`) so referenced entries warn.
 - Panel widths (`ui.sidebarW` / `ui.inspectorW`) persist per browser only.
+- `FieldDef.showName` (default true) hides the field's name wherever a value is
+  displayed (canvas label, tooltip, inspector, document export) — use
+  `fieldLabel()` when rendering a name next to a value. Reference values render
+  as a list of `RefEntry` rows (`src/ui/FieldInputs.tsx`), chips are only used
+  for "Referenced by".
+
+## Views, filters and exports
+
+- `Project.activeViewId` survives filter changes: `viewDirty()`
+  (`src/model/views.ts`) compares the live filters with the view, and the
+  viewbar offers Update / Revert / Save as new view. Never reset
+  `activeViewId` when tweaking filters.
+- New types go through `hideNewTypeInFilters()` so type-restricted views (and
+  live filters) keep hiding them; the create-type-and-item path un-hides the
+  type in the live filters afterwards.
+- `ui.showTitles` / `ui.showFields` (per browser) drive canvas labels via
+  `layoutTimeline(..., showFields, showTitles)` and `splitLabel`.
+- `exportScope()` (`src/ui/exportScope.ts`) is the single rule for what an
+  export contains (visible items, optionally only inside the selected
+  sections); PNG, SVG, CSV and the document PDF all take it. Project JSON is
+  always complete.
 
 ## Proposals (suggested changes) and the agent CLI
 

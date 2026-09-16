@@ -22964,6 +22964,13 @@ var ICON_CATEGORIES = Object.fromEntries(
   ])
 );
 
+// src/ui/exportScope.ts
+function isItemVisible(proj, it) {
+  const layerId = it.layerId ?? typeOf(proj, it)?.defaultLayerId ?? null;
+  if (layerId && proj.layers.find((l) => l.id === layerId)?.eye) return false;
+  return itemMatchesFilters(proj, it, proj.filters);
+}
+
 // src/ui/Markdown.tsx
 var import_jsx_runtime = __toESM(require_jsx_runtime(), 1);
 function inline(text, keyBase) {
@@ -23012,11 +23019,6 @@ function Markdown({ text }) {
 
 // src/ui/exportDoc.tsx
 var import_jsx_runtime2 = __toESM(require_jsx_runtime(), 1);
-function isItemVisible(proj, it) {
-  const layerId = it.layerId ?? typeOf(proj, it)?.defaultLayerId ?? null;
-  if (layerId && proj.layers.find((l) => l.id === layerId)?.eye) return false;
-  return itemMatchesFilters(proj, it, proj.filters);
-}
 var EPS = 1e-9;
 var contains = (sc, pos) => pos >= sc.start - EPS && pos <= sc.end + EPS;
 var encloses = (outer, inner) => outer.depth < inner.depth && inner.start >= outer.start - EPS && inner.end <= outer.end + EPS;
@@ -23093,9 +23095,9 @@ function DocBody({ proj, roots, loose }) {
       ] }),
       /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { className: "meta", children: meta.join(" \xB7 ") }),
       it.description.trim() && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Markdown, { text: it.description }),
-      fields.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("dl", { className: "fields", children: fields.map((f) => /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { children: [
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("dt", { children: f.field.name }),
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("dd", { children: f.field.kind === "text" ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Markdown, { text: f.text }) : f.text })
+      fields.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("dl", { className: "fields", children: fields.map((f) => /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: f.field.showName ? "" : "noname", children: [
+        f.field.showName && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("dt", { children: f.field.name }),
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("dd", { title: f.field.showName ? void 0 : f.field.name, children: f.field.kind === "text" ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Markdown, { text: f.text }) : f.text })
       ] }, f.field.id)) }),
       it.link && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("p", { className: "link", children: [
         "Link: ",
@@ -23181,6 +23183,7 @@ h1.item-h { font-size: 19pt; } h2.item-h { font-size: 15.5pt; } h3.item-h { font
 .fields > div { display: contents; }
 .fields dt { font-weight: 600; color: #4b5162; }
 .fields dd { margin: 0; }
+.fields > div.noname dd { grid-column: 1 / -1; }
 .link { margin: 0 0 6px; font-size: 10.5pt; word-break: break-all; }
 .images { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0 8px; }
 .images img { max-width: 240px; max-height: 180px; border-radius: 6px; border: 1px solid #d8dce6; }

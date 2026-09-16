@@ -124,6 +124,12 @@ input, select, textarea { font: inherit; color: inherit; }
 .menu button:hover { background: var(--panel2); }
 .menu button.danger { color: #ef4444; }
 .menu.ctx { position: absolute; right: auto; top: auto; z-index: 50; min-width: 180px; }
+.export-menu { min-width: 250px; }
+.export-menu .muted { font-size: 11px; }
+.menu-hint {
+  font-size: 10.5px; color: var(--muted); padding: 5px 10px 3px; margin-top: 2px;
+  border-top: 1px solid var(--line-soft);
+}
 
 /* ---------------------------------------------------------------- viewbar */
 .viewbar {
@@ -140,6 +146,11 @@ input, select, textarea { font: inherit; color: inherit; }
 .view-chip:hover { color: var(--text); border-color: var(--line); }
 .view-chip.on { background: color-mix(in srgb, var(--accent) 16%, transparent); border-color: var(--accent); color: var(--text); }
 .view-chip.save { border-style: dashed; }
+.view-chip.dirty { border-style: dashed; }
+.view-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.view-chip.act { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, transparent); padding-left: 8px; }
+.view-chip.act:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.viewbar .view-edit { padding: 3px; }
 .view-num {
   font-size: 10px; opacity: .55; background: var(--panel2);
   border-radius: 4px; padding: 0 4px;
@@ -686,6 +697,35 @@ body.col-resizing .inspector { animation: none; }
 .ref-chip-main:hover { color: var(--accent); }
 .ref-chip-x { padding: 2px 6px 2px 2px; color: var(--muted); }
 .ref-chip-x:hover { color: #ef4444; }
+/* referenced entries as a list: what is picked, where it is, what it says */
+.ref-list { display: flex; flex-direction: column; gap: 4px; }
+.ref-entry {
+  display: flex; align-items: flex-start; gap: 7px; padding: 6px 6px 6px 8px;
+  border: 1px solid var(--line-soft); border-left: 3px solid var(--c, var(--line)); border-radius: 8px;
+  background: var(--panel2); font-size: 12px;
+}
+.ref-entry > svg { flex-shrink: 0; margin-top: 2px; }
+.ref-entry.missing { color: var(--muted); font-style: italic; align-items: center; }
+.ref-entry-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.ref-entry-head { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.ref-entry-title {
+  font-weight: 600; text-align: left; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  padding: 0; color: var(--text);
+}
+.ref-entry-title:hover { color: var(--accent); text-decoration: underline; }
+.ref-entry-type { font-size: 10px; color: var(--muted); white-space: nowrap; }
+.ref-entry .tt-tags { margin-top: 2px; }
+.ref-entry-desc {
+  font-size: 11px; color: var(--muted); cursor: pointer;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+.ref-entry-desc.open { display: block; -webkit-line-clamp: unset; }
+.ref-entry-desc p { margin: 0 0 3px; }
+.ref-entry-desc ul { margin: 0 0 3px; padding-left: 16px; }
+.ref-entry-x { padding: 2px; margin: -2px -2px 0 0; color: var(--muted); }
+.ref-entry-x:hover { color: #ef4444; }
+.ref-picker.compact .ref-entry { padding: 3px 5px; }
+.ref-picker.compact .ref-entry-desc, .ref-picker.compact .ref-entry .tt-tags { display: none; }
 .ref-search { position: relative; display: flex; align-items: center; gap: 4px; }
 .ref-search .input { flex: 1; min-width: 0; }
 .ref-menu {

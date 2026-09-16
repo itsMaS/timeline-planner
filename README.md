@@ -54,13 +54,21 @@ To ship an update: `npm run build`, commit the regenerated
 - **Filters & views** — toggle types (Alt-click to solo), layers, tags; live
   text filter (`/`). Filtered-out items ghost at 15% (or hide entirely). Any
   filter combination can be saved as a named view, switched with `1`–`9`.
+  Changing filters while a view is active marks it modified: *Update* saves
+  the changes into it, *Revert* goes back, *Save as new view* keeps both.
+  Double-click (or the pencil) renames a view. A newly created type stays
+  hidden in every view that already filters by type.
+- **Toolbar toggles** — hide item titles (icons pack much tighter), show
+  custom field values next to titles, hide filtered items instead of ghosting.
 - **Feel** — springy micro-animations, particle bursts on create/delete/snap,
   optional synthesized sound (off by default), automatic
   `prefers-reduced-motion` support, dark and light themes.
 - **Data** — multiple timelines as tabs, continuous autosave + periodic
   rollback snapshots, JSON import/export, PNG export of the current view, SVG
-  export of the whole timeline, CSV of all items. Everything is undoable
-  (`Ctrl+Z`).
+  export of the whole timeline, CSV of items. Everything is undoable
+  (`Ctrl+Z`). Every export except the project JSON follows the canvas: items
+  hidden by filters are left out, and selecting sections narrows the export
+  (PNG, SVG, CSV, document PDF) to just those sections.
 - **Document export (PDF)** — *Export → Document PDF* renders the timeline as
   a printable outline: sections become headings (outermost level H1, next H2,
   …), items are sub-headings one level below their section with the type's

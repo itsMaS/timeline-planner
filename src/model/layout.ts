@@ -112,29 +112,37 @@ export function displayLabel(title: string, max = LABEL_MAX): string {
   return title.slice(0, Math.floor(max / 6.6) - 1) + '…'
 }
 
-/** "Name: value · Name: value" for every custom field the item has filled in. */
+/**
+ * "Name: value · Name: value" for every custom field the item has filled in
+ * (just "value" for fields that hide their name).
+ */
 export function itemFieldText(p: Project, it: Item): string {
   return attachmentsFor(p, { kind: 'item', entity: it })
     .map(({ att, field }) => ({ field, v: formatValue(p, field, effectiveValue(field, att, it.fieldValues[field.id])) }))
     .filter(x => x.v.trim())
-    .map(x => `${x.field.name}: ${x.v}`)
+    .map(x => (x.field.showName ? `${x.field.name}: ${x.v}` : x.v))
     .join(FIELD_SEP)
 }
 
-/** Full text an item's label occupies on the canvas (title, then fields when shown). */
-function itemLabel(p: Project, it: Item, showFields: boolean): { text: string; max: number } {
-  const title = it.title || '…'
+/**
+ * Full text an item's label occupies on the canvas: the title (unless titles
+ * are hidden), then the fields when shown. Empty when both are off.
+ */
+function itemLabel(p: Project, it: Item, showFields: boolean, showTitles = true): { text: string; max: number } {
+  const title = showTitles ? it.title || '…' : ''
   const fields = showFields ? itemFieldText(p, it) : ''
-  return fields ? { text: title + FIELD_SEP + fields, max: LABEL_MAX_FIELDS } : { text: title, max: LABEL_MAX }
+  if (!fields) return { text: title, max: LABEL_MAX }
+  return { text: title ? title + FIELD_SEP + fields : fields, max: LABEL_MAX_FIELDS }
 }
 
 /**
  * Label split into its title and (muted) fields part, truncated as a whole so
  * it never exceeds the slot the layout reserved for it.
  */
-export function splitLabel(p: Project, it: Item, showFields: boolean): { title: string; fields: string } {
-  const { text, max } = itemLabel(p, it, showFields)
+export function splitLabel(p: Project, it: Item, showFields: boolean, showTitles = true): { title: string; fields: string } {
+  const { text, max } = itemLabel(p, it, showFields, showTitles)
   const shown = displayLabel(text, max)
+  if (!showTitles) return { title: '', fields: shown }
   const title = it.title || '…'
   if (!showFields || shown.length <= title.length + FIELD_SEP.length) return { title: shown, fields: '' }
   return { title, fields: shown.slice(title.length + FIELD_SEP.length) }
@@ -219,6 +227,8 @@ export function layoutTimeline(
   maxUpRows = Infinity,
   /** Reserve label room for custom field values shown after the title. */
   showFields = false,
+  /** Titles hidden: labels hold only the fields (or nothing), so items pack tighter. */
+  showTitles = true,
 ): LayoutResult {
   const toX = (pos: number) => (pos - cam.x) * cam.s
   const margin = 220
@@ -321,15 +331,15 @@ export function layoutTimeline(
       const rowCap = pin ? maxRows + 4 : maxRows
       const iconW = ICON_W * size
       const tryPlace = (withLabel: boolean): PlacedItem | null => {
-        const lbl = itemLabel(p, it, showFields)
-        const lw = withLabel ? (labelWidth(lbl.text, lbl.max) + 8) * size : 0
+        const lbl = itemLabel(p, it, showFields, showTitles)
+        const lw = withLabel && lbl.text ? (labelWidth(lbl.text, lbl.max) + 8) * size : 0
         const w = Math.max(iconW + lw, spanW)
         const a = x - iconW / 2 - minGap / 2
         const b = x - iconW / 2 + w + minGap / 2
         for (const r of candidateRows(rowCap)) {
           if (fits(rows, r, a, b)) {
             occupy(rows, r, a, b)
-            return { item: it, x, y, ny: nyOf(r), w, row: r, labelShown: withLabel, ghost, spanW, size }
+            return { item: it, x, y, ny: nyOf(r), w, row: r, labelShown: withLabel && !!lbl.text, ghost, spanW, size }
           }
         }
         return null

@@ -400,6 +400,13 @@ export function FieldEditor() {
         <input type="checkbox" checked={field.showInTooltip} onChange={e => edit(f => { f.showInTooltip = e.target.checked })} />
         Show in the hover tooltip on the timeline
       </label>
+      <label className="check-row">
+        <input type="checkbox" checked={field.showName} onChange={e => edit(f => { f.showName = e.target.checked })} />
+        Show the field's name next to its value
+      </label>
+      <div className="sb-hint" style={{ marginTop: -4 }}>
+        Off when the value speaks for itself (e.g. “12 {field.unit || 'coins'}”) — the name then only identifies the field here and in the sidebar.
+      </div>
 
       <div className="field">
         <label>Attached to <span className="muted">({usage.items.length + usage.sections.length} stored value{usage.items.length + usage.sections.length === 1 ? '' : 's'})</span></label>

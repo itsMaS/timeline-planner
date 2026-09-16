@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react'
 import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Copy, FileText, Trash2, X } from 'lucide-react'
-import { attachmentsFor, effectiveValue, levelOf, type Owner } from '../model/fields'
+import { attachmentsFor, effectiveValue, fieldLabel, levelOf, type Owner } from '../model/fields'
 import { iconByName } from '../model/icons'
 import { typeOf } from '../model/layout'
 import { processorResults, type ProcessorResult } from '../model/processors'
@@ -86,10 +86,10 @@ function Creator({ who }: { who: { name: string; color: string } }) {
   )
 }
 
-function ReadField({ label, children }: { label: string; children: React.ReactNode }) {
+function ReadField({ label, title, children }: { label: string; title?: string; children: React.ReactNode }) {
   return (
-    <div className="field">
-      <label>{label}</label>
+    <div className="field" title={title}>
+      {label && <label>{label}</label>}
       <div className="read-value">{children}</div>
     </div>
   )
@@ -160,7 +160,7 @@ function ReadItemPanel({ id }: { id: string }) {
           </ReadField>
         )}
         {fields.map(f => (
-          <ReadField key={f.field.id} label={f.field.name}><ReadFieldValue field={f.field} value={f.value} /></ReadField>
+          <ReadField key={f.field.id} label={fieldLabel(f.field)} title={f.field.showName ? undefined : f.field.name}><ReadFieldValue field={f.field} value={f.value} /></ReadField>
         ))}
         {item.createdBy && (
           <ReadField label="Created by"><Creator who={item.createdBy} /></ReadField>
@@ -274,7 +274,7 @@ function ReadSectionPanel({ section }: { section: Section }) {
           <ReadField label="Length">{fmt(section.end - section.start)}</ReadField>
         </div>
         {fields.map(f => (
-          <ReadField key={f.field.id} label={f.field.name}><ReadFieldValue field={f.field} value={f.value} /></ReadField>
+          <ReadField key={f.field.id} label={fieldLabel(f.field)} title={f.field.showName ? undefined : f.field.name}><ReadFieldValue field={f.field} value={f.value} /></ReadField>
         ))}
         <ProcessorPanel section={section} />
         <ReferencedBy id={section.id} />

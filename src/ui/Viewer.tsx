@@ -1,6 +1,6 @@
 import React, { useEffect } from 'react'
 import {
-  Eye, EyeOff, ExternalLink, FileText, Maximize2, Minus, Moon, PanelLeft, Search, Sun, TableProperties, X, ZoomIn,
+  Eye, EyeOff, ExternalLink, FileText, Maximize2, Minus, Moon, PanelLeft, Search, Sun, TableProperties, Type, X, ZoomIn,
 } from 'lucide-react'
 import { itemMatchesFilters } from '../model/layout'
 import { useActiveProject, useActiveShare, useActiveSync, useStore } from '../model/store'
@@ -9,6 +9,7 @@ import { Inspector } from './Inspector'
 import { nav } from './nav'
 import { PanelDivider } from './Panels'
 import { exportDocPDF } from './exportDoc'
+import { exportScope } from './exportScope'
 import { PresenceBar } from './Share'
 import { Sidebar } from './Sidebar'
 
@@ -26,6 +27,7 @@ export function Viewer() {
   const tweak = useStore(s => s.tweak)
   const select = useStore(s => s.select)
   const showToast = useStore(s => s.showToast)
+  const scope = exportScope(proj, ui.selection)
 
   useEffect(() => { document.documentElement.dataset.theme = ui.theme }, [ui.theme])
   useEffect(() => { document.title = `${proj.name} — Timeline Planner` }, [proj.name])
@@ -72,7 +74,7 @@ export function Viewer() {
           <Search width={13} height={13} />
           <input
             className="search-input" placeholder="Filter items…  ( / )" value={proj.filters.text}
-            onChange={e => tweak(p => { p.filters.text = e.target.value; p.activeViewId = null })}
+            onChange={e => tweak(p => { p.filters.text = e.target.value })}
             onKeyDown={e => {
               if (e.key === 'Enter') {
                 const first = proj.items.find(i => itemMatchesFilters(proj, i, proj.filters))
@@ -100,6 +102,8 @@ export function Viewer() {
             onClick={() => setUI({ ghostHidden: !ui.ghostHidden })}>
             {ui.ghostHidden ? <EyeOff width={15} height={15} /> : <Eye width={15} height={15} />}
           </button>
+          <button className={`ghost-btn ${ui.showTitles ? 'on' : ''}`} title="Show item titles on the timeline (off packs items closer together)"
+            onClick={() => setUI({ showTitles: !ui.showTitles })}><Type width={15} height={15} /></button>
           <button className={`ghost-btn ${ui.showFields ? 'on' : ''}`} title="Show custom field values next to item titles"
             onClick={() => setUI({ showFields: !ui.showFields })}><TableProperties width={15} height={15} /></button>
           <span className="sep" />
@@ -111,9 +115,9 @@ export function Viewer() {
             {ui.theme === 'dark' ? <Sun width={15} height={15} /> : <Moon width={15} height={15} />}
           </button>
           <button
-            className="ghost-btn" title="Export as document (PDF) — sections as headings, items as sub-headings"
+            className="ghost-btn" title={`${scope.describe('Document PDF')} — sections as headings, items as sub-headings; only visible items are included`}
             onClick={() => {
-              if (!exportDocPDF(proj, null)) showToast('Pop-up blocked — allow pop-ups for this site to export the document.')
+              if (!exportDocPDF(proj, scope.sectionIds)) showToast('Pop-up blocked — allow pop-ups for this site to export the document.')
             }}
           ><FileText width={15} height={15} /></button>
           <a className="ghost-btn" title="Open Timeline Planner" href={appUrl} target="_blank" rel="noreferrer">

@@ -23,7 +23,7 @@ export const isNumberKind = (k: FieldKind) => k === 'int' || k === 'float'
 
 export function newFieldDef(id: Id, name: string, kind: FieldKind = 'text'): FieldDef {
   return {
-    id, name, kind, help: '', required: false, showInTooltip: false, defaultValue: null,
+    id, name, kind, help: '', required: false, showInTooltip: false, showName: true, defaultValue: null,
     maxLength: null, min: null, max: null, decimals: null, unit: '',
     options: [], selectMultiple: false,
     refTargets: [], refMultiple: false, refShowLinks: false,
@@ -39,6 +39,9 @@ export function normalizeFieldDef(raw: Partial<FieldDef> & { id: Id }): FieldDef
   f.defaultValue = coerceValue(f, f.defaultValue)
   return f
 }
+
+/** Name to show next to a value; '' when the field hides it. */
+export const fieldLabel = (f: FieldDef) => (f.showName ? f.name : '')
 
 export const fieldById = (p: Project, id: Id | null | undefined) => (id ? p.fields.find(f => f.id === id) : undefined)
 export const processorById = (p: Project, id: Id | null | undefined) => (id ? p.processors.find(f => f.id === id) : undefined)

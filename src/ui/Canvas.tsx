@@ -13,6 +13,7 @@ import { bandBadge } from '../model/processors'
 import { diffToChanges, proposalItemIds } from '../model/proposal'
 import { useActiveProject, useStore } from '../model/store'
 import type { Camera, Item, Section } from '../model/types'
+import { hideNewTypeInFilters } from '../model/views'
 import { PALETTE, clamp, formatUnit, rulerStepFor, sectionHue, snapPos, timeBaseFor, uid, unitSuffix } from '../model/util'
 import { bindParticleCanvas, burst, puff, ripple, setParticleLevel } from '../fx/particles'
 import { setSoundOn, sfx } from '../fx/sound'
@@ -113,6 +114,7 @@ export function CanvasView() {
   const setUI = useStore(s => s.setUI)
   const select = useStore(s => s.select)
   const mutate = useStore(s => s.mutate)
+  const tweak = useStore(s => s.tweak)
   const setCamera = useStore(s => s.setCamera)
   const showToast = useStore(s => s.showToast)
 
@@ -226,8 +228,8 @@ export function CanvasView() {
   const maxUpRows = Math.max(1, Math.floor((spineY - headerH - 76) / ROW_H) + 1)
 
   const layout = useMemo(
-    () => layoutTimeline(effective, cam, size.w, proj.filters, ui.density, ui.ghostHidden, stickyRef.current, selection, st.placement, maxUpRows, ui.showFields),
-    [effective, cam, size.w, proj.filters, ui.density, ui.ghostHidden, selection, st.placement, maxUpRows, ui.showFields],
+    () => layoutTimeline(effective, cam, size.w, proj.filters, ui.density, ui.ghostHidden, stickyRef.current, selection, st.placement, maxUpRows, ui.showFields, ui.showTitles),
+    [effective, cam, size.w, proj.filters, ui.density, ui.ghostHidden, selection, st.placement, maxUpRows, ui.showFields, ui.showTitles],
   )
   useEffect(() => {
     stickyRef.current = new Set(layout.placed.map(pl => pl.item.id))
@@ -384,7 +386,7 @@ export function CanvasView() {
     mutate(p => {
       p.items.push({
         id, typeId: type.id, layerId: null, pathId, pos, duration: 0,
-        title: `New ${type.name.toLowerCase()}`, description: '', tags: [], link: '', images: [], fieldValues: {},
+        title: type.name, description: '', tags: [], link: '', images: [], fieldValues: {},
         createdBy: creatorStamp(),
       })
     })
@@ -421,10 +423,15 @@ export function CanvasView() {
   /** New type under the given name (next palette colour), for the "new type" row of a type search. */
   const createType = (name: string): string => {
     const id = uid()
-    mutate(p => p.types.push({
-      id, name, icon: 'Circle', color: PALETTE[p.types.length % PALETTE.length], folderId: null,
-      defaultLayerId: p.layers[Math.min(1, p.layers.length - 1)]?.id ?? null, fields: [],
-    }))
+    mutate(p => {
+      p.types.push({
+        id, name, icon: 'Circle', color: PALETTE[p.types.length % PALETTE.length], folderId: null,
+        defaultLayerId: p.layers[Math.min(1, p.layers.length - 1)]?.id ?? null, fields: [],
+      })
+      hideNewTypeInFilters(p, id)
+    })
+    // The item about to be created with it should be visible right away.
+    tweak(p => { p.filters.offTypes = p.filters.offTypes.filter(x => x !== id) })
     return id
   }
 
@@ -1734,6 +1741,7 @@ export function CanvasView() {
               highlight={highlightId === pl.item.id}
               proposed={proposed.has(pl.item.id)}
               showFields={ui.showFields}
+              showTitles={ui.showTitles}
               scaleL={!ui.readOnly && groupScale?.firstId === pl.item.id}
               scaleR={!ui.readOnly && groupScale?.lastId === pl.item.id}
               anim={ui.animLevel !== 'off'}
@@ -1891,7 +1899,7 @@ export function CanvasView() {
           )}
           {hoverFields.length > 0 && (
             <div className="tt-fields">
-              {hoverFields.map(f => <div key={f.field.id}><span className="muted">{f.field.name}</span> {f.text}</div>)}
+              {hoverFields.map(f => <div key={f.field.id}>{f.field.showName && <span className="muted">{f.field.name}</span>} {f.text}</div>)}
             </div>
           )}
           {hoverItem.images[0] && <img src={hoverItem.images[0]} alt="" className="tt-img" />}
@@ -2041,11 +2049,12 @@ function ItemG(props: {
   startHandle: (side: 'L' | 'R', e: React.PointerEvent) => void
   startScale: (side: 'L' | 'R', e: React.PointerEvent) => void
   showFields: boolean
+  showTitles: boolean
 }) {
   const { pl, proj, selected, scaleL, scaleR } = props
   const type = typeOf(proj, pl.item)
   const Icon = iconByName(type?.icon ?? 'Circle')
-  const label = splitLabel(proj, pl.item, props.showFields)
+  const label = splitLabel(proj, pl.item, props.showFields, props.showTitles)
   const color = type?.color ?? '#888'
   const z = pl.size || 1
   const barY = 3 + 14 * z
@@ -2104,7 +2113,7 @@ function ItemG(props: {
             style={{ fill: `color-mix(in srgb, ${color} 30%, var(--text))`, fontSize: 11.5 * clamp(z, 0.8, 1.35) }}
           >
             {label.title}
-            {label.fields && <tspan className="node-fields">{' · '}{label.fields}</tspan>}
+            {label.fields && <tspan className="node-fields">{label.title ? ' · ' : ''}{label.fields}</tspan>}
           </text>
         )}
       </g>

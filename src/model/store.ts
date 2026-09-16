@@ -249,6 +249,8 @@ interface UIState {
   readOnly: boolean
   /** Show filled-in custom field values next to item titles on the canvas. */
   showFields: boolean
+  /** Show item titles on the canvas; off packs items closer (icons only, or fields only). */
+  showTitles: boolean
   /** Proposal currently open in the review panel; its pending items are highlighted on the canvas. */
   reviewProposalId: Id | null
 }
@@ -337,7 +339,7 @@ function persistSoon(get: () => Store) {
           ghostHidden: s.ui.ghostHidden, density: s.ui.density, theme: s.ui.theme,
           soundOn: s.ui.soundOn, animLevel: s.ui.animLevel, snap: s.ui.snap, magnet: s.ui.magnet, ripple: s.ui.ripple,
           sidebarW: s.ui.sidebarW, inspectorW: s.ui.inspectorW,
-          showFields: s.ui.showFields,
+          showFields: s.ui.showFields, showTitles: s.ui.showTitles,
         },
       }))
       for (const p of s.projects) {
@@ -456,6 +458,7 @@ export const useStore = create<Store>((set, get) => ({
     sidebarOpen: true,
     readOnly: false,
     showFields: init.prefs.showFields ?? true,
+    showTitles: init.prefs.showTitles ?? true,
     reviewProposalId: null,
   } as UIState,
 

@@ -1,12 +1,14 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Crosshair, X } from 'lucide-react'
 import {
-  backlinks, clampValue, coerceValue, defaultFor, effectiveValue, entityTitle, formatValue, kindGlyph, levelOf, ownerOf,
-  parseInput, refCandidates, type Owner,
+  backlinks, clampValue, coerceValue, defaultFor, effectiveValue, entityTitle, formatValue, kindGlyph, levelOf, locationOf,
+  ownerOf, parseInput, refCandidates, type Owner,
 } from '../model/fields'
 import { iconByName } from '../model/icons'
 import { useActiveProject, useStore } from '../model/store'
 import type { FieldAttachment, FieldDef, FieldValue, Id, Project } from '../model/types'
+import { formatUnit, unitSuffix } from '../model/util'
+import { Markdown } from './Markdown'
 import { nav } from './nav'
 
 /** Fly the camera to an item or section and select it. */
@@ -40,16 +42,22 @@ export function FieldRow(props: {
   const explicit = coerceValue(field, props.raw)
   const eff = effectiveValue(field, att, props.raw)
   const invalid = field.required && eff === null
+  const canReset = explicit !== null && defaultFor(field, att) !== null
+  // A field that hides its name gets no label row unless something has to go
+  // there (the required mark or the reset link); the name stays in the tooltip.
+  const showLabel = field.showName || field.required || canReset
   return (
-    <div className={`field fdef ${invalid ? 'invalid' : ''}`}>
-      <label title={`${field.name} · ${field.kind}`}>
-        <span className="kind-glyph">{kindGlyph(field.kind)}</span>
-        {field.name}
-        {field.required && <span className="req" title="Required"> *</span>}
-        {explicit !== null && defaultFor(field, att) !== null && (
-          <button className="link-btn right" title="Clear and fall back to the default" onClick={() => props.onChange(null)}>reset</button>
-        )}
-      </label>
+    <div className={`field fdef ${invalid ? 'invalid' : ''} ${field.showName ? '' : 'noname'}`} title={field.showName ? undefined : `${field.name} · ${field.kind}`}>
+      {showLabel && (
+        <label title={`${field.name} · ${field.kind}`}>
+          <span className="kind-glyph">{kindGlyph(field.kind)}</span>
+          {field.showName && field.name}
+          {field.required && <span className="req" title="Required"> *</span>}
+          {canReset && (
+            <button className="link-btn right" title="Clear and fall back to the default" onClick={() => props.onChange(null)}>reset</button>
+          )}
+        </label>
+      )}
       <FieldValueInput field={field} att={att} value={explicit} ownerId={props.ownerId} onChange={props.onChange} />
       {field.help && <div className="field-help">{field.help}</div>}
     </div>
@@ -240,8 +248,8 @@ function RefPicker(props: {
   return (
     <div className={`ref-picker ${props.compact ? 'compact' : ''}`}>
       {value.length > 0 && (
-        <div className="ref-chips">
-          {value.map(id => <RefChip key={id} id={id} onRemove={readOnly ? undefined : () => remove(id)} />)}
+        <div className="ref-list">
+          {value.map(id => <RefEntry key={id} id={id} onRemove={readOnly ? undefined : () => remove(id)} />)}
         </div>
       )}
       {!readOnly && (field.refMultiple || value.length === 0 || true) && (
@@ -298,6 +306,60 @@ function RefPicker(props: {
   )
 }
 
+/**
+ * One referenced entity as a list row: icon, title (click jumps to it), type
+ * and location, span, tags, and its description (click the text to expand).
+ */
+export function RefEntry({ id, onRemove }: { id: Id; onRemove?: () => void }) {
+  const proj = useActiveProject()
+  const setUI = useStore(s => s.setUI)
+  const [expanded, setExpanded] = useState(false)
+  const o = ownerOf(proj, id)
+  if (!o) {
+    return (
+      <div className="ref-entry missing">
+        <span className="ref-entry-title muted">missing entry</span>
+        {onRemove && <button className="ghost-btn ref-entry-x" title="Remove" onClick={onRemove}><X width={11} height={11} /></button>}
+      </div>
+    )
+  }
+  const look = entityLook(proj, o)
+  const Icon = iconByName(look.icon)
+  const desc = (o.kind === 'item' ? o.entity.description : o.entity.description ?? '').trim()
+  const tags = o.kind === 'item' ? o.entity.tags : []
+  const suffix = unitSuffix(proj.settings.unit.preset, proj.settings.unit.custom)
+  const fmt = (v: number) => formatUnit(v, Math.max(Math.abs(v), 0.01), suffix, proj.settings.unit.preset)
+  const span = o.kind === 'item'
+    ? (o.entity.duration > 0 ? `spans ${fmt(o.entity.duration)}` : '')
+    : `${fmt(o.entity.end - o.entity.start)} long`
+  return (
+    <div
+      className="ref-entry"
+      style={{ '--c': look.color } as React.CSSProperties}
+      onPointerEnter={() => setUI({ highlightId: id })}
+      onPointerLeave={() => setUI({ highlightId: null })}
+    >
+      <Icon width={14} height={14} color={look.color} strokeWidth={2} />
+      <div className="ref-entry-main">
+        <div className="ref-entry-head">
+          <button className="ref-entry-title" title="Jump to it on the timeline" onClick={() => jumpTo(proj, id)}>{entityTitle(proj, id)}</button>
+          <span className="ref-entry-type">{look.typeName}</span>
+        </div>
+        <div className="ref-row-sub">{locationOf(proj, o)}{span && ` · ${span}`}</div>
+        {tags.length > 0 && <div className="tt-tags">{tags.map(t => <span key={t} className="tag">{t}</span>)}</div>}
+        {desc && (
+          <div
+            className={`ref-entry-desc md ${expanded ? 'open' : ''}`}
+            title={expanded ? 'Click to collapse' : 'Click to expand'}
+            onClick={() => setExpanded(v => !v)}
+          ><Markdown text={desc} /></div>
+        )}
+      </div>
+      {onRemove && <button className="ghost-btn ref-entry-x" title="Remove" onClick={onRemove}><X width={11} height={11} /></button>}
+    </div>
+  )
+}
+
 /** Chip for one referenced entity; click jumps to it. */
 export function RefChip({ id, onRemove, via }: { id: Id; onRemove?: () => void; via?: string }) {
   const proj = useActiveProject()
@@ -330,7 +392,7 @@ export function ReadFieldValue({ field, value }: { field: FieldDef; value: Field
   const proj = useActiveProject()
   if (value === null) return <span className="muted">—</span>
   if (field.kind === 'ref' && Array.isArray(value)) {
-    return <div className="ref-chips">{value.map(id => <RefChip key={id} id={id} />)}</div>
+    return <div className="ref-list">{value.map(id => <RefEntry key={id} id={id} />)}</div>
   }
   if (field.kind === 'select' && Array.isArray(value)) {
     return <div className="select-chips read">{value.map(o => <span key={o} className="chip on">{o}</span>)}</div>

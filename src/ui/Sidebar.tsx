@@ -7,6 +7,7 @@ import { iconByName } from '../model/icons'
 import { attachedToNames, fieldUsage, kindGlyph, kindLabel, newFieldDef } from '../model/fields'
 import { itemMatchesFilters, typeOf } from '../model/layout'
 import { processorUsage } from '../model/processors'
+import { hideNewTypeInFilters } from '../model/views'
 import { newLevel, useActiveProject, useActiveShare, useCanEdit, useStore } from '../model/store'
 import type { ItemType, TypeFolder } from '../model/types'
 import { PALETTE, uid } from '../model/util'
@@ -70,7 +71,6 @@ export function Sidebar() {
     const set = new Set(p.filters.offTypes)
     for (const id of ids) { if (off) set.add(id); else set.delete(id) }
     p.filters.offTypes = [...set]
-    p.activeViewId = null
   })
   /**
    * Show only the given types; if they are already the only ones on, go back
@@ -92,14 +92,13 @@ export function Sidebar() {
     if (!preSolo.current || !sameSet(proj.filters.offTypes, preSolo.current.soloOff)) {
       preSolo.current = { offTypes: [...proj.filters.offTypes], activeViewId: proj.activeViewId, soloOff: others }
     } else preSolo.current.soloOff = others
-    tweak(p => { p.filters.offTypes = others; p.activeViewId = null })
+    tweak(p => { p.filters.offTypes = others })
   }
   /** Viewer-side layer hiding goes through the per-user filter, never the shared layer flag. */
   const toggleLayerFilter = (id: string) => tweak(p => {
     p.filters.offLayers = p.filters.offLayers.includes(id)
       ? p.filters.offLayers.filter(x => x !== id)
       : [...p.filters.offLayers, id]
-    p.activeViewId = null
   })
 
   // Counts respecting all other filter groups (not the type toggle itself).
@@ -248,12 +247,19 @@ export function Sidebar() {
 
   const newType = (folderId: string | null, color?: string, name?: string) => {
     const id = uid()
-    mutate(p => p.types.push({
-      id, name: name ?? 'New type', icon: 'Circle',
-      color: color ?? (name ? PALETTE[p.types.length % PALETTE.length] : '#8b5cf6'), folderId,
-      defaultLayerId: p.layers[Math.min(1, p.layers.length - 1)]?.id ?? null, fields: [],
-    }))
-    if (folderId) tweak(p => { const x = p.typeFolders.find(y => y.id === folderId); if (x) x.collapsed = false })
+    mutate(p => {
+      p.types.push({
+        id, name: name ?? 'New type', icon: 'Circle',
+        color: color ?? (name ? PALETTE[p.types.length % PALETTE.length] : '#8b5cf6'), folderId,
+        defaultLayerId: p.layers[Math.min(1, p.layers.length - 1)]?.id ?? null, fields: [],
+      })
+      hideNewTypeInFilters(p, id)
+    })
+    tweak(p => {
+      if (folderId) { const x = p.typeFolders.find(y => y.id === folderId); if (x) x.collapsed = false }
+      // A named type is about to get an item: keep it visible in the live filters.
+      if (name) p.filters.offTypes = p.filters.offTypes.filter(x => x !== id)
+    })
     // A named type (from the add-item search) is ready to use; a blank one opens its editor.
     if (!name) setUI({ editTypeId: id })
     return id
@@ -739,7 +745,6 @@ export function Sidebar() {
                 p.filters.tags = p.filters.tags.includes(t)
                   ? p.filters.tags.filter(x => x !== t)
                   : [...p.filters.tags, t]
-                p.activeViewId = null
               })}
             >{t}</button>
           ))}

@@ -2,9 +2,10 @@ import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { iconByName } from '../model/icons'
 import { attachmentsFor, effectiveValue, formatValue } from '../model/fields'
-import { itemMatchesFilters, typeOf } from '../model/layout'
+import { typeOf } from '../model/layout'
 import type { Item, Project, Section } from '../model/types'
 import { formatUnit, unitSuffix } from '../model/util'
+import { isItemVisible } from './exportScope'
 import { Markdown } from './Markdown'
 
 /**
@@ -25,12 +26,7 @@ import { Markdown } from './Markdown'
  * the print dialog already up, where "Save as PDF" is the destination.
  */
 
-/** Same rule the canvas uses to hide an item outright or ghost it. */
-export function isItemVisible(proj: Project, it: Item): boolean {
-  const layerId = it.layerId ?? typeOf(proj, it)?.defaultLayerId ?? null
-  if (layerId && proj.layers.find(l => l.id === layerId)?.eye) return false
-  return itemMatchesFilters(proj, it, proj.filters)
-}
+export { isItemVisible }
 
 interface SectionNode {
   section: Section
@@ -137,7 +133,10 @@ function DocBody({ proj, roots, loose }: { proj: Project; roots: SectionNode[]; 
         {fields.length > 0 && (
           <dl className="fields">
             {fields.map(f => (
-              <div key={f.field.id}><dt>{f.field.name}</dt><dd>{f.field.kind === 'text' ? <Markdown text={f.text} /> : f.text}</dd></div>
+              <div key={f.field.id} className={f.field.showName ? '' : 'noname'}>
+                {f.field.showName && <dt>{f.field.name}</dt>}
+                <dd title={f.field.showName ? undefined : f.field.name}>{f.field.kind === 'text' ? <Markdown text={f.text} /> : f.text}</dd>
+              </div>
             ))}
           </dl>
         )}
@@ -225,6 +224,7 @@ h1.item-h { font-size: 19pt; } h2.item-h { font-size: 15.5pt; } h3.item-h { font
 .fields > div { display: contents; }
 .fields dt { font-weight: 600; color: #4b5162; }
 .fields dd { margin: 0; }
+.fields > div.noname dd { grid-column: 1 / -1; }
 .link { margin: 0 0 6px; font-size: 10.5pt; word-break: break-all; }
 .images { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0 8px; }
 .images img { max-width: 240px; max-height: 180px; border-radius: 6px; border: 1px solid #d8dce6; }

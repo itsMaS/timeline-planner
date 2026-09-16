@@ -6,14 +6,22 @@ import type { Camera, Project } from '../model/types'
 import { clamp, download, formatUnit, rulerStepFor, sectionHue, unitSuffix } from '../model/util'
 import { attachmentsFor, effectiveValue, formatValue } from '../model/fields'
 import { bandBadge } from '../model/processors'
+import { scopedProject, type ExportScope } from './exportScope'
 
 interface Colors { bg: string; text: string; line: string; muted: string }
 const DARK: Colors = { bg: '#111318', text: '#e6e8ee', line: '#3a3f4d', muted: '#8b91a0' }
 const LIGHT: Colors = { bg: '#f6f7f9', text: '#23262e', line: '#c3c8d4', muted: '#6b7180' }
 
-/** Pure, style-free SVG scene used for PNG/SVG export. */
-function ExportScene(props: { proj: Project; cam: Camera; w: number; h: number; density: number; theme: 'dark' | 'light'; showFields: boolean }) {
-  const { proj, cam, w, h, density, theme, showFields } = props
+export interface SceneOptions {
+  density: number
+  theme: 'dark' | 'light'
+  showFields: boolean
+  showTitles: boolean
+}
+
+/** Pure, style-free SVG scene used for PNG/SVG export. `proj` holds only the items in scope. */
+function ExportScene(props: { proj: Project; cam: Camera; w: number; h: number } & SceneOptions) {
+  const { proj, cam, w, h, density, theme, showFields, showTitles } = props
   const C = theme === 'dark' ? DARK : LIGHT
   const st = proj.settings
   const spineY = spineYFor(proj, h)
@@ -26,7 +34,7 @@ function ExportScene(props: { proj: Project; cam: Camera; w: number; h: number; 
   const maxDepth = proj.sections.length ? Math.max(...proj.sections.map(s => s.depth)) : -1
   const headerH = maxDepth >= 0 ? barTopFor(maxDepth + 1) : 0
   const maxUpRows = Math.max(1, Math.floor((spineY - headerH - 76) / 46) + 1)
-  const layout = layoutTimeline(proj, cam, w, proj.filters, density, false, new Set(), new Set(), st.placement, maxUpRows, showFields)
+  const layout = layoutTimeline(proj, cam, w, proj.filters, density, true, new Set(), new Set(), st.placement, maxUpRows, showFields, showTitles)
   const toX = (pos: number) => (pos - cam.x) * cam.s
   const font = 'ui-sans-serif, system-ui, sans-serif'
 
@@ -182,11 +190,11 @@ function ExportScene(props: { proj: Project; cam: Camera; w: number; h: number; 
               <circle r={14 * z} fill={C.bg} stroke={t?.color} strokeWidth={1.5} />
               <Icon x={-8 * z} y={-8 * z} width={16 * z} height={16 * z} color={t?.color} strokeWidth={2} />
               {pl.labelShown && (() => {
-                const label = splitLabel(proj, pl.item, showFields)
+                const label = splitLabel(proj, pl.item, showFields, showTitles)
                 return (
                   <text x={20 * z} y={4 * z} fontFamily={font} fontSize={11.5 * clamp(z, 0.8, 1.35)} fill={C.text}>
                     {label.title}
-                    {label.fields && <tspan fill={C.muted} fontSize={10.5 * clamp(z, 0.8, 1.35)}>{` · ${label.fields}`}</tspan>}
+                    {label.fields && <tspan fill={C.muted} fontSize={10.5 * clamp(z, 0.8, 1.35)}>{label.title ? ` · ${label.fields}` : label.fields}</tspan>}
                   </text>
                 )
               })()}
@@ -214,11 +222,11 @@ function ExportScene(props: { proj: Project; cam: Camera; w: number; h: number; 
 }
 
 /**
- * All items in timeline order, one row per item. Each hierarchy level gets its
- * own column holding the name of the section containing the item at that depth
- * (e.g. a Chapter column and a Level column).
+ * The items in scope in timeline order, one row per item. Each hierarchy
+ * level gets its own column holding the name of the section containing the
+ * item at that depth (e.g. a Chapter column and a Level column).
  */
-export function exportCSV(proj: Project) {
+export function exportCSV(proj: Project, scope: ExportScope) {
   const esc = (v: string | number) => {
     const s = String(v)
     return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
@@ -239,8 +247,7 @@ export function exportCSV(proj: Project) {
     (_, d) => proj.hierarchyLevels[d]?.name ?? `Level ${d + 1}`,
   )
   const header = [...levels, 'Title', 'Type', 'Position', 'Duration', 'Branch path', 'Tags', 'Description', 'Link', 'Created by', ...proj.fields.map(f => f.name)]
-  const rows = [...proj.items]
-    .sort((a, b) => a.pos - b.pos)
+  const rows = scope.items
     .map(it => {
       const atts = attachmentsFor(proj, { kind: 'item', entity: it })
       return [
@@ -270,9 +277,10 @@ export function exportJSON(proj: Project) {
     new Blob([JSON.stringify(proj, null, 2)], { type: 'application/json' }))
 }
 
-export function exportPNG(proj: Project, w: number, h: number, density: number, theme: 'dark' | 'light', showFields = true) {
+/** The current view (camera as on screen) with only the items in scope. */
+export function exportPNG(proj: Project, scope: ExportScope, w: number, h: number, opts: SceneOptions) {
   const markup = renderToStaticMarkup(
-    <ExportScene proj={proj} cam={proj.camera} w={w} h={h} density={density} theme={theme} showFields={showFields} />,
+    <ExportScene proj={scopedProject(proj, scope)} cam={proj.camera} w={w} h={h} {...opts} />,
   )
   const svgBlob = new Blob([markup], { type: 'image/svg+xml' })
   const url = URL.createObjectURL(svgBlob)
@@ -293,14 +301,18 @@ export function exportPNG(proj: Project, w: number, h: number, density: number, 
   img.src = url
 }
 
-export function exportFullSVG(proj: Project, density: number, theme: 'dark' | 'light', showFields = true) {
-  const { min, max } = contentExtent(proj)
+/** The whole timeline — or just the selected sections' range — with only the items in scope. */
+export function exportFullSVG(proj: Project, scope: ExportScope, opts: Omit<SceneOptions, 'density'>) {
+  const scoped = scopedProject(proj, scope)
+  const { min, max } = scope.range
+    ? (() => { const pad = Math.max((scope.range.max - scope.range.min) * 0.04, 0.5); return { min: scope.range.min - pad, max: scope.range.max + pad } })()
+    : contentExtent(scoped)
   const span = max - min
   const s = clamp(6000 / span, 12, 80)
   const w = Math.ceil(span * s)
   const h = 760
   const markup = renderToStaticMarkup(
-    <ExportScene proj={proj} cam={{ x: min, s }} w={w} h={h} density={1} theme={theme} showFields={showFields} />,
+    <ExportScene proj={scoped} cam={{ x: min, s }} w={w} h={h} density={1} {...opts} />,
   )
   download(`${proj.name.replace(/\s+/g, '-').toLowerCase()}.svg`,
     new Blob([markup], { type: 'image/svg+xml' }))

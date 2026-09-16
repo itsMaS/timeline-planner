@@ -16,6 +16,12 @@ export interface FieldDef {
   required: boolean
   /** Show the value in the canvas hover tooltip. */
   showInTooltip: boolean
+  /**
+   * Show the field's name next to its value (canvas labels, tooltip,
+   * inspector, exports). Off when the value speaks for itself, e.g. a number
+   * with a unit — the name then only identifies the field in the schema.
+   */
+  showName: boolean
   /** Global fallback default; an attachment may override it. null = none. */
   defaultValue: FieldValue | null
   /** text: hard character limit; null = unlimited. */

@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import {
-  Download, Eye, EyeOff, FileText, GitBranch, Grid3x3, HelpCircle, Lightbulb, Link, Magnet, Maximize2, Minus, Moon, Plus,
-  Redo2, Search, Settings2, Share2, Sun, TableProperties, Undo2, Upload, Volume2, VolumeX, X, ZoomIn,
+  Download, Eye, EyeOff, FileText, GitBranch, Grid3x3, HelpCircle, Lightbulb, Link, Magnet, Maximize2, Minus, Moon, Pencil,
+  Plus, Redo2, RotateCcw, Save, Search, Settings2, Share2, Sun, TableProperties, Type, Undo2, Upload, Volume2, VolumeX, X, ZoomIn,
 } from 'lucide-react'
 import { iconByName } from '../model/icons'
 import { itemMatchesFilters } from '../model/layout'
@@ -9,8 +9,10 @@ import { blankProject, emptyFilters, useActiveProject, useActiveShare, useStore,
 import { TEMPLATES } from '../model/templates'
 import type { TimelineSettings, UnitPreset } from '../model/types'
 import { uid } from '../model/util'
+import { activeView, filtersEqual, isUnfiltered, viewDirty } from '../model/views'
 import { exportCSV, exportFullSVG, exportJSON, exportPNG } from './export'
 import { exportDocPDF } from './exportDoc'
+import { exportScope } from './exportScope'
 import { CanvasView } from './Canvas'
 import { creatorStamp } from '../sync/client'
 import { getClipboard, setClipboard } from './clipboard'
@@ -137,7 +139,7 @@ export function App() {
         const id = uid()
         s.mutate(pr => pr.items.push({
           id, typeId, layerId: null, pathId: null, pos: center, duration: 0,
-          title: `New ${type.name.toLowerCase()}`, description: '', tags: [], link: '', images: [], fieldValues: {},
+          title: type.name, description: '', tags: [], link: '', images: [], fieldValues: {},
           createdBy: creatorStamp(),
         }))
         s.select([id])
@@ -228,14 +230,15 @@ function Toolbar({ applyView }: { applyView: (id: string | null) => void }) {
   const enterSuggest = useStore(s => s.enterSuggest)
   const [exportOpen, setExportOpen] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
-  // Selected sections narrow the document export to just those sub-trees.
-  const docSections = ui.selection.filter(x => x.startsWith('S:')).map(x => x.slice(2))
-    .map(id => proj.sections.find(sc => sc.id === id)).filter((sc): sc is NonNullable<typeof sc> => !!sc)
-  const docLabel = docSections.length === 0
-    ? 'Document PDF of whole timeline'
-    : docSections.length === 1
-      ? `Document PDF of “${docSections[0].name || 'Untitled'}”`
-      : `Document PDF of ${docSections.length} selected sections`
+  // Every export follows the canvas: filtered-out items are left out, and
+  // selected sections narrow it to just those sub-trees.
+  const scope = exportScope(proj, ui.selection)
+  const scene = { density: ui.density, theme: ui.theme, showFields: ui.showFields, showTitles: ui.showTitles }
+  const scopeHint = scope.sections.length
+    ? `Only items inside the selected section${scope.sections.length === 1 ? '' : 's'} that are visible on the canvas.`
+    : scope.filtered ? 'Items hidden by the current filters are left out.' : 'Everything is visible, so everything is included.'
+  const view = activeView(proj)
+  const dirty = viewDirty(proj)
 
   return (
     <>
@@ -280,7 +283,7 @@ function Toolbar({ applyView }: { applyView: (id: string | null) => void }) {
             className="search-input"
             placeholder="Filter items…  ( / )"
             value={proj.filters.text}
-            onChange={e => tweak(p => { p.filters.text = e.target.value; p.activeViewId = null })}
+            onChange={e => tweak(p => { p.filters.text = e.target.value })}
             onKeyDown={e => {
               if (e.key === 'Enter') {
                 const first = proj.items.find(i => itemMatchesFilters(proj, i, proj.filters))
@@ -316,6 +319,8 @@ function Toolbar({ applyView }: { applyView: (id: string | null) => void }) {
             onClick={() => setUI({ ghostHidden: !ui.ghostHidden })}>
             {ui.ghostHidden ? <EyeOff width={15} height={15} /> : <Eye width={15} height={15} />}
           </button>
+          <button className={`ghost-btn ${ui.showTitles ? 'on' : ''}`} title="Show item titles on the timeline (off packs items closer together)"
+            onClick={() => setUI({ showTitles: !ui.showTitles })}><Type width={15} height={15} /></button>
           <button className={`ghost-btn ${ui.showFields ? 'on' : ''}`} title="Show custom field values next to item titles"
             onClick={() => setUI({ showFields: !ui.showFields })}><TableProperties width={15} height={15} /></button>
           <button className={`ghost-btn ${ui.tool === 'branch' ? 'on' : ''}`} title="Branch tool (B) — drag along the line"
@@ -354,27 +359,32 @@ function Toolbar({ applyView }: { applyView: (id: string | null) => void }) {
               <Download width={15} height={15} />
             </button>
             {exportOpen && (
-              <div className="menu" onPointerLeave={() => setExportOpen(false)}>
-                <button onClick={() => { exportJSON(proj); setExportOpen(false) }}><Download width={13} height={13} /> Project JSON</button>
-                <button onClick={() => { exportPNG(proj, window.innerWidth, window.innerHeight - 90, ui.density, ui.theme, ui.showFields); setExportOpen(false) }}>
-                  <Download width={13} height={13} /> PNG of current view
+              <div className="menu export-menu" onPointerLeave={() => setExportOpen(false)}>
+                <button title="The complete project, for backups and re-import — never filtered." onClick={() => { exportJSON(proj); setExportOpen(false) }}>
+                  <Download width={13} height={13} /> Project JSON <span className="muted">(everything)</span>
                 </button>
-                <button onClick={() => { exportFullSVG(proj, ui.density, ui.theme, ui.showFields); setExportOpen(false) }}>
-                  <Download width={13} height={13} /> SVG of full timeline
+                <div className="menu-hint">{scopeHint}</div>
+                <button title={`The timeline as it is on screen now. ${scopeHint}`}
+                  onClick={() => { exportPNG(proj, scope, window.innerWidth, window.innerHeight - 90, scene); setExportOpen(false) }}>
+                  <Download width={13} height={13} /> {scope.describe('PNG', 'current view')}
                 </button>
-                <button onClick={() => { exportCSV(proj); setExportOpen(false) }}>
-                  <Download width={13} height={13} /> CSV of all items
+                <button title={`${scope.sections.length ? 'Framed on the selected sections.' : 'The whole timeline, end to end.'} ${scopeHint}`}
+                  onClick={() => { exportFullSVG(proj, scope, scene); setExportOpen(false) }}>
+                  <Download width={13} height={13} /> {scope.describe('SVG', 'full timeline')}
+                </button>
+                <button title={`One row per item, in timeline order. ${scopeHint}`} onClick={() => { exportCSV(proj, scope); setExportOpen(false) }}>
+                  <Download width={13} height={13} /> {scope.describe('CSV', 'all items')}
                 </button>
                 <button
-                  title="Sections become headings, items sub-headings with their type and icon. Only currently visible items are included. Opens the print dialog — choose “Save as PDF”."
+                  title={`Sections become headings, items sub-headings with their type and icon. ${scopeHint} Opens the print dialog — choose “Save as PDF”.`}
                   onClick={() => {
-                    if (!exportDocPDF(proj, docSections.length ? docSections.map(sc => sc.id) : null)) {
+                    if (!exportDocPDF(proj, scope.sectionIds)) {
                       showToast('Pop-up blocked — allow pop-ups for this site to export the document.')
                     }
                     setExportOpen(false)
                   }}
                 >
-                  <FileText width={13} height={13} /> {docLabel}
+                  <FileText width={13} height={13} /> {scope.describe('Document PDF')}
                 </button>
                 <button onClick={() => { fileRef.current?.click(); setExportOpen(false) }}>
                   <Upload width={13} height={13} /> Import JSON…
@@ -402,36 +412,68 @@ function Toolbar({ applyView }: { applyView: (id: string | null) => void }) {
       </header>
 
       <div className="viewbar">
-        <button className={`view-chip ${!proj.activeViewId && isUnfiltered(proj.filters) ? 'on' : ''}`} onClick={() => applyView(null)}>
+        <button className={`view-chip ${!view && isUnfiltered(proj.filters) ? 'on' : ''}`} onClick={() => applyView(null)}>
           All
         </button>
-        {proj.views.map((v, i) => (
-          <button key={v.id} className={`view-chip ${proj.activeViewId === v.id ? 'on' : ''}`} onClick={() => applyView(v.id)}>
-            <span className="view-num">{i + 1}</span>{v.name}
-            <span
-              className="tab-x"
-              title="Delete view"
-              onClick={e => { e.stopPropagation(); mutate(p => { p.views = p.views.filter(x => x.id !== v.id); if (p.activeViewId === v.id) p.activeViewId = null }) }}
-            ><X width={10} height={10} /></span>
-          </button>
-        ))}
+        {proj.views.map((v, i) => {
+          const on = proj.activeViewId === v.id
+          return (
+            <button
+              key={v.id}
+              className={`view-chip ${on ? 'on' : ''} ${on && dirty ? 'dirty' : ''}`}
+              title={on && dirty ? 'Filters changed since this view was applied — click to go back to the saved view' : 'Apply this view · double-click to rename'}
+              onClick={() => applyView(v.id)}
+              onDoubleClick={() => {
+                const name = window.prompt('View name', v.name)
+                if (name && name !== v.name) mutate(p => { const x = p.views.find(y => y.id === v.id); if (x) x.name = name })
+              }}
+            >
+              <span className="view-num">{i + 1}</span>{v.name}
+              {on && dirty && <span className="view-dot" title="modified" />}
+              <span
+                className="tab-x"
+                title="Delete view"
+                onClick={e => { e.stopPropagation(); mutate(p => { p.views = p.views.filter(x => x.id !== v.id); if (p.activeViewId === v.id) p.activeViewId = null }) }}
+              ><X width={10} height={10} /></span>
+            </button>
+          )
+        })}
+        {view && dirty && (
+          <>
+            <button
+              className="view-chip act"
+              title={`Overwrite “${view.name}” with the current filters`}
+              onClick={() => mutate(p => { const x = p.views.find(y => y.id === view.id); if (x) x.filters = structuredClone(p.filters) })}
+            ><Save width={12} height={12} /> Update “{view.name}”</button>
+            <button className="view-chip act" title="Discard the changes and go back to the saved view" onClick={() => applyView(view.id)}>
+              <RotateCcw width={12} height={12} /> Revert
+            </button>
+          </>
+        )}
+        {view && !dirty && (
+          <button
+            className="ghost-btn view-edit"
+            title="Rename this view"
+            onClick={() => {
+              const name = window.prompt('View name', view.name)
+              if (name && name !== view.name) mutate(p => { const x = p.views.find(y => y.id === view.id); if (x) x.name = name })
+            }}
+          ><Pencil width={12} height={12} /></button>
+        )}
         <button
           className="view-chip save"
-          title="Save current filters as a view"
+          title={view && dirty ? 'Save the current filters as a new view (keeps the old one as it was)' : 'Save current filters as a view'}
           onClick={() => {
-            const name = window.prompt('View name', 'New view')
+            const same = proj.views.find(v => filtersEqual(v.filters, proj.filters))
+            const name = window.prompt('View name', same && !dirty ? `${same.name} copy` : 'New view')
             if (!name) return
             const id = uid()
             mutate(p => { p.views.push({ id, name, filters: structuredClone(p.filters) }); p.activeViewId = id })
           }}
-        >+ Save view</button>
+        >+ {view && dirty ? 'Save as new view' : 'Save view'}</button>
       </div>
     </>
   )
-}
-
-function isUnfiltered(f: { offTypes: string[]; offLayers: string[]; tags: string[]; text: string }) {
-  return !f.offTypes.length && !f.offLayers.length && !f.tags.length && !f.text.trim()
 }
 
 // ------------------------------------------------------------------ overlays
