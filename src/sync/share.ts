@@ -112,7 +112,7 @@ function handleGone(s: Session) {
 
 interface OpenResult {
   id: string; name: string; doc: Project; version: number
-  editToken: string | null; suggestToken: string | null; viewToken: string; role: ShareRole; owner: boolean
+  editToken: string | null; suggestToken: string | null; viewToken: string; apiToken?: string | null; role: ShareRole; owner: boolean
 }
 
 /** The strongest token this tab holds: what every read RPC is called with. */
@@ -129,7 +129,7 @@ async function pull(s: Session, initial = false): Promise<boolean> {
       if (s.stopped) return false
       if (!r) { handleGone(s); return false }
       store().setShare(s.projectId, {
-        id: r.id, role: r.role, editToken: r.editToken, suggestToken: r.suggestToken, viewToken: r.viewToken, version: share.version,
+        id: r.id, role: r.role, editToken: r.editToken, suggestToken: r.suggestToken, viewToken: r.viewToken, apiToken: r.apiToken ?? null, version: share.version,
         // Keep a locally known ownership (we created it) even if the auth session changed.
         owner: share.owner || r.owner,
       })
@@ -253,11 +253,20 @@ async function save(s: Session) {
   s.saving = true
   const batch = s.unsaved.length
   try {
-    const r = await rpc<{ gone?: true; version?: number }>('share_save', {
-      p_token: share.editToken, p_name: proj.name, p_doc: proj,
+    // Version-checked: a save based on a document that moved on the server
+    // (another tab without live updates, the external API) is refused instead
+    // of overwriting it; we then pull, replay our unsaved patches on top, and
+    // save again.
+    const r = await rpc<{ gone?: true; conflict?: true; version?: number }>('share_save_if', {
+      p_token: share.editToken, p_expected_version: share.version, p_name: proj.name, p_doc: proj,
     })
     if (s.stopped) return
     if (r.gone) { handleGone(s); return }
+    if (r.conflict) {
+      const ok = await pull(s)
+      if (!s.stopped) scheduleSave(s, ok ? 0 : RETRY)
+      return
+    }
     s.unsaved = s.unsaved.slice(batch)
     const cur = shareOf(s.projectId)
     if (cur) store().setShare(s.projectId, { ...cur, version: r.version ?? cur.version })
@@ -343,7 +352,7 @@ export async function openShared(token: string): Promise<{ project: Project; inf
   const project = normalizeProject(structuredClone(r.doc))
   project.id = r.id
   project.name = r.name
-  const info: ShareInfo = { id: r.id, role: r.role, editToken: r.editToken, suggestToken: r.suggestToken, viewToken: r.viewToken, version: r.version, owner: r.owner }
+  const info: ShareInfo = { id: r.id, role: r.role, editToken: r.editToken, suggestToken: r.suggestToken, viewToken: r.viewToken, apiToken: r.apiToken ?? null, version: r.version, owner: r.owner }
   return { project, info }
 }
 
@@ -355,6 +364,17 @@ export async function regenerateLink(projectId: string, which: ShareRole): Promi
   const cur = shareOf(projectId)
   if (!cur) return
   store().setShare(projectId, which === 'edit' ? { ...cur, editToken: r.token } : which === 'suggest' ? { ...cur, suggestToken: r.token } : { ...cur, viewToken: r.token })
+}
+
+/** Owner: create, rotate or revoke the timeline's API token (see API.md). */
+export async function manageApiToken(projectId: string, action: 'create' | 'rotate' | 'revoke'): Promise<string | null> {
+  const share = shareOf(projectId)
+  if (!share?.editToken) throw new Error('Only editors can manage the API token')
+  const r = await rpc<{ token: string | null } | null>('share_api_token', { p_edit_token: share.editToken, p_action: action })
+  if (!r) throw new Error('Only the owner can manage the API token')
+  const cur = shareOf(projectId)
+  if (cur) store().setShare(projectId, { ...cur, apiToken: r.token })
+  return r.token
 }
 
 /** Owner: delete the remote timeline. Everyone else: just disconnect this tab. */

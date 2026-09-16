@@ -180,6 +180,8 @@ export interface ShareInfo {
   /** Suggest link token; known to editors and suggesters. */
   suggestToken: string | null
   viewToken: string
+  /** API token for external tools (Unity plugin, scripts); owners only, null until created. */
+  apiToken?: string | null
   /** Last server version we know about. */
   version: number
   owner: boolean

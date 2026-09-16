@@ -5,7 +5,9 @@ films, courses, project plans. Built for planning a linear game (every story
 beat, death opportunity and mechanic on one line), but nothing in it is
 game-specific.
 
-The full design rationale lives in [DESIGN.md](DESIGN.md).
+The full design rationale lives in [DESIGN.md](DESIGN.md). External tools
+(a Unity editor plugin, scripts) talk to a shared timeline through the HTTP API
+described in [API.md](API.md).
 
 ## Running it
 

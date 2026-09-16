@@ -30,8 +30,11 @@
   Storage uploads; without it the app degrades to polling.
 - Sync model (`src/sync/share.ts`): every `mutate`/`tweak` is diffed into an
   entity patch (`src/model/patch.ts`), broadcast on private channel
-  `timeline:<id>`, and folded into a debounced full-document `share_save`.
-  Undo history is patch-based so undo only reverts your own edits.
+  `timeline:<id>`, and folded into a debounced full-document save through
+  `share_save_if` (version-checked: on `conflict` the tab pulls, replays its
+  unsaved patches and saves again, so a stale tab never overwrites an API
+  write or another polling tab). Undo history is patch-based so undo only
+  reverts your own edits.
   Camera, filters, selection and active view never sync.
 - Images on shared tabs go to the public `timeline-images` bucket; inline
   base64 is migrated on share.
@@ -47,6 +50,25 @@
   (`0003_suggest_and_history.sql`). `share_open`/`share_pull`/`history_list`
   accept any of them; `proposal_create`/`proposal_list` accept edit or suggest;
   everything that writes the document or decides proposals needs the edit token.
+
+## External API (Unity plugin, scripts)
+
+- `API.md` is the contract. `supabase/migrations/0004_api.sql` adds a fourth
+  per-timeline token (`timelines.api_token`, null until the owner creates it in
+  the Share dialog via `share_api_token` create / rotate / revoke; `share_open`
+  returns it as `apiToken` to the owner only) and the `api_*` RPCs: `api_read`,
+  `api_version`, `api_schema` (reads) and `api_set_field`, `api_set_tags`,
+  `api_update_item`, `api_create_item` (writes). Writes patch one entity inside
+  the stored doc, validate values like `src/model/fields.ts` does
+  (`api_coerce`), bump `version`, append `timeline_history` rows with source
+  `api`, and `realtime.send` the same `patch` message the app broadcasts.
+- The token cannot touch the schema, delete, move items or manage links; keep
+  it that way and grow the surface with new `api_*` functions rather than
+  widening existing ones. Private helpers are `revoke execute`d from
+  `anon`/`authenticated`.
+- The live project has anonymous sign-ins off, so tabs poll (every 4 s) and
+  `realtime.messages` has no partitions; the API broadcast is a no-op there
+  and the version-checked autosave is what keeps API writes safe.
 
 ## Suggest mode and history
 

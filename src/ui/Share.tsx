@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react'
-import { Check, Cloud, CloudOff, Copy, Link2, RefreshCw, Trash2, X } from 'lucide-react'
+import { Check, Cloud, CloudOff, Copy, KeyRound, Link2, RefreshCw, Trash2, X } from 'lucide-react'
 import { useActiveProject, useActiveShare, useActiveSync, useStore, type SyncStatus } from '../model/store'
 import { getIdentity, setIdentity } from '../sync/client'
-import { refreshPresence, regenerateLink, shareLink, shareProject, stopSharing } from '../sync/share'
+import { manageApiToken, refreshPresence, regenerateLink, shareLink, shareProject, stopSharing } from '../sync/share'
 
 const ROLE_LABEL: Record<string, string> = { edit: 'can edit', suggest: 'can suggest', view: 'viewing' }
 
@@ -48,8 +48,8 @@ export function PresenceBar() {
   )
 }
 
-function CopyField({ label, value, hint, onRegenerate }: {
-  label: string; value: string; hint: string; onRegenerate?: () => void
+function CopyField({ label, value, hint, onRegenerate, onRevoke, regenerateTitle = 'Regenerate — the old link stops working' }: {
+  label: string; value: string; hint: string; onRegenerate?: () => void; onRevoke?: () => void; regenerateTitle?: string
 }) {
   const [copied, setCopied] = useState(false)
   const copy = async () => {
@@ -65,12 +65,17 @@ function CopyField({ label, value, hint, onRegenerate }: {
       <label>{label} <span className="muted">— {hint}</span></label>
       <div className="row gap link-row">
         <input className="input grow" readOnly value={value} onFocus={e => e.currentTarget.select()} />
-        <button className="ghost-btn" title="Copy link" onClick={copy}>
+        <button className="ghost-btn" title="Copy" onClick={copy}>
           {copied ? <Check width={14} height={14} /> : <Copy width={14} height={14} />}
         </button>
         {onRegenerate && (
-          <button className="ghost-btn" title="Regenerate — the old link stops working" onClick={onRegenerate}>
+          <button className="ghost-btn" title={regenerateTitle} onClick={onRegenerate}>
             <RefreshCw width={14} height={14} />
+          </button>
+        )}
+        {onRevoke && (
+          <button className="ghost-btn danger" title="Revoke — tools using this token stop working" onClick={onRevoke}>
+            <Trash2 width={14} height={14} />
           </button>
         )}
       </div>
@@ -163,6 +168,33 @@ export function ShareModal() {
                   run(() => regenerateLink(proj.id, 'view'))
               } : undefined}
             />
+
+            {share.owner && share.editToken && (
+              share.apiToken ? (
+                <CopyField
+                  label="API token" value={share.apiToken}
+                  hint="for tools such as a Unity editor plugin: reads the timeline, sets fields and tags, adds items"
+                  regenerateTitle="Rotate — the old token stops working"
+                  onRegenerate={() => {
+                    if (window.confirm('Rotate the API token? Every tool using the old one stops working until it gets the new token.'))
+                      run(async () => { await manageApiToken(proj.id, 'rotate') })
+                  }}
+                  onRevoke={() => {
+                    if (window.confirm('Revoke the API token? Tools using it lose access. You can create a new one later.'))
+                      run(async () => { await manageApiToken(proj.id, 'revoke') })
+                  }}
+                />
+              ) : (
+                <div className="field">
+                  <label>API token <span className="muted">— for tools such as a Unity editor plugin (see API.md)</span></label>
+                  <div className="row gap">
+                    <button className="ghost-btn" disabled={busy} onClick={() => run(async () => { await manageApiToken(proj.id, 'create') })}>
+                      <KeyRound width={13} height={13} /> Create API token
+                    </button>
+                  </div>
+                </div>
+              )
+            )}
 
             <div className="field">
               <label>Your name <span className="muted">— shown to collaborators</span></label>
