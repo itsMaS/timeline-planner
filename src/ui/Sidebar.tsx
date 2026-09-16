@@ -184,9 +184,17 @@ export function Sidebar() {
         setUI({ dragTypeId: d.typeId })
       }
     }
+    const onCancel = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onCancel)
+      if (dragStart.current?.started) setUI({ dragTypeId: null })
+      dragStart.current = null
+    }
     const onUp = (ev: PointerEvent) => {
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onCancel)
       const d = dragStart.current
       dragStart.current = null
       if (d?.started) {
@@ -209,6 +217,7 @@ export function Sidebar() {
     }
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onCancel)
   }
 
   // ---- folder drag-to-nest: drop a folder row onto another folder (or the

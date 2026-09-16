@@ -971,3 +971,64 @@ body.col-resizing .inspector { animation: none; }
 .layer-config .folder-fields { margin-top: 4px; }
 .layer-config .folder-fields .attach-row { padding: 2px 3px; }
 .type-editor .attach-row.inherited { background: var(--panel2); border-style: dashed; }
+
+/* ---------------------------------------------------------------- phones
+   Keep the breakpoint in step with MOBILE_QUERY in src/model/util.ts. */
+.main { position: relative; }
+.drawer-scrim { position: absolute; inset: 0; z-index: 29; background: rgb(0 0 0 / .35); animation: fade-in .15s; }
+@media (max-width: 760px) {
+  @supports (height: 100dvh) { html, body, #root { height: 100dvh; } }
+  body { -webkit-text-size-adjust: 100%; }
+
+  /* Toolbar wraps into rows: tabs, search, then a horizontally scrolling tool strip. */
+  .toolbar { height: auto; flex-wrap: wrap; gap: 4px; padding: 4px 8px; }
+  .brand { font-size: 17px; }
+  .tabs { flex: 1; min-width: 0; max-width: none; }
+  .tab { padding: 6px 8px; }
+  .search-box { order: 3; flex: 1 1 100%; }
+  .search-input { width: 100%; }
+  .tools, .viewer-bar .tools {
+    order: 4; flex: 1 1 100%; margin-left: 0; overflow-x: auto; flex-wrap: nowrap;
+    scrollbar-width: none; -webkit-overflow-scrolling: touch;
+  }
+  .tools::-webkit-scrollbar { display: none; }
+  .tools > * { flex-shrink: 0; }
+  .density { display: none; }
+  .ghost-btn { padding: 8px; }
+  .tab-x { padding: 4px; }
+  .export-wrap .menu { position: fixed; right: 8px; top: auto; margin-top: 4px; }
+  .viewbar { flex-wrap: nowrap; scrollbar-width: none; }
+  .viewbar::-webkit-scrollbar { display: none; }
+  .view-chip { flex-shrink: 0; }
+  .viewer-bar .viewer-title { max-width: none; flex: 1; min-width: 0; }
+
+  /* Sidebar becomes a drawer over the canvas, the inspector a bottom sheet. */
+  .main.mobile .sidebar {
+    position: absolute; top: 0; bottom: 0; left: 0; z-index: 30;
+    width: min(300px, 86vw) !important; min-width: 0 !important;
+    box-shadow: var(--shadow); animation: drawer-in .18s ease-out;
+  }
+  @keyframes drawer-in { from { transform: translateX(-24px); opacity: 0; } }
+  .main.mobile .inspector {
+    position: absolute; left: 0; right: 0; bottom: 0; z-index: 31;
+    width: auto !important; min-width: 0 !important; max-height: 58%;
+    border-left: none; border-top: 1px solid var(--line-soft); border-radius: 14px 14px 0 0;
+    box-shadow: var(--shadow); animation: sheet-in .18s ease-out;
+  }
+  @keyframes sheet-in { from { transform: translateY(24px); opacity: 0; } }
+  .main.mobile .panel-divider { display: none; }
+  .type-row, .folder-row { touch-action: pan-y; padding-top: 6px; padding-bottom: 6px; }
+  .type-row .row-gear, .type-row .row-act, .folder-row .row-act { opacity: 1; display: inline-flex; }
+  .input { padding: 8px 10px; font-size: 14px; }
+  .input.sm { padding: 5px 8px; font-size: 13px; }
+  .seg button { padding: 8px 4px; }
+
+  /* Canvas chrome */
+  .crumbs { max-width: calc(100% - 24px); left: 8px; bottom: 8px; }
+  .canvas-status { display: none; }
+  .tooltip { max-width: calc(100vw - 24px); }
+  .band-handle { stroke-width: 14; }
+
+  /* Modals fill the screen width */
+  .modal, .modal.share, .modal.settings { width: calc(100vw - 16px) !important; max-width: none; max-height: 92vh; padding: 12px; }
+}

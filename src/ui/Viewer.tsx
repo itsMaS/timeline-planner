@@ -6,6 +6,7 @@ import { itemMatchesFilters } from '../model/layout'
 import { useActiveProject, useActiveShare, useActiveSync, useStore } from '../model/store'
 import { CanvasView } from './Canvas'
 import { Inspector } from './Inspector'
+import { useIsMobile } from './mobile'
 import { nav } from './nav'
 import { PanelDivider } from './Panels'
 import { exportDocPDF } from './exportDoc'
@@ -24,6 +25,7 @@ export function Viewer() {
   const sync = useActiveSync()
   const ui = useStore(s => s.ui)
   const setUI = useStore(s => s.setUI)
+  const mobile = useIsMobile()
   const tweak = useStore(s => s.tweak)
   const select = useStore(s => s.select)
   const showToast = useStore(s => s.showToast)
@@ -127,11 +129,12 @@ export function Viewer() {
       </header>
       {status === 'gone' && <div className="viewer-banner">This link has been revoked — what you see may be out of date.</div>}
       {status === 'offline' && <div className="viewer-banner muted">Offline — showing the last version received.</div>}
-      <div className="main">
+      <div className={`main ${mobile ? 'mobile' : ''}`}>
         <Sidebar />
-        {ui.sidebarOpen && <PanelDivider side="left" />}
+        {mobile && ui.sidebarOpen && <div className="drawer-scrim" onClick={() => setUI({ sidebarOpen: false })} />}
+        {!mobile && ui.sidebarOpen && <PanelDivider side="left" />}
         <CanvasView />
-        {ui.selection.length > 0 && <PanelDivider side="right" />}
+        {!mobile && ui.selection.length > 0 && <PanelDivider side="right" />}
         <Inspector />
       </div>
       {share?.viewToken && null}

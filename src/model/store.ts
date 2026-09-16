@@ -5,7 +5,7 @@ import { refreshSectionDepths } from './layout'
 import { applyPatch, diffProject, type Patch } from './patch'
 import { applyChanges, diffToChanges, type Proposal, type ProposalChange } from './proposal'
 import type { Camera, FieldAttachment, FieldDef, FieldValue, Filters, HierarchyLevel, Id, Project, TimelineSettings } from './types'
-import { uid } from './util'
+import { isMobile, uid } from './util'
 
 export const emptyFilters = (): Filters => ({ offTypes: [], offLayers: [], tags: [], text: '' })
 
@@ -460,7 +460,7 @@ export const useStore = create<Store>((set, get) => ({
     dragFolderId: null,
     lastTypeId: init.projects[0]?.types[0]?.id ?? null,
     toast: null,
-    sidebarOpen: true,
+    sidebarOpen: !isMobile(),
     readOnly: false,
     showFields: init.prefs.showFields ?? true,
     showTitles: init.prefs.showTitles ?? true,

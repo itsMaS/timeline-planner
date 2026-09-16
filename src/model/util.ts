@@ -127,3 +127,7 @@ export function download(filename: string, blob: Blob) {
   a.click()
   setTimeout(() => URL.revokeObjectURL(a.href), 5000)
 }
+
+/** Phone-sized screens (keep in step with the media query in styles.css). */
+export const MOBILE_QUERY = '(max-width: 760px)'
+export const isMobile = () => typeof window !== 'undefined' && !!window.matchMedia?.(MOBILE_QUERY).matches

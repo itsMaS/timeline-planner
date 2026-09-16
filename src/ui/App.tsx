@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import {
-  Download, Eye, EyeOff, FileText, GitBranch, Grid3x3, HelpCircle, Lightbulb, Link, Magnet, Maximize2, Minus, Moon, Pencil,
+  Download, Eye, EyeOff, FileText, GitBranch, Grid3x3, HelpCircle, Lightbulb, Link, Magnet, Maximize2, Minus, Moon, PanelLeft, Pencil,
   Plus, Redo2, RotateCcw, Save, Search, Settings2, Share2, Sun, TableProperties, Type, Undo2, Upload, Volume2, VolumeX, X, ZoomIn,
 } from 'lucide-react'
 import { iconByName } from '../model/icons'
@@ -27,12 +27,14 @@ import { Sidebar } from './Sidebar'
 import { SuggestBar, SuggestModal, exitSuggestSafely } from './Suggest'
 import { TypeEditor } from './TypeEditor'
 import { nav } from './nav'
+import { useIsMobile } from './mobile'
 
 export function App() {
   const proj = useActiveProject()
   const ui = useStore(s => s.ui)
   const setUI = useStore(s => s.setUI)
   const store = useStore
+  const mobile = useIsMobile()
 
   useEffect(() => {
     document.documentElement.dataset.theme = ui.theme
@@ -184,11 +186,12 @@ export function App() {
     <div className="app">
       <Toolbar applyView={applyView} />
       <SuggestBar />
-      <div className="main">
+      <div className={`main ${mobile ? 'mobile' : ''}`}>
         <Sidebar />
-        {ui.sidebarOpen && <PanelDivider side="left" />}
+        {mobile && ui.sidebarOpen && <div className="drawer-scrim" onClick={() => setUI({ sidebarOpen: false })} />}
+        {!mobile && ui.sidebarOpen && <PanelDivider side="left" />}
         <CanvasView />
-        {ui.selection.length > 0 && <PanelDivider side="right" />}
+        {!mobile && ui.selection.length > 0 && <PanelDivider side="right" />}
         <Inspector />
       </div>
       {ui.editTypeId && <TypeEditor />}
@@ -246,6 +249,11 @@ function Toolbar({ applyView }: { applyView: (id: string | null) => void }) {
     <>
       <header className="toolbar">
         <div className="brand" title="Timeline Planner">⧗</div>
+        <button
+          className={`ghost-btn ${ui.sidebarOpen ? 'on' : ''}`}
+          title={ui.sidebarOpen ? 'Hide sidebar' : 'Show sidebar'}
+          onClick={() => setUI({ sidebarOpen: !ui.sidebarOpen })}
+        ><PanelLeft width={15} height={15} /></button>
         <div className="tabs">
           {projects.map(p => (
             <div
@@ -697,6 +705,7 @@ function Cheatsheet() {
     ['Click type in sidebar', 'Toggle its visibility · Alt-click = solo'],
     ['Wheel / pinch', 'Zoom toward cursor'],
     ['Right-drag / middle-drag', 'Pan'],
+    ['Touch: one finger / two fingers', 'Pan / pinch to zoom · tap empty space to deselect'],
     ['0 / + / −', 'Fit all · zoom in · zoom out'],
     ['1–9', 'Switch saved views'],
     ['/', 'Focus the filter box (Enter jumps to first match)'],

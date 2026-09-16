@@ -29,7 +29,9 @@ const MIN_S = 0.4
 const MAX_S = 700
 
 type Drag =
-  | { kind: 'pan'; button: number; startClientX: number; startClientY: number; camX: number; moved: boolean }
+  | { kind: 'pan'; button: number; startClientX: number; startClientY: number; camX: number; moved: boolean; touch?: boolean }
+  // Two-finger pinch on a touch screen: zoom around the fingers' midpoint and follow it.
+  | { kind: 'pinch'; startDist: number; startMidX: number; camX: number; camS: number }
   | { kind: 'marquee'; x0: number; y0: number; x1: number; y1: number }
   | { kind: 'branch'; startPos: number; curPos: number }
   | {
@@ -136,6 +138,8 @@ export function CanvasView() {
   const menuRef = useRef<HTMLDivElement>(null)
   /** Set after a right-drag pan so the browser's contextmenu event doesn't open the menu. */
   const suppressMenuRef = useRef(false)
+  // Active touch points (by pointer id), so a second finger can turn a pan into a pinch.
+  const touches = useRef(new Map<number, { x: number; y: number }>())
   /** Last pointer position over the canvas (null once it leaves) — where Space places the picker. */
   const pointerRef = useRef<{ x: number; y: number } | null>(null)
   /** Text typed so far into the new-item name prompt; committed when the prompt closes. */
@@ -795,7 +799,7 @@ export function CanvasView() {
   // ---- pointer interactions
   const setDragBoth = (d: Drag | null) => {
     // Viewer mode: only camera gestures and selection may start a drag.
-    if (d && ui.readOnly && d.kind !== 'pan' && d.kind !== 'marquee') return
+    if (d && ui.readOnly && d.kind !== 'pan' && d.kind !== 'pinch' && d.kind !== 'marquee') return
     dragRef.current = d
     setDrag(d)
   }
@@ -804,6 +808,13 @@ export function CanvasView() {
     const rect = wrapRef.current!.getBoundingClientRect()
     const x = e.clientX - rect.left
     const y = e.clientY - rect.top
+    // A finger on empty space pans (a marquee needs a mouse); a tap deselects.
+    if (e.pointerType === 'touch' && !(ui.tool === 'branch' && !ui.readOnly)) {
+      cancelFlight()
+      ;(e.target as Element).setPointerCapture?.(e.pointerId)
+      setDragBoth({ kind: 'pan', button: 0, touch: true, startClientX: e.clientX, startClientY: e.clientY, camX: cam.x, moved: false })
+      return
+    }
     // Panning is reserved for the right and middle mouse buttons.
     if (e.button === 1 || e.button === 2) {
       e.preventDefault()
@@ -822,20 +833,57 @@ export function CanvasView() {
     }
   }
 
+  /**
+   * Runs before any element's own pointerdown. The second finger of a touch
+   * gesture takes over as a pinch (zoom + pan) unless a one-finger edit is
+   * already under way, in which case it is ignored.
+   */
+  const onPointerDownCapture = (e: React.PointerEvent) => {
+    if (e.pointerType !== 'touch') return
+    touches.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
+    if (touches.current.size !== 2) return
+    const d = dragRef.current
+    if (d && d.kind !== 'pan') return
+    e.stopPropagation()
+    e.preventDefault()
+    cancelFlight()
+    wrapRef.current?.setPointerCapture?.(e.pointerId)
+    const rect = wrapRef.current!.getBoundingClientRect()
+    const [a, b] = [...touches.current.values()]
+    setDragBoth({
+      kind: 'pinch',
+      startDist: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)),
+      startMidX: (a.x + b.x) / 2 - rect.left,
+      camX: cam.x, camS: cam.s,
+    })
+  }
+
   const onPointerMove = (e: React.PointerEvent) => {
     const rect = wrapRef.current!.getBoundingClientRect()
     const x = e.clientX - rect.left
     const y = e.clientY - rect.top
     pointerRef.current = { x, y }
+    if (e.pointerType === 'touch' && touches.current.has(e.pointerId)) {
+      touches.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
+    }
     const d = dragRef.current
     if (!d) return
     if (d.kind === 'pan') {
       const dx = e.clientX - d.startClientX
-      if (Math.abs(dx) + Math.abs(e.clientY - d.startClientY) > 3) {
+      if (Math.abs(dx) + Math.abs(e.clientY - d.startClientY) > (d.touch ? 8 : 3)) {
         if (!d.moved) setMenu(null)
         d.moved = true
       }
       setCamera({ x: d.camX - dx / cam.s, s: cam.s })
+    } else if (d.kind === 'pinch') {
+      const pts = [...touches.current.values()]
+      if (pts.length < 2) return
+      const [a, b] = pts
+      const dist = Math.max(1, Math.hypot(a.x - b.x, a.y - b.y))
+      const mid = (a.x + b.x) / 2 - rect.left
+      const s = clamp(d.camS * (dist / d.startDist), minS, maxS)
+      const wx = d.camX + d.startMidX / d.camS
+      setCamera({ x: wx - mid / s, s })
     } else if (d.kind === 'marquee') {
       d.x1 = x; d.y1 = y
       setDrag({ ...d })
@@ -1012,6 +1060,7 @@ export function CanvasView() {
   }
 
   const onPointerUp = (e: React.PointerEvent) => {
+    if (e.pointerType === 'touch') touches.current.delete(e.pointerId)
     const d = dragRef.current
     setDragBoth(null)
     if (!d) return
@@ -1019,6 +1068,14 @@ export function CanvasView() {
     if (d.kind === 'pan') {
       // A completed right-drag pan must not pop the context menu on release.
       if (d.moved && d.button === 2) suppressMenuRef.current = true
+      // A touch tap on empty space clears the selection, like a mouse click.
+      if (d.touch && !d.moved && !menu) select([])
+    } else if (d.kind === 'pinch') {
+      // One finger lifted: keep panning with the one still down.
+      const rest = [...touches.current.values()]
+      if (rest.length === 1) {
+        setDragBoth({ kind: 'pan', button: 0, touch: true, startClientX: rest[0].x, startClientY: rest[0].y, camX: cam.x, moved: true })
+      }
     } else if (d.kind === 'marquee') {
       const [ax, bx] = [Math.min(d.x0, d.x1), Math.max(d.x0, d.x1)]
       const [ay, by] = [Math.min(d.y0, d.y1), Math.max(d.y0, d.y1)]
@@ -1517,8 +1574,10 @@ export function CanvasView() {
     <div
       ref={wrapRef}
       className={`canvas-wrap tool-${ui.tool} ${drag?.kind === 'pan' ? 'panning' : ''} ${ui.pickRef ? 'picking' : ''}`}
+      onPointerDownCapture={onPointerDownCapture}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
+      onPointerCancel={onPointerUp}
       onPointerLeave={() => { pointerRef.current = null }}
       onContextMenu={bgContextMenu}
       onMouseDown={e => { if (e.button === 1) e.preventDefault() }}
