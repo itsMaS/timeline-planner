@@ -138,27 +138,11 @@ export interface Section {
   fieldValues: Record<Id, FieldValue>
 }
 
-export interface BranchPath {
-  id: Id
-  label: string
-  terminal: boolean
-}
-
-export interface Branch {
-  id: Id
-  mode: 'any' | 'all'
-  forkPos: number
-  joinPos: number
-  paths: BranchPath[]
-}
-
 export interface Item {
   id: Id
   typeId: Id
   /** null = use the type's default layer. */
   layerId: Id | null
-  /** null = on the main spine; otherwise the id of a BranchPath. */
-  pathId: Id | null
   pos: number
   duration: number
   title: string
@@ -245,7 +229,6 @@ export interface Project {
   typeFolders: TypeFolder[]
   layers: Layer[]
   sections: Section[]
-  branches: Branch[]
   items: Item[]
   views: View[]
   camera: Camera

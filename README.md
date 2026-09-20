@@ -51,10 +51,6 @@ To ship an update: `npm run build`, commit the regenerated
 - **Sections** — a nestable hierarchy with project-defined level names
   (Chapter → Level → Section by default), drawn as subtle full-height bands
   with a header rail; the breadcrumb (bottom-left) tracks where you are.
-- **Branches** — drag with the branch tool (`B`) to fork the line. `ANY`
-  branches (pick one path, dashed) vs `ALL` branches (complete every path in
-  any order, solid + checkboxes). Paths can be labeled, reordered, marked as
-  dead ends, and hold their own items.
 - **Filters & views** — toggle types (Alt-click to solo), layers, tags; live
   text filter (`/`). Filtered-out items ghost at 15% (or hide entirely). Any
   filter combination can be saved as a named view, switched with `1`–`9`.
@@ -116,13 +112,8 @@ by stable random ids; positions are floats on an unbounded abstract axis.
                  // array order = significance, index 0 = most significant
   "sections": [{ "id": "…", "name": "Chapter 1", "depth": 0,
                  "start": 0, "end": 25, "fieldValues": {} }],
-  "branches": [{ "id": "…", "mode": "any" /* or "all" */,
-                 "forkPos": 27, "joinPos": 36,
-                 "paths": [{ "id": "…", "label": "Stealth route",
-                             "terminal": false }] }],
   "items":    [{ "id": "…", "typeId": "…",
                  "layerId": null,        // null → type's default layer
-                 "pathId": null,         // null → main line, else a branch path id
                  "pos": 5, "duration": 4, // duration 0 = point event
                  "title": "…", "description": "markdown…",
                  "tags": ["…"], "link": "https://…",

@@ -121,7 +121,7 @@ export function applyChanges(p: Project, changes: ProposalChange[]): void {
 
 const COL_LABEL: Record<ColKey | 'project', string> = {
   items: 'Item', types: 'Type', typeFolders: 'Folder', layers: 'Layer', sections: 'Section',
-  branches: 'Branch', views: 'View', hierarchyLevels: 'Hierarchy level', fields: 'Field', processors: 'Processor',
+  views: 'View', hierarchyLevels: 'Hierarchy level', fields: 'Field', processors: 'Processor',
   project: 'Project',
 }
 
@@ -174,7 +174,7 @@ const PREVIEW_COLS: ColKey[] = ['items', 'types', 'typeFolders', 'layers', 'fiel
  * proposal's undecided additions and updates are applied on top of `base`, so
  * new items appear and moved ones sit at their proposed position. Removals
  * are *not* applied (the entity stays, to be drawn struck through), and
- * sections, branches and project scalars keep their live state. Returns
+ * sections and project scalars keep their live state. Returns
  * `base` itself when nothing applies.
  */
 export function previewProject(base: Project, p: Proposal): Project {

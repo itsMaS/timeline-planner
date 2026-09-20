@@ -3,12 +3,12 @@ import { useStore } from '../model/store'
 import type { Id, Project } from '../model/types'
 
 /**
- * Delete items / sections / branches from the active project. When something
+ * Delete items / sections from the active project. When something
  * else references one of them through a reference field, a confirmation
  * lists the affected owners first; on OK the references are stripped too.
  */
 export function requestDelete(
-  what: { itemIds?: Id[]; sectionIds?: Id[]; branchIds?: Id[] },
+  what: { itemIds?: Id[]; sectionIds?: Id[] },
   after?: () => void,
 ) {
   const st = useStore.getState()
@@ -16,21 +16,13 @@ export function requestDelete(
   if (!proj) return
   const itemIds = what.itemIds ?? []
   const sectionIds = what.sectionIds ?? []
-  const branchIds = what.branchIds ?? []
-  if (!itemIds.length && !sectionIds.length && !branchIds.length) return
+  if (!itemIds.length && !sectionIds.length) return
   const gone = new Set([...itemIds, ...sectionIds])
 
   const run = () => {
     useStore.getState().mutate(p => {
       if (gone.size) stripRefs(p, gone)
       if (itemIds.length) p.items = p.items.filter(i => !itemIds.includes(i.id))
-      for (const bid of branchIds) {
-        const br = p.branches.find(b => b.id === bid)
-        if (!br) continue
-        const pathIds = br.paths.map(pp => pp.id)
-        for (const it of p.items) if (it.pathId && pathIds.includes(it.pathId)) it.pathId = null
-        p.branches = p.branches.filter(b => b.id !== bid)
-      }
       if (sectionIds.length) p.sections = p.sections.filter(sc => !sectionIds.includes(sc.id))
     })
     after?.()

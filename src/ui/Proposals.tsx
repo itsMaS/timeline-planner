@@ -42,12 +42,11 @@ export function usePendingChange(col: ProposalChange['col'], entityId: string | 
   }, [proposal, col, entityId])
 }
 
-/** Selection key → the proposal change it corresponds to (items, sections and branches). */
+/** Selection key → the proposal change it corresponds to (items and sections). */
 function selectionTarget(sel: string[]): { col: ProposalChange['col']; id: string } | null {
   if (sel.length !== 1) return null
   const k = sel[0]
   if (k.startsWith('S:')) return { col: 'sections', id: k.slice(2) }
-  if (k.startsWith('B:')) return { col: 'branches', id: k.slice(2) }
   return { col: 'items', id: k }
 }
 
@@ -276,14 +275,14 @@ function ProposalReview(props: { proj: Project; projectId: string; proposal: Pro
 
 export const FIELD_LABEL: Record<string, string> = {
   title: 'title', description: 'description', tags: 'tags', link: 'link', images: 'images', fieldValues: 'fields',
-  pos: 'position', duration: 'duration', typeId: 'type', layerId: 'layer', pathId: 'branch path',
+  pos: 'position', duration: 'duration', typeId: 'type', layerId: 'layer',
   name: 'name', icon: 'icon', color: 'color', defaultLayerId: 'default layer', fields: 'fields', folderId: 'folder',
   kind: 'kind', help: 'help text', required: 'required', showInTooltip: 'show in tooltip', defaultValue: 'default',
   maxLength: 'max length', min: 'min', max: 'max', decimals: 'decimals', unit: 'unit', refTargets: 'can reference',
   refMultiple: 'multiple', refShowLinks: 'connectors', op: 'operation', fieldId: 'field', targets: 'include', processors: 'processors',
   start: 'start', end: 'end', depth: 'depth', parentId: 'parent', collapsed: 'collapsed',
   eye: 'hidden', pin: 'pinned', size: 'size', minZoom: 'min zoom', filters: 'filters', mode: 'mode',
-  forkPos: 'fork', joinPos: 'join', paths: 'paths', createdBy: 'created by',
+  createdBy: 'created by',
 }
 
 /** Resolve ids to names where the field is a reference, so diffs read naturally. */

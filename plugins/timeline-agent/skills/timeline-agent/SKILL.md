@@ -49,11 +49,11 @@ $TL propose --link "$LINK" --base /tmp/tl.json --edited /tmp/tl-edited.json \
 Rules for editing `doc`:
 
 - Keep entity ids. A proposal is diffed per entity (items, types, typeFolders,
-  layers, sections, branches, views, hierarchyLevels, fields, processors) plus
+  layers, sections, views, hierarchyLevels, fields, processors) plus
   the scalars `name` and `settings`. Changing an id looks like remove + add.
 - New entities need a fresh id: any short random string (e.g. 12 chars of
   `[a-z0-9]`). Fill every field. An item is `{id, typeId, layerId: null,
-  pathId: null, pos, duration: 0, title, description: '', tags: [], link: '',
+  pos, duration: 0, title, description: '', tags: [], link: '',
   images: [], fieldValues: {}}`; a type is `{id, name, icon, color, defaultLayerId,
   fields: [{fieldId, defaultValue: null}], folderId: null}` (a type also
   inherits the `fields` of its folder and every folder above it; fields are global:

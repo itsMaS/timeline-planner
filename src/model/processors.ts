@@ -4,7 +4,7 @@ import type { FieldValue, Id, ProcessorAttachment, ProcessorDef, ProcessorOp, Pr
 /**
  * Processors aggregate the entities inside a section: every item whose
  * position lies in the section's range plus every section nested inside it.
- * Branch-path items count like any other. Pure functions, evaluated on read.
+ * Pure functions, evaluated on read.
  */
 
 export const PROCESSOR_OPS: { op: ProcessorOp; label: string; needsField: 'number' | 'any' | 'none' }[] = [

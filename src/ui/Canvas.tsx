@@ -1,13 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  ClipboardCopy, ClipboardPaste, CopyPlus, ListChecks, Maximize2, Plus, RectangleHorizontal,
-  Scissors, Settings2, Shuffle, Trash2,
+  ClipboardCopy, ClipboardPaste, CopyPlus, Maximize2, Plus, RectangleHorizontal,
+  Scissors, Settings2, Trash2,
 } from 'lucide-react'
 import { allowsTarget, attachmentsFor, backlinks, effectiveValue, formatValue, ownerOf } from '../model/fields'
 import { iconByName } from '../model/icons'
 import {
-  BranchLayout, PATH_LIFT, PlacedItem, ROW_H, branchPathD, contentExtent, fitCamera, itemMatchesFilters, splitLabel,
-  layoutTimeline, minZoomFor, refreshSectionDepths, rowY, spineD, spineYFor, terminalEndX, typeOf,
+  PlacedItem, ROW_H, contentExtent, fitCamera, itemMatchesFilters, splitLabel,
+  layoutTimeline, minZoomFor, refreshSectionDepths, rowY, spineYFor, typeOf,
 } from '../model/layout'
 import { bandBadge } from '../model/processors'
 import { diffToChanges, pendingChanges, previewProject, type ChangeKind, type ProposalChange } from '../model/proposal'
@@ -33,7 +33,6 @@ type Drag =
   // Two-finger pinch on a touch screen: zoom around the fingers' midpoint and follow it.
   | { kind: 'pinch'; startDist: number; startMidX: number; camX: number; camS: number }
   | { kind: 'marquee'; x0: number; y0: number; x1: number; y1: number }
-  | { kind: 'branch'; startPos: number; curPos: number }
   | {
       kind: 'item'; ids: string[]; grabId: string; startClientX: number
       orig: Map<string, number>
@@ -57,7 +56,6 @@ type Drag =
       anchor: number; grabPos: number
       cands: number[]; minFactor: number; moved: boolean; color: string
     }
-  | { kind: 'branchEnd'; id: string; side: 'fork' | 'join'; orig: number; startClientX: number; cands: number[] }
   | {
       /** One or more section edges sharing the grabbed position (coincident
           edges of adjacent sections move together in global mode). */
@@ -71,8 +69,6 @@ type Drag =
       itemSec: Map<string, { pos: number; dur: number; secId: string }>
       /** Contained sub-sections; they redistribute with the parent unless Shift is held. */
       subSects: Map<string, { start: number; end: number; parentId: string }>
-      /** Branch → its bounds and innermost affected section; redistributes like items. */
-      branchSec: Map<string, { fork: number; join: number; secId: string }>
     }
   | {
       /** Translate every selected section together (label drag). */
@@ -80,8 +76,6 @@ type Drag =
       orig: Map<string, { start: number; end: number }>
       /** Items inside the moved sections; they travel with the sections. */
       itemOrig: Map<string, number>
-      /** Branches inside the moved sections; they travel too. */
-      branchOrig: Map<string, { fork: number; join: number }>
       cands: number[]; moved: boolean
     }
   | {
@@ -93,8 +87,6 @@ type Drag =
       subOrig: Map<string, { start: number; end: number }>
       /** Items inside the scaled sections (spacing rescales unless Shift is held). */
       itemOrig: Map<string, number>
-      /** Branches inside the scaled sections; they rescale unless Shift is held. */
-      branchOrig: Map<string, { fork: number; join: number }>
       /** Original durations of contained span items; they rescale unless Shift is held. */
       itemDur: Map<string, number>
       anchor: number; grabPos: number
@@ -127,7 +119,6 @@ export function CanvasView() {
   const dragRef = useRef<Drag | null>(null)
   const [posOverride, setPosOverride] = useState<Map<string, number> | null>(null)
   const [durOverride, setDurOverride] = useState<{ id: string; pos: number; duration: number }[] | null>(null)
-  const [branchOverride, setBranchOverride] = useState<{ id: string; forkPos: number; joinPos: number }[] | null>(null)
   const [sectionOverride, setSectionOverride] = useState<{ id: string; start: number; end: number }[] | null>(null)
   const [hover, setHover] = useState<{ id: string; x: number; y: number } | null>(null)
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
@@ -194,7 +185,7 @@ export function CanvasView() {
 
   // ---- effective project (ephemeral drag overrides applied)
   const effective = useMemo(() => {
-    if (!posOverride && !durOverride && !branchOverride && !sectionOverride) return view
+    if (!posOverride && !durOverride && !sectionOverride) return view
     const p = { ...view }
     if (posOverride || durOverride) {
       p.items = view.items.map(it => {
@@ -203,12 +194,6 @@ export function CanvasView() {
         const dv = durOverride?.find(x => x.id === it.id)
         if (dv) out = { ...out, pos: dv.pos, duration: dv.duration }
         return out
-      })
-    }
-    if (branchOverride) {
-      p.branches = proj.branches.map(b => {
-        const o = branchOverride.find(x => x.id === b.id)
-        return o ? { ...b, forkPos: o.forkPos, joinPos: o.joinPos } : b
       })
     }
     if (sectionOverride) {
@@ -221,7 +206,7 @@ export function CanvasView() {
       refreshSectionDepths(p)
     }
     return p
-  }, [view, posOverride, durOverride, branchOverride, sectionOverride])
+  }, [view, posOverride, durOverride, sectionOverride])
 
   // Depth-graded emphasis: top-level sections get bigger labels and stronger
   // borders; each level down shrinks. Header bars stack flush from the very
@@ -324,7 +309,7 @@ export function CanvasView() {
         if (ui.readOnly) return null
         const raw = toPos(size.w / 2)
         const pos = ui.snap ? snapPos(raw, cam.s) : raw
-        const id = createItem(typeId, pos, null, size.w / 2, spineY)
+        const id = createItem(typeId, pos, size.w / 2, spineY)
         if (id) promptName(id, size.w / 2, spineY + 14, pos)
         return id
       },
@@ -368,34 +353,20 @@ export function CanvasView() {
       const rect = el.getBoundingClientRect()
       if (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) return
       const x = clientX - rect.left
-      const y = clientY - rect.top - spineY
-      let pathId: string | null = null
-      for (const bl of layout.branches) {
-        if (x <= bl.forkX + 8 || x >= bl.joinX - 8) continue
-        // Each path owns the band from its row of items down to the line itself.
-        const top = Math.min(...bl.pathYs) - PATH_LIFT - 20
-        const bottom = Math.max(...bl.pathYs) + 20
-        if (y < top || y > bottom) continue
-        let best = Infinity
-        bl.pathYs.forEach((py, i) => {
-          const d = Math.abs(y - (py - PATH_LIFT / 2))
-          if (d < best) { best = d; pathId = bl.branch.paths[i].id }
-        })
-      }
       const pos = ui.snap ? snapPos(toPos(x), cam.s) : toPos(x)
-      createItem(typeId, pos, pathId, clientX - rect.left, clientY - rect.top)
+      createItem(typeId, pos, clientX - rect.left, clientY - rect.top)
     }
     return () => { chipDrop.current = null }
   })
 
-  const createItem = (typeId: string, pos: number, pathId: string | null, fxX: number, fxY: number): string | null => {
+  const createItem = (typeId: string, pos: number, fxX: number, fxY: number): string | null => {
     const type = useStore.getState().projects.find(p => p.id === proj.id)?.types.find(t => t.id === typeId)
       ?? proj.types.find(t => t.id === typeId) ?? proj.types[0]
     if (!type) return null
     const id = uid()
     mutate(p => {
       p.items.push({
-        id, typeId: type.id, layerId: null, pathId, pos, duration: 0,
+        id, typeId: type.id, layerId: null, pos, duration: 0,
         title: type.name, description: '', tags: [], link: '', images: [], fieldValues: {},
         createdBy: creatorStamp(),
       })
@@ -483,7 +454,7 @@ export function CanvasView() {
 
   // ---- snapping
   /** World positions dragged edges/items stick to while the magnet is on. */
-  const magnetCands = (exclude: { items?: Set<string>; itemEnds?: Set<string>; sectionIds?: Set<string>; branchId?: string }): number[] => {
+  const magnetCands = (exclude: { items?: Set<string>; itemEnds?: Set<string>; sectionIds?: Set<string> }): number[] => {
     const out: number[] = []
     for (const it of proj.items) {
       if (exclude.items?.has(it.id)) continue
@@ -493,10 +464,6 @@ export function CanvasView() {
     for (const sc of proj.sections) {
       if (exclude.sectionIds?.has(sc.id)) continue
       out.push(sc.start, sc.end)
-    }
-    for (const br of proj.branches) {
-      if (br.id === exclude.branchId) continue
-      out.push(br.forkPos, br.joinPos)
     }
     return out
   }
@@ -540,35 +507,6 @@ export function CanvasView() {
     const out = new Map<string, number>()
     for (const it of proj.items) {
       if (list.some(s0 => it.pos >= s0.start - 1e-9 && it.pos <= s0.end + 1e-9)) out.set(it.id, it.pos)
-    }
-    return out
-  }
-
-  /** Branches whose whole span lies inside any of the given section ranges. */
-  const branchesWithin = (sects: Iterable<{ start: number; end: number }>): Map<string, { fork: number; join: number }> => {
-    const list = [...sects]
-    const out = new Map<string, { fork: number; join: number }>()
-    for (const br of proj.branches) {
-      if (list.some(s0 => br.forkPos >= s0.start - 1e-9 && br.joinPos <= s0.end + 1e-9)) {
-        out.set(br.id, { fork: br.forkPos, join: br.joinPos })
-      }
-    }
-    return out
-  }
-
-  /** Each contained branch mapped to the innermost of the given sections. */
-  const branchSecFor = (sects: Map<string, { start: number; end: number }>): Map<string, { fork: number; join: number; secId: string }> => {
-    const out = new Map<string, { fork: number; join: number; secId: string }>()
-    for (const br of proj.branches) {
-      let bestId: string | null = null
-      let bestSpan = Infinity
-      sects.forEach((b, id) => {
-        if (br.forkPos >= b.start - 1e-9 && br.joinPos <= b.end + 1e-9 && b.end - b.start < bestSpan) {
-          bestId = id
-          bestSpan = b.end - b.start
-        }
-      })
-      if (bestId) out.set(br.id, { fork: br.forkPos, join: br.joinPos, secId: bestId })
     }
     return out
   }
@@ -628,7 +566,7 @@ export function CanvasView() {
       const minW = Math.min(...all.map(s0 => s0.end - s0.start))
       setDragBoth({
         kind: 'sectionScale', ids: selectedSectionIds, startClientX: e.clientX,
-        orig, subOrig, itemOrig: itemsWithin(orig.values()), branchOrig: branchesWithin(orig.values()),
+        orig, subOrig, itemOrig: itemsWithin(orig.values()),
         itemDur: durationsOf(itemsWithin(orig.values()).keys()),
         anchor, grabPos: pos,
         cands: magnetCands({ sectionIds: new Set(allIds) }),
@@ -691,7 +629,7 @@ export function CanvasView() {
     setDragBoth({
       kind: 'sectionEdge', edges, orig: pos, startClientX: e.clientX,
       cands: magnetCands({ sectionIds: new Set(edges.map(ed => ed.id)) }), min, max,
-      origSects, itemSec: itemSecFor(origSects), subSects, branchSec: branchSecFor(origSects),
+      origSects, itemSec: itemSecFor(origSects), subSects,
     })
   }
 
@@ -764,8 +702,6 @@ export function CanvasView() {
       setDragBoth({
         kind: 'sectionMove', ids: [...idMap.values()], grabId: newGrabId,
         startClientX: e.clientX, orig, itemOrig,
-        // Branches are not duplicated, so the copy's drag moves none of them.
-        branchOrig: new Map(),
         cands: magnetCands({ sectionIds: new Set(idMap.values()), items: new Set(newItemIds) }),
         moved: false,
       })
@@ -791,7 +727,6 @@ export function CanvasView() {
     const itemOrig = itemsWithin(orig.values())
     setDragBoth({
       kind: 'sectionMove', ids: allIds, grabId: sc.id, startClientX: e.clientX, orig, itemOrig,
-      branchOrig: branchesWithin(orig.values()),
       cands: magnetCands({ sectionIds: new Set(allIds), items: new Set(itemOrig.keys()) }), moved: false,
     })
   }
@@ -809,7 +744,7 @@ export function CanvasView() {
     const x = e.clientX - rect.left
     const y = e.clientY - rect.top
     // A finger on empty space pans (a marquee needs a mouse); a tap deselects.
-    if (e.pointerType === 'touch' && !(ui.tool === 'branch' && !ui.readOnly)) {
+    if (e.pointerType === 'touch') {
       cancelFlight()
       ;(e.target as Element).setPointerCapture?.(e.pointerId)
       setDragBoth({ kind: 'pan', button: 0, touch: true, startClientX: e.clientX, startClientY: e.clientY, camX: cam.x, moved: false })
@@ -825,12 +760,7 @@ export function CanvasView() {
     }
     if (e.button !== 0) return
     ;(e.target as Element).setPointerCapture?.(e.pointerId)
-    if (ui.tool === 'branch' && !ui.readOnly) {
-      const pos = ui.snap ? snapPos(toPos(x), cam.s) : toPos(x)
-      setDragBoth({ kind: 'branch', startPos: pos, curPos: pos })
-    } else {
-      setDragBoth({ kind: 'marquee', x0: x, y0: y, x1: x, y1: y })
-    }
+    setDragBoth({ kind: 'marquee', x0: x, y0: y, x1: x, y1: y })
   }
 
   /**
@@ -887,9 +817,6 @@ export function CanvasView() {
     } else if (d.kind === 'marquee') {
       d.x1 = x; d.y1 = y
       setDrag({ ...d })
-    } else if (d.kind === 'branch') {
-      d.curPos = ui.snap ? snapPos(toPos(x), cam.s) : toPos(x)
-      setDrag({ ...d })
     } else if (d.kind === 'item') {
       const du = (e.clientX - d.startClientX) / cam.s
       if (Math.abs(e.clientX - d.startClientX) > 3) d.moved = true
@@ -935,13 +862,6 @@ export function CanvasView() {
         start = Math.min(start, end)
         setDurOverride([{ id: d.id, pos: start, duration: end - start }])
       }
-    } else if (d.kind === 'branchEnd') {
-      const du = (e.clientX - d.startClientX) / cam.s
-      const np = snapWorld(d.orig + du, d.cands, e.altKey)
-      const br = proj.branches.find(b => b.id === d.id)
-      if (!br) return
-      if (d.side === 'fork') setBranchOverride([{ id: d.id, forkPos: Math.min(np, br.joinPos - 0.5), joinPos: br.joinPos }])
-      else setBranchOverride([{ id: d.id, forkPos: br.forkPos, joinPos: Math.max(np, br.forkPos + 0.5) }])
     } else if (d.kind === 'sectionEdge') {
       const du = (e.clientX - d.startClientX) / cam.s
       const np = clamp(snapWorld(d.orig + du, d.cands, e.altKey), d.min, d.max)
@@ -982,20 +902,11 @@ export function CanvasView() {
           if (dur > 0) durOvs.push({ id: itemId, pos: npos, duration: dur * ratioOf(secId) })
           else pv.set(itemId, npos)
         })
-        // Branches redistribute into the new span like items do.
-        const bvs: { id: string; forkPos: number; joinPos: number }[] = []
-        d.branchSec.forEach(({ fork, join, secId }, brId) => {
-          const a = remap(secId, fork)
-          const b = remap(secId, join)
-          if (a !== null && b !== null) bvs.push({ id: brId, forkPos: Math.min(a, b), joinPos: Math.max(a, b) })
-        })
         setPosOverride(pv)
         setDurOverride(durOvs.length ? durOvs : null)
-        setBranchOverride(bvs.length ? bvs : null)
       } else {
         setPosOverride(null)
         setDurOverride(null)
-        setBranchOverride(null)
       }
       setSectionOverride(ovs)
     } else if (d.kind === 'sectionMove') {
@@ -1008,13 +919,10 @@ export function CanvasView() {
       const ovs: { id: string; start: number; end: number }[] = []
       d.orig.forEach((o, id) => ovs.push({ id, start: o.start + delta, end: o.end + delta }))
       setSectionOverride(ovs)
-      // Items and branches inside the moved sections travel along.
+      // Items inside the moved sections travel along.
       const pv = new Map<string, number>()
       d.itemOrig.forEach((pos, id) => pv.set(id, pos + delta))
       setPosOverride(pv)
-      const bvs: { id: string; forkPos: number; joinPos: number }[] = []
-      d.branchOrig.forEach((b, id) => bvs.push({ id, forkPos: b.fork + delta, joinPos: b.join + delta }))
-      setBranchOverride(bvs.length ? bvs : null)
     } else if (d.kind === 'sectionScale') {
       if (!d.moved && Math.abs(e.clientX - d.startClientX) <= 3) return
       d.moved = true
@@ -1029,7 +937,7 @@ export function CanvasView() {
       }
       d.orig.forEach(scaleBounds)
       // Default: contained sub-sections, item spacing, span durations, and
-      // branches all scale along with the selection; holding Shift leaves
+      // scale along with the selection; holding Shift leaves
       // them where they are.
       if (!e.shiftKey) {
         d.subOrig.forEach(scaleBounds)
@@ -1043,17 +951,9 @@ export function CanvasView() {
         })
         setPosOverride(pv)
         setDurOverride(durOvs.length ? durOvs : null)
-        const bvs: { id: string; forkPos: number; joinPos: number }[] = []
-        d.branchOrig.forEach((b, id) => {
-          const a = d.anchor + (b.fork - d.anchor) * factor
-          const c = d.anchor + (b.join - d.anchor) * factor
-          bvs.push({ id, forkPos: Math.min(a, c), joinPos: Math.max(a, c) })
-        })
-        setBranchOverride(bvs.length ? bvs : null)
       } else {
         setPosOverride(null)
         setDurOverride(null)
-        setBranchOverride(null)
       }
       setSectionOverride(ovs)
     }
@@ -1099,25 +999,6 @@ export function CanvasView() {
         if (sx1 < bx && sx2 > ax && barTop < by && barBottom > ay) hits.push(`S:${sc.id}`)
       }
       select(hits)
-    } else if (d.kind === 'branch') {
-      const a = Math.min(d.startPos, d.curPos)
-      const b = Math.max(d.startPos, d.curPos)
-      setUI({ tool: 'select' })
-      if (b - a >= 1) {
-        const id = uid()
-        mutate(p => {
-          p.branches.push({
-            id, mode: 'any', forkPos: a, joinPos: b,
-            paths: [
-              { id: uid(), label: '', terminal: false },
-              { id: uid(), label: '', terminal: false },
-            ],
-          })
-        })
-        select([`B:${id}`])
-        burst(e.clientX - rect.left, e.clientY - rect.top, '#8b5cf6')
-        sfx.create()
-      }
     } else if (d.kind === 'item') {
       const ov = posOverride
       const dv = durOverride
@@ -1159,27 +1040,13 @@ export function CanvasView() {
         })
         sfx.snap()
       }
-    } else if (d.kind === 'branchEnd') {
-      const ov = branchOverride
-      setBranchOverride(null)
-      if (ov) {
-        mutate(p => {
-          for (const o of ov) {
-            const br = p.branches.find(b => b.id === o.id)
-            if (br) { br.forkPos = o.forkPos; br.joinPos = o.joinPos }
-          }
-        })
-        sfx.snap()
-      }
     } else if (d.kind === 'sectionEdge' || d.kind === 'sectionMove' || d.kind === 'sectionScale') {
       const ov = sectionOverride
       const pv = posOverride
       const dv = durOverride
-      const bv = branchOverride
       setSectionOverride(null)
       setPosOverride(null)
       setDurOverride(null)
-      setBranchOverride(null)
       const moved = d.kind === 'sectionEdge' || d.moved
       if (ov?.length && moved) {
         mutate(p => {
@@ -1192,10 +1059,6 @@ export function CanvasView() {
             const it = p.items.find(i => i.id === o.id)
             if (it) { it.pos = o.pos; it.duration = o.duration }
           }
-          if (bv) for (const o of bv) {
-            const br = p.branches.find(b => b.id === o.id)
-            if (br) { br.forkPos = o.forkPos; br.joinPos = o.joinPos }
-          }
         })
         sfx.snap()
       }
@@ -1203,12 +1066,12 @@ export function CanvasView() {
   }
 
   const bgDoubleClick = (e: React.MouseEvent) => {
-    if (ui.tool !== 'select' || ui.readOnly) return
+    if (ui.readOnly) return
     const rect = wrapRef.current!.getBoundingClientRect()
     const x = e.clientX - rect.left
     const pos = ui.snap ? snapPos(toPos(x), cam.s) : toPos(x)
     const typeId = ui.lastTypeId ?? proj.types[0]?.id
-    if (typeId) createItem(typeId, pos, null, x, e.clientY - rect.top)
+    if (typeId) createItem(typeId, pos, x, e.clientY - rect.top)
   }
 
   const itemPointerDown = (e: React.PointerEvent, item: Item) => {
@@ -1295,25 +1158,25 @@ export function CanvasView() {
   // the dot moves every item in that stack together. A span whose END lands
   // on such a position joins the stack too (as `endIds`): the drag then
   // stretches that span so its end keeps following the stack.
-  type Column = { x: number; y: number; ids: string[]; endIds: string[]; color: string; ghost: boolean }
+  type Column = { x: number; ids: string[]; endIds: string[]; color: string; ghost: boolean }
   const columns = useMemo(() => {
-    const sorted = [...layout.placed].sort((a, b) => a.y - b.y || a.x - b.x)
+    const sorted = [...layout.placed].sort((a, b) => a.x - b.x)
     const cols: Column[] = []
     for (const pl of sorted) {
       const last = cols[cols.length - 1]
-      if (last && last.y === pl.y && Math.abs(pl.x - last.x) < 5) {
+      if (last && Math.abs(pl.x - last.x) < 5) {
         last.ids.push(pl.item.id)
         // The dot fades with its stack: it stays solid while any item in the
         // stack survives the current filters.
         last.ghost = last.ghost && pl.ghost
       } else {
-        cols.push({ x: pl.x, y: pl.y, ids: [pl.item.id], endIds: [], color: typeOf(proj, pl.item)?.color ?? '#888', ghost: pl.ghost })
+        cols.push({ x: pl.x, ids: [pl.item.id], endIds: [], color: typeOf(proj, pl.item)?.color ?? '#888', ghost: pl.ghost })
       }
     }
     for (const pl of layout.placed) {
       if (pl.item.duration <= 0) continue
       const ex = toX(pl.item.pos + pl.item.duration)
-      const col = cols.find(c => c.y === pl.y && Math.abs(c.x - ex) < 5 && !c.ids.includes(pl.item.id))
+      const col = cols.find(c => Math.abs(c.x - ex) < 5 && !c.ids.includes(pl.item.id))
       if (col) col.endIds.push(pl.item.id)
     }
     return cols
@@ -1460,7 +1323,6 @@ export function CanvasView() {
         const cp = structuredClone(src)
         cp.id = uid()
         cp.pos = pos + (src.pos - base)
-        cp.pathId = null
         cp.createdBy = creatorStamp()
         nids.push(cp.id)
         p.items.push(cp)
@@ -1573,7 +1435,7 @@ export function CanvasView() {
   return (
     <div
       ref={wrapRef}
-      className={`canvas-wrap tool-${ui.tool} ${drag?.kind === 'pan' ? 'panning' : ''} ${ui.pickRef ? 'picking' : ''}`}
+      className={`canvas-wrap ${drag?.kind === 'pan' ? 'panning' : ''} ${ui.pickRef ? 'picking' : ''}`}
       onPointerDownCapture={onPointerDownCapture}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
@@ -1706,9 +1568,9 @@ export function CanvasView() {
             </g>
           ))}
 
-          {/* spine — broken where a branch splits it into paths */}
-          <path
-            d={spineD(size.w, layout.branches)} className="spine"
+          {/* spine */}
+          <line
+            x1={0} y1={0} x2={size.w} y2={0} className="spine"
             style={{ strokeWidth: st.spine.width, opacity: st.spine.opacity }}
           />
 
@@ -1721,7 +1583,7 @@ export function CanvasView() {
               return (
                 <line
                   key={`stem-${pl.item.id}`} className="stem"
-                  x1={pl.x} y1={pl.ny + (pl.ny < pl.y ? 14 * z : -14 * z)} x2={pl.x} y2={pl.y}
+                  x1={pl.x} y1={pl.ny + (pl.ny < 0 ? 14 * z : -14 * z)} x2={pl.x} y2={0}
                   style={{ stroke: t?.color }}
                 />
               )
@@ -1734,7 +1596,7 @@ export function CanvasView() {
               const pl = layout.placed.find(x => x.item.id === id)
               if (pl) return { x: pl.x, y: pl.ny }
               const dot = layout.dots.find(x => x.item.id === id)
-              if (dot) return { x: dot.x, y: dot.y }
+              if (dot) return { x: dot.x, y: 0 }
               const bg = bandGeo.find(g => g.sc.id === id)
               if (bg) return { x: (Math.max(bg.x1, 0) + Math.min(bg.x2, size.w)) / 2, y: bg.barTop + bg.barH / 2 }
               return null
@@ -1758,30 +1620,6 @@ export function CanvasView() {
               </g>
             )
           })()}
-
-          {/* branches */}
-          {layout.branches.map(bl => (
-            <BranchG
-              key={bl.branch.id}
-              bl={bl}
-              selected={selection.has(`B:${bl.branch.id}`)}
-              selectBranch={() => { select([`B:${bl.branch.id}`]); sfx.select() }}
-              startEndDrag={(side, e) => {
-                e.stopPropagation()
-                ;(e.target as Element).setPointerCapture?.(e.pointerId)
-                setDragBoth({
-                  kind: 'branchEnd', id: bl.branch.id, side,
-                  orig: side === 'fork' ? bl.branch.forkPos : bl.branch.joinPos,
-                  startClientX: e.clientX, cands: magnetCands({ branchId: bl.branch.id }),
-                })
-              }}
-              zoomIn={() => {
-                const span = bl.branch.joinPos - bl.branch.forkPos
-                const s = clamp((size.w * 0.7) / span, minS, maxS)
-                flyTo({ x: bl.branch.forkPos - (size.w - span * s) / 2 / s, s })
-              }}
-            />
-          ))}
 
           {/* exiting items */}
           {[...leaving.entries()].map(([id, l]) => {
@@ -1844,7 +1682,7 @@ export function CanvasView() {
             <g
               key={dot.item.id}
               className={`layer-dot ${dot.ghost ? 'ghost' : ''} ${highlightId === dot.item.id ? 'hl' : ''}`}
-              transform={`translate(${dot.x}, ${dot.y})`}
+              transform={`translate(${dot.x}, 0)`}
               onPointerDown={e => itemPointerDown(e, dot.item)}
               onContextMenu={e => itemContextMenu(e, dot.item)}
               onPointerEnter={e => itemHoverStart(e, dot.item.id)}
@@ -1859,7 +1697,7 @@ export function CanvasView() {
           {layout.clusters.map(cl => (
             <g
               key={cl.key}
-              transform={`translate(${cl.x}, ${cl.y})`}
+              transform={`translate(${cl.x}, 0)`}
               className="cluster"
               onPointerEnter={() => setExpandedCluster(cl.key)}
               onPointerLeave={() => setExpandedCluster(c => (c === cl.key ? null : c))}
@@ -1907,7 +1745,7 @@ export function CanvasView() {
           {!drag && columns.map(col => (
             <circle
               key={`base-${col.ids[0]}`}
-              cx={col.x} cy={col.y} r={4}
+              cx={col.x} cy={0} r={4}
               className={`base-dot ${col.ghost ? 'ghost' : ''}`}
               style={{ stroke: col.color }}
               onPointerDown={e => basePointerDown(e, col)}
@@ -1916,14 +1754,6 @@ export function CanvasView() {
             </circle>
           ))}
 
-          {/* branch creation preview */}
-          {drag?.kind === 'branch' && (
-            <g className="branch-preview">
-              <line x1={toX(Math.min(drag.startPos, drag.curPos))} y1={0} x2={toX(Math.max(drag.startPos, drag.curPos))} y2={0} />
-              <circle cx={toX(drag.startPos)} r={6} />
-              <circle cx={toX(drag.curPos)} r={6} />
-            </g>
-          )}
         </g>
 
         {/* marquee */}
@@ -1952,7 +1782,6 @@ export function CanvasView() {
       {/* status */}
       <div className="canvas-status">
         showing {layout.shownCount} of {layout.totalCount} items
-        {ui.tool === 'branch' && <span className="status-hint"> — drag along the line to create a branch (Esc to cancel)</span>}
         {ui.pickRef && <span className="status-hint"> — click an item or section header to reference it (Esc to cancel)</span>}
       </div>
 
@@ -2005,11 +1834,11 @@ export function CanvasView() {
                 autoFocus
                 listWhenEmpty
                 onPick={typeId => {
-                  const id = createItem(typeId, pos, null, menu.x, menu.y)
+                  const id = createItem(typeId, pos, menu.x, menu.y)
                   if (id) promptName(id, menu.x, menu.y, pos); else setMenu(null)
                 }}
                 onCreateType={name => {
-                  const id = createItem(createType(name), pos, null, menu.x, menu.y)
+                  const id = createItem(createType(name), pos, menu.x, menu.y)
                   if (id) promptName(id, menu.x, menu.y, pos); else setMenu(null)
                 }}
                 onClose={() => setMenu(null)}
@@ -2208,67 +2037,6 @@ function ItemG(props: {
           </text>
         )}
       </g>
-    </g>
-  )
-}
-
-// ------------------------------------------------------------------ BranchG
-
-function BranchG(props: {
-  bl: BranchLayout
-  selected: boolean
-  selectBranch: () => void
-  startEndDrag: (side: 'fork' | 'join', e: React.PointerEvent) => void
-  zoomIn: () => void
-}) {
-  const { bl, selected } = props
-  const { branch } = bl
-  const GateIcon = branch.mode === 'any' ? Shuffle : ListChecks
-  const dash = branch.mode === 'any' ? '7 5' : undefined
-  const pick = (e: React.PointerEvent) => { e.stopPropagation(); props.selectBranch() }
-  // Labels and the ALL checkboxes sit just under each path's straight run; they
-  // get out of the way when the branch is squeezed too narrow to read them.
-  const labelX = bl.forkX + bl.curveW + 6
-  const roomy = bl.joinX - bl.forkX > 2 * bl.curveW + 40
-  return (
-    <g className={`branch ${selected ? 'sel' : ''}`}>
-      {branch.paths.map((path, i) => {
-        const y = bl.pathYs[i]
-        return (
-          <g key={path.id}>
-            <path
-              d={branchPathD(bl, y, path.terminal)}
-              className="branch-path"
-              strokeDasharray={dash}
-              onPointerDown={pick}
-              onDoubleClick={props.zoomIn}
-            />
-            {path.terminal && (
-              <rect x={terminalEndX(bl) - 2} y={y - 8} width={4} height={16} rx={2} className="terminal-cap" />
-            )}
-            {roomy && branch.mode === 'all' && (
-              <rect x={labelX} y={y + 5} width={9} height={9} rx={2} className="all-check" />
-            )}
-            {roomy && path.label && (
-              <text x={labelX + (branch.mode === 'all' ? 14 : 0)} y={y + 13} className="path-label" onPointerDown={pick}>
-                {path.label}
-              </text>
-            )}
-          </g>
-        )
-      })}
-      {/* gate + join */}
-      <g className="gate" onPointerDown={pick}>
-        <circle cx={bl.forkX} r={12} className="gate-bg" />
-        <GateIcon x={bl.forkX - 7} y={-7} width={14} height={14} className="gate-icon" />
-      </g>
-      <circle cx={bl.joinX} r={5} className="join-dot" onPointerDown={pick} />
-      {selected && (
-        <>
-          <circle cx={bl.forkX} r={17} className="end-handle" onPointerDown={e => props.startEndDrag('fork', e)} />
-          <circle cx={bl.joinX} r={12} className="end-handle" onPointerDown={e => props.startEndDrag('join', e)} />
-        </>
-      )}
     </g>
   )
 }

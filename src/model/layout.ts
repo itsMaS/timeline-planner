@@ -1,13 +1,11 @@
-import type { Branch, Camera, Filters, Item, Project } from './types'
+import type { Camera, Filters, Item, Project } from './types'
 import { attachmentsFor, effectiveValue, formatValue } from './fields'
 import { clamp, lerp } from './util'
 
 export interface PlacedItem {
   item: Item
   x: number // screen px of item.pos
-  /** y of the line this item hangs off: 0 = the spine, otherwise a branch path. */
-  y: number
-  /** y of the node itself (relative to the spine); the stem runs from here to `y`. */
+  /** y of the node itself (relative to the spine); the stem runs from here to the spine. */
   ny: number
   w: number // total card width (span bar or icon+label)
   row: number // 0 = closest to the line, stacking upward; negative rows stack below it
@@ -17,11 +15,10 @@ export interface PlacedItem {
   size: number // visual scale from the item's layer (1 = normal)
 }
 
-/** An item minimized to a dot on its line (its layer's minZoom is above the camera zoom). */
+/** An item minimized to a dot on the spine (its layer's minZoom is above the camera zoom). */
 export interface LayerDot {
   item: Item
   x: number
-  y: number
   color: string
   ghost: boolean
 }
@@ -29,27 +26,15 @@ export interface LayerDot {
 export interface Cluster {
   key: string
   x: number
-  y: number
   count: number
   color: string
   ids: string[]
-}
-
-export interface BranchLayout {
-  branch: Branch
-  forkX: number
-  joinX: number
-  /** Horizontal length of the fork/join transition curves (shrinks when zoomed out). */
-  curveW: number
-  /** y offset from the spine of each path; negative = above. Symmetric around 0. */
-  pathYs: number[]
 }
 
 export interface LayoutResult {
   placed: PlacedItem[]
   dots: LayerDot[]
   clusters: Cluster[]
-  branches: BranchLayout[]
   shownCount: number
   totalCount: number
 }
@@ -151,34 +136,16 @@ export function splitLabel(p: Project, it: Item, showFields: boolean, showTitles
 const ICON_W = 30
 export const ROW_H = 46
 export const ROW0_Y = -52 // y of row 0 relative to the spine
-/** Vertical distance between neighbouring branch paths: one row of items + the line. */
-export const PATH_GAP = 92
-/** How far above its path a path item's node sits (shorter stem than the spine's rows). */
-export const PATH_LIFT = 30
-
-/** Path y offsets for an n-way branch, spread symmetrically around the spine. */
-export function branchPathYs(n: number): number[] {
-  return Array.from({ length: n }, (_, i) => (i - (n - 1) / 2) * PATH_GAP)
-}
 
 /**
  * Y of the spine within a canvas of height `h`. With markers on both sides
  * the line sits a little above centre; with markers only above it drops to
- * ~76% so the rows get the space that would otherwise sit empty below —
- * keeping room under the line for the widest branch fan (paths spread
- * symmetrically around the spine) plus the ruler, base dots and status bar.
+ * ~76% so the rows get the space that would otherwise sit empty below, while
+ * keeping room under the line for the ruler, base dots and status bar.
  */
 export function spineYFor(p: Project, h: number): number {
   if (p.settings.placement === 'both') return Math.round(h * 0.42)
-  let fan = 0
-  for (const br of p.branches) fan = Math.max(fan, ((br.paths.length - 1) / 2) * PATH_GAP)
-  const reserve = Math.max(90, fan + 80)
-  return Math.round(Math.max(h * 0.42, Math.min(h * 0.76, h - reserve)))
-}
-
-/** Horizontal length of the split/rejoin curves for a branch of the given screen width. */
-export function branchCurveW(forkX: number, joinX: number): number {
-  return clamp((joinX - forkX) * 0.3, 6, 58)
+  return Math.round(Math.max(h * 0.42, Math.min(h * 0.76, h - 90)))
 }
 
 /**
@@ -208,10 +175,6 @@ function occupy(rows: Map<number, Interval[]>, row: number, a: number, b: number
  * Density-driven layout: items compete for rows by significance; those that
  * lose collapse into clusters. `sticky` is the set of item ids visible on the
  * previous pass — they get a priority bonus (hysteresis, no flicker).
- *
- * Branch paths are laid out with the same rules as the spine: each path is a
- * line of its own with one row of items above it, and whatever doesn't fit
- * clusters on the path.
  */
 export function layoutTimeline(
   p: Project,
@@ -244,29 +207,8 @@ export function layoutTimeline(
   const clusters: Cluster[] = []
   let totalCount = 0
 
-  // Branch geometry first: it decides where path items live and which spine
-  // rows they block.
-  const branches: BranchLayout[] = []
-  const pathHome = new Map<string, { visible: boolean; y: number; lo: number; hi: number }>()
-  for (const br of p.branches) {
-    const forkX = toX(br.forkPos)
-    const joinX = toX(br.joinPos)
-    const curveW = branchCurveW(forkX, joinX)
-    const pathYs = branchPathYs(br.paths.length)
-    const visible = !(joinX < -margin || forkX > width + margin)
-    const mid = (forkX + joinX) / 2
-    br.paths.forEach((path, i) => {
-      pathHome.set(path.id, {
-        visible, y: pathYs[i],
-        lo: Math.min(forkX + curveW + 6, mid),
-        hi: Math.max(joinX - curveW - 6, mid),
-      })
-    })
-    if (visible) branches.push({ branch: br, forkX, joinX, curveW, pathYs })
-  }
-
-  /** Visibility / layer / filter sieve shared by the spine and the paths. */
-  const consider = (it: Item, x: number, xEnd: number, y: number): Cand | null => {
+  /** Visibility / layer / filter sieve. */
+  const consider = (it: Item, x: number, xEnd: number): Cand | null => {
     if (xEnd < -margin || x > width + margin) return null
     const layerId = it.layerId ?? typeOf(p, it)?.defaultLayerId ?? null
     if (layerId && eyeHidden.has(layerId)) return null
@@ -277,7 +219,7 @@ export function layoutTimeline(
     // Zoomed out past the layer's minZoom → the item collapses to a dot on the
     // line. Selected (forced) items stay full-size so they remain editable.
     if (layer && (layer.minZoom ?? 0) > 0 && cam.s < layer.minZoom && !forced.has(it.id)) {
-      dots.push({ item: it, x, y, color: typeOf(p, it)?.color ?? '#888', ghost })
+      dots.push({ item: it, x, color: typeOf(p, it)?.color ?? '#888', ghost })
       return null
     }
     return {
@@ -288,18 +230,8 @@ export function layoutTimeline(
   }
 
   const spineCands: Cand[] = []
-  const pathCands = new Map<string, Cand[]>()
   for (const it of p.items) {
-    const home = it.pathId ? pathHome.get(it.pathId) : undefined
-    if (home) {
-      if (!home.visible) continue
-      const x = clamp(toX(it.pos), home.lo, home.hi)
-      const c = consider(it, x, x + Math.max(it.duration * cam.s, 0), home.y)
-      if (c) (pathCands.get(it.pathId!) ?? pathCands.set(it.pathId!, []).get(it.pathId!)!).push(c)
-      continue
-    }
-    // Spine item (a dangling pathId falls back to the spine rather than vanishing).
-    const c = consider(it, toX(it.pos), toX(it.pos + it.duration), 0)
+    const c = consider(it, toX(it.pos), toX(it.pos + it.duration))
     if (c) spineCands.push(c)
   }
 
@@ -311,23 +243,20 @@ export function layoutTimeline(
   }
 
   /**
-   * Greedy row packing along one line at `y`. Items that fit nowhere (and
-   * aren't ghosts) come back as overflow for clustering.
+   * Greedy row packing along the spine. Items that fit nowhere (and aren't
+   * ghosts) come back as overflow for clustering.
    */
   const packLine = (
     cands: Cand[],
     rows: Map<number, Interval[]>,
     candidateRows: (cap: number) => number[],
     xOf: (it: Item) => number,
-    y: number,
-    nyOf: (row: number) => number,
-    spanCap: number,
   ): Item[] => {
     const overflow: Item[] = []
     cands.sort(byPriority)
     for (const { it, ghost, pin, size } of cands) {
       const x = xOf(it)
-      const spanW = it.duration > 0 ? Math.max(Math.min(it.duration * cam.s, spanCap - x), 10) : 0
+      const spanW = it.duration > 0 ? Math.max(it.duration * cam.s, 10) : 0
       const rowCap = pin ? maxRows + 4 : maxRows
       const iconW = ICON_W * size
       const tryPlace = (withLabel: boolean): PlacedItem | null => {
@@ -339,7 +268,7 @@ export function layoutTimeline(
         for (const r of candidateRows(rowCap)) {
           if (fits(rows, r, a, b)) {
             occupy(rows, r, a, b)
-            return { item: it, x, y, ny: nyOf(r), w, row: r, labelShown: withLabel && !!lbl.text, ghost, spanW, size }
+            return { item: it, x, ny: rowY(r), w, row: r, labelShown: withLabel && !!lbl.text, ghost, spanW, size }
           }
         }
         return null
@@ -351,59 +280,25 @@ export function layoutTimeline(
     return overflow
   }
 
-  /** Cluster overflow items by screen proximity along their line. */
-  const clusterize = (overflow: Item[], xOf: (it: Item) => number, y: number, prefix: string) => {
+  /** Cluster overflow items by screen proximity along the spine. */
+  const clusterize = (overflow: Item[], xOf: (it: Item) => number) => {
     overflow.sort((a, b) => a.pos - b.pos)
     let n = 0
     for (const it of overflow) {
       const x = xOf(it)
       const last = clusters[clusters.length - 1]
-      if (last && last.y === y && Math.abs(x - last.x) < 36) {
+      if (last && Math.abs(x - last.x) < 36) {
         last.count++
         last.ids.push(it.id)
         last.x = last.x + (x - last.x) / last.count
       } else {
-        clusters.push({ key: `${prefix}${n++}:${it.id}`, x, y, count: 1, color: typeOf(p, it)?.color ?? '#888', ids: [it.id] })
+        clusters.push({ key: `c${n++}:${it.id}`, x, count: 1, color: typeOf(p, it)?.color ?? '#888', ids: [it.id] })
       }
     }
     // Single-item "clusters" render as tiny dots; that's fine.
   }
 
-  // ---- branch paths: one row of items each, clamped onto the straight run.
-  // Paths that share a line (same y, across branches) pack together so their
-  // items never overlap even when zoomed far out.
-  const lineRows = new Map<number, Map<number, Interval[]>>()
-  const reach = new Map<string, number>() // branch id → right edge of its widest path item
-  for (const bl of branches) {
-    let right = bl.joinX
-    bl.branch.paths.forEach(path => {
-      const home = pathHome.get(path.id)!
-      const cands = pathCands.get(path.id) ?? []
-      if (!cands.length) return
-      const rows = lineRows.get(home.y) ?? lineRows.set(home.y, new Map()).get(home.y)!
-      const xOf = (it: Item) => clamp(toX(it.pos), home.lo, home.hi)
-      const before = placed.length
-      const over = packLine(cands, rows, () => [0], xOf, home.y, () => home.y - PATH_LIFT, home.hi + 14)
-      for (let i = before; i < placed.length; i++) right = Math.max(right, placed[i].x + placed[i].w)
-      clusterize(over, xOf, home.y, `p${path.id}:`)
-    })
-    reach.set(bl.branch.id, right)
-  }
-
-  // ---- spine
   const rows = new Map<number, Interval[]>()
-
-  // Branches split the spine: reserve every spine row their paths (and the
-  // items above them) pass through, so spine markers never overlap a branch.
-  for (const bl of branches) {
-    const top = Math.min(...bl.pathYs) - PATH_LIFT - 14 - 8
-    const bottom = Math.max(...bl.pathYs) + 16
-    const cap = maxRows + 4
-    for (let r = -cap; r <= cap; r++) {
-      const cy = rowY(r)
-      if (cy + 26 > top && cy - 22 < bottom) occupy(rows, r, bl.forkX - 30, reach.get(bl.branch.id)! + 30)
-    }
-  }
 
   // Candidate rows in preference order: 0, -1, 1, -2, … when both sides are
   // allowed (alternating keeps the timeline vertically balanced).
@@ -416,7 +311,7 @@ export function layoutTimeline(
     return out
   }
   const spineX = (it: Item) => toX(it.pos)
-  clusterize(packLine(spineCands, rows, candidateRows, spineX, 0, rowY, Infinity), spineX, 0, 'c')
+  clusterize(packLine(spineCands, rows, candidateRows, spineX), spineX)
 
   // Stable render order: keyed siblings must never reorder between layout
   // passes, or React moves their DOM nodes and every CSS enter-animation
@@ -426,37 +321,7 @@ export function layoutTimeline(
 
   const shownCount = placed.filter(pl => !pl.ghost).length + dots.filter(d => !d.ghost).length
 
-  return { placed, dots, clusters, branches, shownCount, totalCount }
-}
-
-/** Path geometry of one branch path: the spine splits at the fork, runs level
- *  at `y`, and rejoins at the join (or ends short of it for terminal paths). */
-export function branchPathD(bl: BranchLayout, y: number, terminal: boolean): string {
-  const { forkX, joinX, curveW: cw } = bl
-  const enter = `M ${forkX} 0 C ${forkX + cw * 0.55} 0, ${forkX + cw * 0.45} ${y}, ${forkX + cw} ${y}`
-  if (terminal) return `${enter} L ${terminalEndX(bl)} ${y}`
-  return `${enter} L ${joinX - cw} ${y} C ${joinX - cw * 0.55} ${y}, ${joinX - cw * 0.45} 0, ${joinX} 0`
-}
-
-/** Where a terminal (dead-end) path stops, short of the join. */
-export function terminalEndX(bl: BranchLayout): number {
-  return Math.max(bl.forkX + bl.curveW + 4, bl.joinX - bl.curveW - 18)
-}
-
-/** The spine as one path with a gap wherever a branch splits it. */
-export function spineD(width: number, branches: BranchLayout[]): string {
-  const gaps = branches
-    .map(bl => [bl.forkX, bl.joinX] as [number, number])
-    .sort((a, b) => a[0] - b[0])
-  let d = ''
-  let x = 0
-  for (const [a, b] of gaps) {
-    if (b <= x) continue
-    if (a > x) d += `M ${x} 0 L ${a} 0 `
-    x = Math.max(x, b)
-  }
-  if (x < width) d += `M ${x} 0 L ${width} 0`
-  return d.trim()
+  return { placed, dots, clusters, shownCount, totalCount }
 }
 
 /** World extent of all content, padded. */
@@ -465,7 +330,6 @@ export function contentExtent(p: Project): { min: number; max: number } {
   let max = -Infinity
   for (const it of p.items) { min = Math.min(min, it.pos); max = Math.max(max, it.pos + it.duration) }
   for (const sc of p.sections) { min = Math.min(min, sc.start); max = Math.max(max, sc.end) }
-  for (const br of p.branches) { min = Math.min(min, br.forkPos); max = Math.max(max, br.joinPos) }
   if (!isFinite(min)) { min = 0; max = 100 }
   if (max - min < 10) max = min + 10
   const pad = (max - min) * 0.06

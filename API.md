@@ -99,9 +99,9 @@ Things a Unity tool typically needs from `doc`:
   project). **Match a scene by section name**: the section at the *Level*
   depth whose `name` equals the scene name.
 - `doc.items`: `{ id, typeId, pos, duration, title, description, tags, link,
-  fieldValues, pathId }`. An item belongs to a section when
+  fieldValues }`. An item belongs to a section when
   `section.start <= item.pos < section.end` (sections nest, so an item is in
-  one section per depth). `pathId` is non-null for items on a branch path.
+  one section per depth).
 - `doc.types`: `{ id, name, icon, color, folderId, fields: [{ fieldId, defaultValue }] }`.
   Resolve `item.typeId` here to know that an item is a *Checkpoint*.
 - `doc.typeFolders`: `{ id, name, parentId, fields: [{ fieldId, defaultValue }] }`.
@@ -252,7 +252,7 @@ Position when `pos` is omitted: right after the last item inside the section
 empty, and after the last item on the whole timeline when no section is given.
 Name lookups (`typeName`, `sectionName`) are case-insensitive and must be
 unique; when two sections share a name the error lists their ids so you can
-pass `sectionId` instead. New items go on the main spine (`pathId: null`).
+pass `sectionId` instead.
 
 ## Recipes for the Unity tool
 

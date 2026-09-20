@@ -1,7 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
-import { ListChecks, Shuffle } from 'lucide-react'
 import { iconByName } from '../model/icons'
-import { branchPathD, contentExtent, layoutTimeline, rowY, spineD, spineYFor, splitLabel, terminalEndX, typeOf } from '../model/layout'
+import { contentExtent, layoutTimeline, rowY, spineYFor, splitLabel, typeOf } from '../model/layout'
 import type { Camera, Project } from '../model/types'
 import { clamp, download, formatUnit, rulerStepFor, sectionHue, unitSuffix } from '../model/util'
 import { attachmentsFor, effectiveValue, formatValue } from '../model/fields'
@@ -135,46 +134,15 @@ function ExportScene(props: { proj: Project; cam: Camera; w: number; h: number }
           }
           return <g>{ticks}</g>
         })()}
-        <path d={spineD(w, layout.branches)} fill="none" stroke={C.line} strokeWidth={st.spine.width} opacity={st.spine.opacity} />
-        {layout.branches.map(bl => {
-          const { branch } = bl
-          const dash = branch.mode === 'any' ? '7 5' : undefined
-          const GateIcon = branch.mode === 'any' ? Shuffle : ListChecks
-          const labelX = bl.forkX + bl.curveW + 6
-          const roomy = bl.joinX - bl.forkX > 2 * bl.curveW + 40
-          return (
-            <g key={branch.id}>
-              {branch.paths.map((path, i) => {
-                const y = bl.pathYs[i]
-                return (
-                  <g key={path.id}>
-                    <path d={branchPathD(bl, y, path.terminal)} fill="none" stroke={C.line} strokeWidth={2} strokeDasharray={dash} />
-                    {path.terminal && <rect x={terminalEndX(bl) - 2} y={y - 8} width={4} height={16} rx={2} fill={C.muted} />}
-                    {roomy && branch.mode === 'all' && (
-                      <rect x={labelX} y={y + 5} width={9} height={9} rx={2} fill="none" stroke={C.muted} strokeWidth={1.4} />
-                    )}
-                    {roomy && path.label && (
-                      <text x={labelX + (branch.mode === 'all' ? 14 : 0)} y={y + 13} fontFamily={font} fontSize={10} fontStyle="italic" fill={C.muted}>
-                        {path.label}
-                      </text>
-                    )}
-                  </g>
-                )
-              })}
-              <circle cx={bl.forkX} r={12} fill={C.bg} stroke={C.line} strokeWidth={1.5} />
-              <GateIcon x={bl.forkX - 7} y={-7} width={14} height={14} color={C.text} strokeWidth={2} />
-              <circle cx={bl.joinX} r={5} fill={C.line} />
-            </g>
-          )
-        })}
+        <line x1={0} y1={0} x2={w} y2={0} stroke={C.line} strokeWidth={st.spine.width} opacity={st.spine.opacity} />
         {layout.dots.map(dot => (
-          <circle key={dot.item.id} cx={dot.x} cy={dot.y} r={3.5} fill={dot.color} opacity={dot.ghost ? 0.2 : 1} />
+          <circle key={dot.item.id} cx={dot.x} cy={0} r={3.5} fill={dot.color} opacity={dot.ghost ? 0.2 : 1} />
         ))}
         {layout.placed.map(pl => {
           const t = typeOf(proj, pl.item)
           const z = pl.size || 1
           return (
-            <line key={`stem-${pl.item.id}`} x1={pl.x} y1={pl.ny + (pl.ny < pl.y ? 14 * z : -14 * z)} x2={pl.x} y2={pl.y}
+            <line key={`stem-${pl.item.id}`} x1={pl.x} y1={pl.ny + (pl.ny < 0 ? 14 * z : -14 * z)} x2={pl.x} y2={0}
               stroke={t?.color} strokeWidth={1} opacity={pl.ghost ? 0.1 : 0.35} />
           )
         })}
@@ -202,7 +170,7 @@ function ExportScene(props: { proj: Project; cam: Camera; w: number; h: number }
           )
         })}
         {layout.clusters.map(cl => (
-          <g key={cl.key} transform={`translate(${cl.x}, ${cl.y})`}>
+          <g key={cl.key} transform={`translate(${cl.x}, 0)`}>
             {cl.count === 1
               ? <circle r={4.5} fill={cl.color} />
               : (
@@ -233,20 +201,12 @@ export function exportCSV(proj: Project, scope: ExportScope) {
   }
   const sectionAt = (depth: number, pos: number) =>
     proj.sections.find(sc => sc.depth === depth && sc.start <= pos && sc.end >= pos)?.name ?? ''
-  const pathName = (pathId: string | null) => {
-    if (!pathId) return ''
-    for (const br of proj.branches) {
-      const i = br.paths.findIndex(pp => pp.id === pathId)
-      if (i >= 0) return br.paths[i].label || `Path ${i + 1}`
-    }
-    return ''
-  }
   const maxDepth = proj.sections.reduce((n, sc) => Math.max(n, sc.depth), -1)
   const levels = Array.from(
     { length: maxDepth + 1 },
     (_, d) => proj.hierarchyLevels[d]?.name ?? `Level ${d + 1}`,
   )
-  const header = [...levels, 'Title', 'Type', 'Position', 'Duration', 'Branch path', 'Tags', 'Description', 'Link', 'Created by', ...proj.fields.map(f => f.name)]
+  const header = [...levels, 'Title', 'Type', 'Position', 'Duration', 'Tags', 'Description', 'Link', 'Created by', ...proj.fields.map(f => f.name)]
   const rows = scope.items
     .map(it => {
       const atts = attachmentsFor(proj, { kind: 'item', entity: it })
@@ -256,7 +216,6 @@ export function exportCSV(proj: Project, scope: ExportScope) {
         typeOf(proj, it)?.name ?? '',
         it.pos,
         it.duration,
-        pathName(it.pathId),
         it.tags.join('; '),
         it.description,
         it.link,

@@ -53,7 +53,7 @@ export function exportScope(proj: Project, selection: string[]): ExportScope {
   return { sections, sectionIds: sections.length ? sections.map(s => s.id) : null, range, includes, items, filtered, describe }
 }
 
-/** A copy of the project holding only the items in scope (sections, branches and layers stay for context). */
+/** A copy of the project holding only the items in scope (sections and layers stay for context). */
 export function scopedProject(proj: Project, scope: ExportScope): Project {
   return { ...proj, items: scope.items }
 }

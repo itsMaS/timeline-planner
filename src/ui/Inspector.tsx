@@ -5,7 +5,7 @@ import { iconByName } from '../model/icons'
 import { typeOf } from '../model/layout'
 import { processorResults, type ProcessorResult } from '../model/processors'
 import { useActiveProject, useCanEdit, useStore } from '../model/store'
-import type { Branch, Item, Section } from '../model/types'
+import type { Item, Section } from '../model/types'
 import { formatUnit, uid, unitSuffix } from '../model/util'
 import { requestDelete } from './deletion'
 import { entityLook, FieldRow, jumpTo, ReadFieldValue, ReferencedBy } from './FieldInputs'
@@ -22,10 +22,8 @@ export function Inspector() {
   const ui = useStore(s => s.ui)
   const canEdit = useCanEdit()
   const sel = ui.selection
-  const branchId = sel.length === 1 && sel[0].startsWith('B:') ? sel[0].slice(2) : null
   const sectionId = sel.length === 1 && sel[0].startsWith('S:') ? sel[0].slice(2) : null
   const itemIds = sel.filter(s => !s.includes(':'))
-  const branch = branchId ? proj.branches.find(b => b.id === branchId) : null
   const section = sectionId ? proj.sections.find(s => s.id === sectionId) : null
   // A proposed item that does not exist yet has no panel of its own: the card stands alone.
   const proposedItem = usePendingChange('items', itemIds.length === 1 ? itemIds[0] : null)
@@ -34,7 +32,6 @@ export function Inspector() {
     // View mode: everything is readable, nothing is editable.
     return (
       <aside className="inspector readonly" style={{ width: ui.inspectorW, minWidth: ui.inspectorW }}>
-        {branch && <ReadBranchPanel branch={branch} />}
         {section && <ReadSectionPanel section={section} />}
         {itemIds.length === 1 && <ReadItemPanel id={itemIds[0]} />}
         {itemIds.length > 1 && <ReadBulkPanel ids={itemIds} />}
@@ -43,7 +40,6 @@ export function Inspector() {
   }
   return (
     <aside className="inspector" style={{ width: ui.inspectorW, minWidth: ui.inspectorW }}>
-      {branch && <BranchPanel branch={branch} />}
       {section && <SectionPanel section={section} />}
       {itemIds.length === 1 && proposedItem?.change.kind === 'add' && (
         <>
@@ -134,9 +130,6 @@ function ReadItemPanel({ id }: { id: string }) {
   const type = typeOf(proj, item)
   const Icon = iconByName(type?.icon ?? 'Circle')
   const layer = proj.layers.find(l => l.id === (item.layerId ?? type?.defaultLayerId))
-  const path = item.pathId
-    ? proj.branches.flatMap(b => b.paths.map((p, i) => ({ p, b, i }))).find(x => x.p.id === item.pathId)
-    : null
   const suffix = unitSuffix(proj.settings.unit.preset, proj.settings.unit.custom)
   const fmt = (v: number) => formatUnit(v, Math.max(Math.abs(v), 0.01), suffix, proj.settings.unit.preset)
   const owner: Owner = { kind: 'item', entity: item }
@@ -157,12 +150,7 @@ function ReadItemPanel({ id }: { id: string }) {
           <ReadField label="Position">{fmt(item.pos)}</ReadField>
           <ReadField label="Span">{item.duration > 0 ? `${fmt(item.duration)} → ${fmt(item.pos + item.duration)}` : 'point'}</ReadField>
         </div>
-        <div className="row gap">
-          <ReadField label="Layer">{layer?.name ?? <span className="muted">none</span>}</ReadField>
-          {path && (
-            <ReadField label="Branch path">{path.p.label || `${path.b.mode.toUpperCase()} branch · path ${path.i + 1}`}</ReadField>
-          )}
-        </div>
+        <ReadField label="Layer">{layer?.name ?? <span className="muted">none</span>}</ReadField>
         {item.tags.length > 0 && (
           <div className="field">
             <label>Tags</label>
@@ -213,49 +201,6 @@ function ReadBulkPanel({ ids }: { ids: string[] }) {
         <div className="sb-hint">click one on the timeline to read its details</div>
         <div className="insp-items">
           {items.map(it => <ItemJumpRow key={it.id} item={it} />)}
-        </div>
-      </div>
-    </>
-  )
-}
-
-function ReadBranchPanel({ branch }: { branch: Branch }) {
-  const proj = useActiveProject()
-  const suffix = unitSuffix(proj.settings.unit.preset, proj.settings.unit.custom)
-  const fmt = (v: number) => formatUnit(v, Math.max(Math.abs(v), 0.01), suffix, proj.settings.unit.preset)
-  return (
-    <>
-      <Head title="Branch" />
-      <div className="insp-body">
-        <ReadField label="Mode">
-          {branch.mode === 'any' ? 'ANY — pick one path' : 'ALL — every path, any order'}
-        </ReadField>
-        <div className="row gap">
-          <ReadField label="Forks at">{fmt(branch.forkPos)}</ReadField>
-          <ReadField label="Joins at">{fmt(branch.joinPos)}</ReadField>
-        </div>
-        <div className="field">
-          <label>Paths</label>
-          {branch.paths.map((path, i) => {
-            const inside = proj.items
-              .filter(it => it.pathId === path.id)
-              .sort((a, b) => a.pos - b.pos || a.title.localeCompare(b.title))
-            return (
-              <div key={path.id} className="read-path">
-                <div className="read-path-head">
-                  <span>{path.label || <span className="muted">Path {i + 1}</span>}</span>
-                  {path.terminal && <span className="tag">dead end</span>}
-                  <span className="grow" />
-                  <span className="count">{inside.length}</span>
-                </div>
-                {inside.length > 0 && (
-                  <div className="insp-items">
-                    {inside.map(it => <ItemJumpRow key={it.id} item={it} />)}
-                  </div>
-                )}
-              </div>
-            )
-          })}
         </div>
       </div>
     </>
@@ -319,13 +264,6 @@ function ItemPanel({ id }: { id: string }) {
   const showToast = useStore(s => s.showToast)
   const [preview, setPreview] = useState(false)
   const item = proj.items.find(i => i.id === id)
-  const paths = useMemo(
-    () => proj.branches.flatMap(b => b.paths.map((p, i) => ({
-      id: p.id,
-      name: p.label || `${b.mode.toUpperCase()} branch · path ${i + 1}`,
-    }))),
-    [proj.branches],
-  )
   if (!item) return null
   const type = typeOf(proj, item)
   const edit = (recipe: (it: Item) => void) =>
@@ -398,19 +336,6 @@ function ItemPanel({ id }: { id: string }) {
             />
           </div>
         </div>
-        {paths.length > 0 && (
-          <div className="field">
-            <label>On branch path</label>
-            <select
-              className="input"
-              value={item.pathId ?? ''}
-              onChange={e => edit(it => { it.pathId = e.target.value || null })}
-            >
-              <option value="">Main line</option>
-              {paths.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </select>
-          </div>
-        )}
         <div className="field">
           <label>Tags <span className="muted">(comma separated)</span></label>
           <input
@@ -537,92 +462,6 @@ function BulkPanel({ ids }: { ids: string[] }) {
             ;(e.target as HTMLInputElement).value = ''
           }} />
         </div>
-      </div>
-    </>
-  )
-}
-
-// ------------------------------------------------------------------ branch
-
-function BranchPanel({ branch }: { branch: Branch }) {
-  const proj = useActiveProject()
-  const mutate = useStore(s => s.mutate)
-  const select = useStore(s => s.select)
-  const showToast = useStore(s => s.showToast)
-  const edit = (recipe: (b: Branch) => void) =>
-    mutate(p => { const b = p.branches.find(x => x.id === branch.id); if (b) recipe(b) })
-  return (
-    <>
-      <Head title="Branch">
-        <button
-          className="ghost-btn danger" title="Delete branch"
-          onClick={() => requestDelete({ branchIds: [branch.id] }, () => {
-            select([])
-            showToast('Branch deleted — its items moved to the main line.', true)
-          })}
-        ><Trash2 width={14} height={14} /></button>
-      </Head>
-      <div className="insp-body">
-        <div className="field">
-          <label>Mode</label>
-          <div className="seg">
-            <button className={branch.mode === 'any' ? 'on' : ''} onClick={() => edit(b => { b.mode = 'any' })}>
-              ANY — pick one path
-            </button>
-            <button className={branch.mode === 'all' ? 'on' : ''} onClick={() => edit(b => { b.mode = 'all' })}>
-              ALL — every path, any order
-            </button>
-          </div>
-        </div>
-        <div className="row gap">
-          <div className="field grow">
-            <label>Fork at</label>
-            <input className="input" type="number" step="0.5" value={round2(branch.forkPos)}
-              onChange={e => edit(b => { b.forkPos = Math.min(Number(e.target.value), b.joinPos - 0.5) })} />
-          </div>
-          <div className="field grow">
-            <label>Join at</label>
-            <input className="input" type="number" step="0.5" value={round2(branch.joinPos)}
-              onChange={e => edit(b => { b.joinPos = Math.max(Number(e.target.value), b.forkPos + 0.5) })} />
-          </div>
-        </div>
-        <div className="field">
-          <label>Paths</label>
-          {branch.paths.map((path, i) => (
-            <div key={path.id} className="row gap path-row">
-              <input
-                className="input grow" placeholder={`Path ${i + 1} label`}
-                value={path.label}
-                onChange={e => edit(b => { const pp = b.paths.find(x => x.id === path.id); if (pp) pp.label = e.target.value })}
-              />
-              <button
-                className={`ghost-btn ${path.terminal ? 'on' : ''}`} title="Dead end (never rejoins)"
-                onClick={() => edit(b => { const pp = b.paths.find(x => x.id === path.id); if (pp) pp.terminal = !pp.terminal })}
-              >⏹</button>
-              <button className="ghost-btn" disabled={i === 0} title="Move up"
-                onClick={() => edit(b => { [b.paths[i - 1], b.paths[i]] = [b.paths[i], b.paths[i - 1]] })}
-              ><ArrowUp width={13} height={13} /></button>
-              <button className="ghost-btn" disabled={i === branch.paths.length - 1} title="Move down"
-                onClick={() => edit(b => { [b.paths[i + 1], b.paths[i]] = [b.paths[i], b.paths[i + 1]] })}
-              ><ArrowDown width={13} height={13} /></button>
-              <button
-                className="ghost-btn danger" disabled={branch.paths.length <= 2} title="Remove path"
-                onClick={() => mutate(p => {
-                  const b = p.branches.find(x => x.id === branch.id)
-                  if (!b) return
-                  b.paths = b.paths.filter(x => x.id !== path.id)
-                  for (const it of p.items) if (it.pathId === path.id) it.pathId = null
-                })}
-              ><Trash2 width={13} height={13} /></button>
-            </div>
-          ))}
-          {branch.paths.length < 4 && (
-            <button className="ghost-btn add" onClick={() => edit(b => b.paths.push({ id: uid(), label: '', terminal: false }))}>
-              + Add path
-            </button>
-          )}
-        </div>
-        <div className="sb-hint">drag a type from the sidebar onto a path line to place items on it</div>
       </div>
     </>
   )

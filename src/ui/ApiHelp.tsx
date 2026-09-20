@@ -51,7 +51,7 @@ const FUNCTIONS: Fn[] = [
   },
   {
     name: 'api_read', kind: 'read',
-    what: 'The whole timeline, exactly like Export → Project JSON: sections, items, types, fields, layers, branches.',
+    what: 'The whole timeline, exactly like Export → Project JSON: sections, items, types, fields, layers.',
     params: [],
     returns: '{ id, name, version, updatedAt, doc }',
   },
@@ -202,7 +202,7 @@ await Rpc("api_set_field", new {
                 <h4>It cannot</h4>
                 <ul>
                   <li>Delete anything</li>
-                  <li>Move or resize items, sections or branches</li>
+                  <li>Move or resize items or sections</li>
                   <li>Change the schema: types, fields, hierarchy levels, layers</li>
                   <li>Create, rotate or revoke share links</li>
                   <li>Act without a valid API token</li>

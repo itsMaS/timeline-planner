@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import {
-  Download, Eye, EyeOff, FileText, GitBranch, Grid3x3, HelpCircle, Lightbulb, Link, Magnet, Maximize2, Minus, Moon, PanelLeft, Pencil,
+  Download, Eye, EyeOff, FileText, Grid3x3, HelpCircle, Lightbulb, Link, Magnet, Maximize2, Minus, Moon, PanelLeft, Pencil,
   Plus, Redo2, RotateCcw, Save, Search, Settings2, Share2, Sun, TableProperties, Type, Undo2, Upload, Volume2, VolumeX, X, ZoomIn,
 } from 'lucide-react'
 import { iconByName } from '../model/icons'
@@ -57,7 +57,6 @@ export function App() {
         else if (s.ui.editProcessorId) setUI({ editProcessorId: null })
         else if (s.ui.editLevelId) setUI({ editLevelId: null })
         else if (s.ui.editTypeId) setUI({ editTypeId: null })
-        else if (s.ui.tool !== 'select') setUI({ tool: 'select' })
         else s.select([])
         ;(t as HTMLElement).blur?.()
         return
@@ -107,7 +106,6 @@ export function App() {
             const cp = structuredClone(src)
             cp.id = uid()
             cp.pos = center + (src.pos - base)
-            cp.pathId = null
             cp.createdBy = creatorStamp()
             nids.push(cp.id)
             pr.items.push(cp)
@@ -132,7 +130,6 @@ export function App() {
         document.querySelector<HTMLInputElement>('.search-input')?.focus()
         return
       }
-      if (e.key.toLowerCase() === 'b') { setUI({ tool: s.ui.tool === 'branch' ? 'select' : 'branch' }); return }
       if (e.key.toLowerCase() === 'n') {
         // lastTypeId may belong to another tab (e.g. a freshly joined shared one).
         const type = p.types.find(x => x.id === s.ui.lastTypeId) ?? p.types[0]
@@ -141,7 +138,7 @@ export function App() {
         const center = p.camera.x + (window.innerWidth * 0.5) / p.camera.s
         const id = uid()
         s.mutate(pr => pr.items.push({
-          id, typeId, layerId: null, pathId: null, pos: center, duration: 0,
+          id, typeId, layerId: null, pos: center, duration: 0,
           title: type.name, description: '', tags: [], link: '', images: [], fieldValues: {},
           createdBy: creatorStamp(),
         }))
@@ -163,9 +160,8 @@ export function App() {
     const sel = s.ui.selection
     if (!sel.length) return
     const itemIds = sel.filter(x => !x.includes(':'))
-    const branchIds = sel.filter(x => x.startsWith('B:')).map(x => x.slice(2))
     const sectionIds = sel.filter(x => x.startsWith('S:')).map(x => x.slice(2))
-    requestDelete({ itemIds, branchIds, sectionIds }, () => {
+    requestDelete({ itemIds, sectionIds }, () => {
       s.select([])
       s.showToast('Deleted.', true)
     })
@@ -333,10 +329,6 @@ function Toolbar({ applyView }: { applyView: (id: string | null) => void }) {
             onClick={() => setUI({ showTitles: !ui.showTitles })}><Type width={15} height={15} /></button>
           <button className={`ghost-btn ${ui.showFields ? 'on' : ''}`} title="Show custom field values next to item titles"
             onClick={() => setUI({ showFields: !ui.showFields })}><TableProperties width={15} height={15} /></button>
-          <button className={`ghost-btn ${ui.tool === 'branch' ? 'on' : ''}`} title="Branch tool (B) — drag along the line"
-            onClick={() => setUI({ tool: ui.tool === 'branch' ? 'select' : 'branch' })}>
-            <GitBranch width={15} height={15} />
-          </button>
           <span className="sep" />
           <button className="ghost-btn" title="Zoom out (-)" onClick={() => nav.current?.zoomBy(0.74)}><Minus width={15} height={15} /></button>
           <button className="ghost-btn" title="Zoom in (+)" onClick={() => nav.current?.zoomBy(1.35)}><ZoomIn width={15} height={15} /></button>
@@ -685,7 +677,7 @@ function SettingsModal() {
 function Cheatsheet() {
   const setUI = useStore(s => s.setUI)
   const rows: [string, string][] = [
-    ['Drag type from sidebar', 'Create an item on the line (or on a branch path)'],
+    ['Drag type from sidebar', 'Create an item on the line'],
     ['Double-click the line', 'Quick-create an item of the last-used type'],
     ['N', 'New item at the view center'],
     ['Space', 'Search for a type and add an item under the cursor'],
@@ -698,7 +690,6 @@ function Cheatsheet() {
     ['Drag empty space', 'Marquee multi-select (items and section labels)'],
     ['Shift+click item', 'Add to selection'],
     ['Right-click', 'Context menu (items or empty space)'],
-    ['B, then drag on the line', 'Create a branch (fork → join)'],
     ['Drag dot on the line', 'Move every item stacked at that position'],
     ['Drag section header bar', 'Move the section (Alt = duplicate it)'],
     ['Right-click a section', 'Split it at that spot'],

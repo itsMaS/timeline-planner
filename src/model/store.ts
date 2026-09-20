@@ -4,7 +4,7 @@ import { newFieldDef, normalizeFieldDef, repairSchema } from './fields'
 import { refreshSectionDepths } from './layout'
 import { applyPatch, diffProject, type Patch } from './patch'
 import { applyChanges, diffToChanges, type Proposal, type ProposalChange } from './proposal'
-import type { Camera, FieldAttachment, FieldDef, FieldValue, Filters, HierarchyLevel, Id, Project, TimelineSettings } from './types'
+import type { Camera, FieldAttachment, FieldDef, FieldValue, Filters, HierarchyLevel, Id, Item, Project, TimelineSettings } from './types'
 import { isMobile, uid } from './util'
 
 export const emptyFilters = (): Filters => ({ offTypes: [], offLayers: [], tags: [], text: '' })
@@ -37,7 +37,6 @@ export function normalizeProject(p: Project): Project {
   p.types ??= []
   p.layers ??= []
   p.sections ??= []
-  p.branches ??= []
   p.items ??= []
   p.views ??= []
   p.camera ??= { x: -8, s: 14 }
@@ -56,6 +55,10 @@ export function normalizeProject(p: Project): Project {
   }
   for (const t of p.types) t.folderId ??= null
   migrateLegacyFields(p)
+  // Branching paths were removed: drop the leftovers from older saves so any
+  // item that lived on a path comes back onto the main line.
+  delete (p as Project & { branches?: unknown }).branches
+  for (const it of p.items) delete (it as Item & { pathId?: unknown }).pathId
   repairFolders(p)
   refreshSectionDepths(p)
   repairSchema(p)
@@ -136,7 +139,6 @@ export function blankProject(name: string): Project {
     typeFolders: [],
     layers,
     sections: [],
-    branches: [],
     items: [],
     views: [],
     camera: { x: -8, s: 14 },
@@ -146,7 +148,6 @@ export function blankProject(name: string): Project {
   }
 }
 
-export type Tool = 'select' | 'branch'
 export type AnimLevel = 'off' | 'subtle' | 'full'
 
 export interface Toast {
@@ -216,7 +217,7 @@ export const syncHooks: {
 } = { onLocalPatch: null, onHistory: null, onClose: null }
 
 interface UIState {
-  selection: string[] // item ids, or 'B:<id>' branch, 'S:<id>' section
+  selection: string[] // item ids, or 'S:<id>' section
   ghostHidden: boolean
   density: number // 0..1
   theme: 'dark' | 'light'
@@ -228,7 +229,6 @@ interface UIState {
   magnet: boolean
   /** Dragging one item moves every other item by the same amount. */
   ripple: boolean
-  tool: Tool
   overlay: 'templates' | 'cheatsheet' | 'settings' | 'share' | 'apihelp' | 'suggest' | null
   editTypeId: Id | null
   /** Field / processor / hierarchy-level editor modals. */
@@ -445,7 +445,6 @@ export const useStore = create<Store>((set, get) => ({
     snap: init.prefs.snap ?? false,
     magnet: init.prefs.magnet ?? true,
     ripple: init.prefs.ripple ?? false,
-    tool: 'select',
     overlay: init.fresh ? 'templates' : null,
     editTypeId: null,
     editFieldId: null,
@@ -772,7 +771,7 @@ export const useStore = create<Store>((set, get) => ({
       activeId: p.id,
       shares: { ...s.shares, [p.id]: info },
       viewer: true,
-      ui: { ...s.ui, readOnly: true, overlay: null, selection: [], tool: 'select' },
+      ui: { ...s.ui, readOnly: true, overlay: null, selection: [] },
     }))
   },
 }))

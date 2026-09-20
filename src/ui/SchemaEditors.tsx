@@ -593,7 +593,7 @@ export function ProcessorEditor() {
             )
           })}
         </div>
-        <div className="sb-hint">items on branch paths count like any other · nested sections count when their level is included</div>
+        <div className="sb-hint">nested sections count when their level is included</div>
       </div>
     </Modal>
   )

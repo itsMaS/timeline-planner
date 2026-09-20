@@ -6,7 +6,7 @@ import { uid } from './util'
 function item(p: Project, typeName: string, pos: number, title: string, extra?: Partial<Item>): Item {
   const type = p.types.find(t => t.name === typeName) ?? p.types[0]
   return {
-    id: uid(), typeId: type.id, layerId: null, pathId: null,
+    id: uid(), typeId: type.id, layerId: null,
     pos, duration: 0, title, description: '', tags: [], link: '', images: [], fieldValues: {},
     ...extra,
   }
@@ -82,25 +82,14 @@ export function linearGameTemplate(): Project {
     item(p, 'Cutscene', 96, 'Ending cinematic'),
     item(p, 'Story beat', 99, 'Credits & stinger'),
   ]
-  // ANY branch: two routes through the market
-  const stealthPath = { id: uid(), label: 'Stealth route', terminal: false }
-  const loudPath = { id: uid(), label: 'Loud route', terminal: false }
-  p.branches.push({ id: uid(), mode: 'any', forkPos: 27, joinPos: 36, paths: [stealthPath, loudPath] })
   p.items.push(
-    item(p, 'Encounter', 29, 'Rooftop patrols', { pathId: stealthPath.id }),
-    item(p, 'Ambient detail', 32, 'Laundry lines', { pathId: stealthPath.id }),
-    item(p, 'Encounter', 30, 'Front-door fight', { pathId: loudPath.id }),
-    item(p, 'Death opportunity', 33, 'Overwhelmed by guards', { pathId: loudPath.id }),
-  )
-  // ALL branch: three trials in any order
-  const t1 = { id: uid(), label: 'Trial of Echoes', terminal: false }
-  const t2 = { id: uid(), label: 'Trial of Ash', terminal: false }
-  const t3 = { id: uid(), label: 'Trial of Glass', terminal: false }
-  p.branches.push({ id: uid(), mode: 'all', forkPos: 53, joinPos: 61, paths: [t1, t2, t3] })
-  p.items.push(
-    item(p, 'Encounter', 55, 'Echo maze', { pathId: t1.id }),
-    item(p, 'Encounter', 56, 'Ash golem', { pathId: t2.id }),
-    item(p, 'Death opportunity', 57, 'Glass bridge', { pathId: t3.id, description: 'Shattering floor tiles.' }),
+    item(p, 'Encounter', 29, 'Rooftop patrols'),
+    item(p, 'Encounter', 31, 'Front-door fight'),
+    item(p, 'Ambient detail', 33, 'Laundry lines'),
+    item(p, 'Death opportunity', 35, 'Overwhelmed by guards'),
+    item(p, 'Encounter', 54, 'Echo maze'),
+    item(p, 'Encounter', 56, 'Ash golem'),
+    item(p, 'Death opportunity', 58, 'Glass bridge', { description: 'Shattering floor tiles.' }),
   )
   const storyType = p.types[0]
   p.views = [
@@ -167,7 +156,7 @@ export function projectPlanTemplate(): Project {
 
 export const TEMPLATES: { key: string; name: string; blurb: string; make: () => Project }[] = [
   { key: 'empty', name: 'Empty', blurb: 'A blank line and one starter type. Bring your own structure.', make: () => blankProject('Untitled') },
-  { key: 'game', name: 'Linear game', blurb: 'Chapters, story beats, death opportunities, branches — a seeded 4-hour game plan.', make: linearGameTemplate },
+  { key: 'game', name: 'Linear game', blurb: 'Chapters, story beats, encounters, death opportunities — a seeded 4-hour game plan.', make: linearGameTemplate },
   { key: 'film', name: 'Film script', blurb: 'Acts, sequences and scenes with classic plot-point types.', make: filmTemplate },
   { key: 'plan', name: 'Project plan', blurb: 'Phases, milestones, tasks and risks over time.', make: projectPlanTemplate },
 ]

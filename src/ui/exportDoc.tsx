@@ -97,14 +97,6 @@ function DocBody({ proj, roots, loose }: { proj: Project; roots: SectionNode[]; 
   const st = proj.settings
   const suffix = unitSuffix(st.unit.preset, st.unit.custom)
   const fmt = (v: number) => formatUnit(v, 0.05, suffix, st.unit.preset)
-  const pathLabel = (pathId: string | null) => {
-    if (!pathId) return null
-    for (const br of proj.branches) {
-      const i = br.paths.findIndex(pp => pp.id === pathId)
-      if (i >= 0) return br.paths[i].label || `Path ${i + 1}`
-    }
-    return null
-  }
 
   const renderItem = (it: Item, level: number) => {
     const t = typeOf(proj, it)
@@ -113,12 +105,10 @@ function DocBody({ proj, roots, loose }: { proj: Project; roots: SectionNode[]; 
     const fields = attachmentsFor(proj, { kind: 'item', entity: it })
       .map(({ att, field }) => ({ field, text: formatValue(proj, field, effectiveValue(field, att, it.fieldValues[field.id])) }))
       .filter(f => f.text.trim())
-    const path = pathLabel(it.pathId)
     const meta: string[] = [
       it.duration > 0 ? `${fmt(it.pos)} → ${fmt(it.pos + it.duration)} (${fmt(it.duration)})` : fmt(it.pos),
     ]
     if (layer) meta.push(`Layer: ${layer.name}`)
-    if (path) meta.push(`Branch path: ${path}`)
     if (it.tags.length) meta.push(`Tags: ${it.tags.join(', ')}`)
     if (it.createdBy?.name) meta.push(`Created by: ${it.createdBy.name}`)
     return (

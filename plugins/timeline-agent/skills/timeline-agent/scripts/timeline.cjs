@@ -3617,7 +3617,7 @@ var import_node_path = require("node:path");
 var import_node_url = require("node:url");
 
 // src/model/patch.ts
-var SYNC_COLLECTIONS = ["hierarchyLevels", "fields", "processors", "types", "typeFolders", "layers", "sections", "branches", "items", "views"];
+var SYNC_COLLECTIONS = ["hierarchyLevels", "fields", "processors", "types", "typeFolders", "layers", "sections", "items", "views"];
 var SYNC_SCALARS = ["name", "settings"];
 
 // src/model/util.ts
@@ -3745,6 +3745,21 @@ function diffToChanges(base, edited, notes = {}) {
   return out;
 }
 
+// src/model/folders.ts
+function folderChain(p, folderId) {
+  const out = [];
+  let cur = folderId;
+  const seen = /* @__PURE__ */ new Set();
+  while (cur && !seen.has(cur)) {
+    seen.add(cur);
+    const f = p.typeFolders.find((x) => x.id === cur);
+    if (!f) break;
+    out.unshift(f);
+    cur = f.parentId ?? null;
+  }
+  return out;
+}
+
 // src/model/fields.ts
 var fieldById = (p, id) => id ? p.fields.find((f) => f.id === id) : void 0;
 var levelOf = (p, s) => p.hierarchyLevels[s.depth];
@@ -3755,10 +3770,29 @@ function ownerOf(p, id) {
   if (sc) return { kind: "section", entity: sc };
   return null;
 }
-function attachmentsFor(p, owner) {
-  const list2 = owner.kind === "item" ? p.types.find((t) => t.id === owner.entity.typeId)?.fields ?? [] : levelOf(p, owner.entity)?.fields ?? [];
+function typeAttachments(p, type) {
+  if (!type) return [];
   const out = [];
-  for (const att of list2) {
+  const index = /* @__PURE__ */ new Map();
+  const add = (list2, from) => {
+    for (const att of list2 ?? []) {
+      const field = fieldById(p, att.fieldId);
+      if (!field) continue;
+      const i = index.get(att.fieldId);
+      if (i === void 0) {
+        index.set(att.fieldId, out.length);
+        out.push({ att, field, from });
+      } else out[i] = { att, field, from };
+    }
+  };
+  for (const f of folderChain(p, type.folderId ?? null)) add(f.fields, f);
+  add(type.fields, null);
+  return out;
+}
+function attachmentsFor(p, owner) {
+  if (owner.kind === "item") return typeAttachments(p, p.types.find((t) => t.id === owner.entity.typeId));
+  const out = [];
+  for (const att of levelOf(p, owner.entity)?.fields ?? []) {
     const field = fieldById(p, att.fieldId);
     if (field) out.push({ att, field });
   }
@@ -23082,25 +23116,15 @@ function DocBody({ proj, roots, loose }) {
   const st = proj.settings;
   const suffix = unitSuffix(st.unit.preset, st.unit.custom);
   const fmt = (v) => formatUnit(v, 0.05, suffix, st.unit.preset);
-  const pathLabel = (pathId) => {
-    if (!pathId) return null;
-    for (const br of proj.branches) {
-      const i = br.paths.findIndex((pp) => pp.id === pathId);
-      if (i >= 0) return br.paths[i].label || `Path ${i + 1}`;
-    }
-    return null;
-  };
   const renderItem = (it, level) => {
     const t = typeOf(proj, it);
     const Icon2 = iconByName(t?.icon ?? "Circle");
     const layer = proj.layers.find((l) => l.id === (it.layerId ?? t?.defaultLayerId));
     const fields = attachmentsFor(proj, { kind: "item", entity: it }).map(({ att, field }) => ({ field, text: formatValue(proj, field, effectiveValue(field, att, it.fieldValues[field.id])) })).filter((f) => f.text.trim());
-    const path = pathLabel(it.pathId);
     const meta = [
       it.duration > 0 ? `${fmt(it.pos)} \u2192 ${fmt(it.pos + it.duration)} (${fmt(it.duration)})` : fmt(it.pos)
     ];
     if (layer) meta.push(`Layer: ${layer.name}`);
-    if (path) meta.push(`Branch path: ${path}`);
     if (it.tags.length) meta.push(`Tags: ${it.tags.join(", ")}`);
     if (it.createdBy?.name) meta.push(`Created by: ${it.createdBy.name}`);
     return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("article", { className: "item", style: { "--c": t?.color ?? "#888" }, children: [

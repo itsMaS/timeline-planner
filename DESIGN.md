@@ -54,7 +54,7 @@ Decisions below are numbered Q1–Q100 and grouped by theme.
 - **Q78 — No status field.** This is a design map, not a task tracker; tags
   cover ad-hoc workflow needs.
 - **Q80 — No separate notes areas.** Item/section descriptions suffice.
-- **Q77 — No item→item dependency links in v1** (branches + spans cover
+- **Q77 — No item→item dependency links** (sections + spans cover
   structure).
 
 ## 3. Item types
@@ -108,33 +108,7 @@ Decisions below are numbered Q1–Q100 and grouped by theme.
 - **Q88 — Zoom state indicator: the section breadcrumb** (e.g.
   "Chapter 2 › Level 1") plus a subtle "showing N of M items". No zoom %.
 
-## 6. Branching
-
-- **Q25 — ANY vs ALL distinguished by gate glyph AND line style.**
-  Fork nodes carry a glyph (diverging arrows = ANY "pick one path";
-  layered/AND glyph = ALL "complete every path, any order") and the line
-  styles differ (ANY dashed, ALL solid) so the distinction reads at any zoom.
-- **Q90 — ALL branches additionally use a checkbox motif:** each required
-  path gets a small hollow-check glyph at its start; the join node reads
-  "n paths converge".
-- **Q26 — Unlimited nesting** (paths can fork again).
-- **Q27 — Paths normally reconnect, but may be marked terminal**
-  (dead-end/game-over) with an end-cap glyph.
-- **Q28 — Layout: automatic vertical spacing, drag-to-reorder paths.**
-- **Q29 — Paths are sequentially independent.** Each path has its own
-  internal sequence; X positions across parallel paths are not comparable.
-- **Q30 — Optional label per path** (e.g. "Stealth route"); blank allowed.
-- **Q31 — Full feature parity on paths:** points, spans, and section bands
-  can all live on a branch path.
-- **Q32 — Creation: drag off the line** (pull a path out of the spine, drag
-  its end back onto the line to rejoin).
-- **Q91 — Editing: drag fork/join endpoint handles** along the spine; path
-  items shift proportionally.
-- **Q92 — Up to 4 parallel paths per fork.**
-- **Q89 — Branch LOD: fork→join regions collapse into a single "braid" glyph
-  with a path-count badge at low zoom**, expanding as you zoom in.
-
-## 7. Filtering, views & search
+## 6. Filtering, views & search
 
 - **Q33 — Filter axes (all of): type, layer, tags, text search.**
 - **Q82 — Combination logic: AND across groups, OR within a group.**
@@ -153,7 +127,7 @@ Decisions below are numbered Q1–Q100 and grouped by theme.
 - **Q84 — Counts shown per type/layer row in the sidebar**, respecting
   active filters.
 
-## 8. Navigation & camera
+## 7. Navigation & camera
 
 - **Q37 — Wheel/pinch zoom toward cursor + drag-pan on empty space**;
   trackpad two-finger pan supported.
@@ -163,7 +137,7 @@ Decisions below are numbered Q1–Q100 and grouped by theme.
 - **Q61 — Jump camera: smooth ~400 ms fly**, long jumps arc (zoom out then
   in) to preserve orientation.
 
-## 9. Editing interactions
+## 8. Editing interactions
 
 - **Q45 — Item creation: drag a type chip from the sidebar onto the line.**
   (Primary creation path; the sidebar is the palette.)
@@ -175,14 +149,14 @@ Decisions below are numbered Q1–Q100 and grouped by theme.
   point's edge turns it into a span.
 - **Q49 — Full multi-select:** shift-click + rubber-band marquee; bulk move,
   re-type, re-layer, tag, delete.
-- **Q50 — Everything undoable** (Ctrl+Z/Y), including type/layer/branch/config
+- **Q50 — Everything undoable** (Ctrl+Z/Y), including type/layer/section/config
   edits, session-long history.
 - **Q51 — Delete: instant with particle poof + 10 s Undo toast.** No confirm
   dialogs.
 - **Q52 — Duplication (all of): Alt-drag clone, Ctrl+D duplicate-in-place,
   and copy/paste (Ctrl+C/V pastes at cursor).**
 
-## 10. Information display
+## 9. Information display
 
 - **Q53 — On-canvas card at comfortable zoom: icon + title.** Description
   lives in hover tooltip and inspector.
@@ -190,7 +164,7 @@ Decisions below are numbered Q1–Q100 and grouped by theme.
   preview); the item scales ~1.1× with a soft glow immediately.
 - **Q55 — Selection: animated glow ring in the item's type color.**
 
-## 11. Feel — animation, particles, sound
+## 10. Feel — animation, particles, sound
 
 - **Q57 — Juicy but fast:** springy overshoot everywhere, durations ≤ 250 ms;
   settings slider (off / subtle / full).
@@ -199,7 +173,7 @@ Decisions below are numbered Q1–Q100 and grouped by theme.
 - **Q58 — Particles: sparks + ripple.** Ripple ring on click/select; geometric
   vector shards (6–10, item-colored) on create/delete.
 - **Q59 — Particle triggers (all of): create, delete, select/click, and
-  drag-snap landings / branch connects.**
+  drag-snap landings.**
 - **Q64 — Idle motion: selection glow breathes gently; everything else
   static.**
 - **Q63 — `prefers-reduced-motion` respected automatically** (springs and
@@ -207,7 +181,7 @@ Decisions below are numbered Q1–Q100 and grouped by theme.
 - **Q60 — Sound: tiny synthesized ticks/pops for create/snap/delete,
   OFF by default**, toolbar mute toggle.
 
-## 12. Data, persistence & projects
+## 11. Data, persistence & projects
 
 - **Q65 — Local-first now, cloud-ready later.** Autosave to
   localStorage/IndexedDB + JSON file import/export. The store is architected
@@ -226,7 +200,7 @@ Decisions below are numbered Q1–Q100 and grouped by theme.
   Project plan — emphasizing the tool's generality. Templates pre-seed
   hierarchy level names, item types and sample items.
 
-## 13. Platform & technical
+## 12. Platform & technical
 
 - **Q69 — Stack: implementer's choice.** Chosen: **Vite + React +
   TypeScript**, SVG for items/structure (crisp, easy hit-testing) over a
@@ -245,15 +219,14 @@ Decisions below are numbered Q1–Q100 and grouped by theme.
 - **Q95 — Basic touch gestures** (pinch-zoom, drag-pan, tap-select); editing
   remains desktop-optimized.
 
-## 14. Scope
+## 13. Scope
 
 - **Q100 — Everything above is in scope for v1.** Suggested build order
   (all phases to be delivered):
   1. Core canvas: spine, items, zoom/pan, springs, particles, LOD engine.
   2. Organization: types/icons/colors, layers, density system, filters,
      views, solo, search.
-  3. Structure: section hierarchy bands, branching with ANY/ALL gates and
-     braid LOD.
+  3. Structure: section hierarchy bands.
   4. Data: schema, autosave + versions, tabs, import/export, PNG/SVG export,
      templates, keyboard layer, themes, sound.
 
@@ -266,12 +239,10 @@ Project
 ├─ meta { id, name, schemaVersion, hierarchyLevels: ["Chapter","Level","Section"] }
 ├─ types:    ItemType[]   { id, name, icon, color, defaultLayerId, customFields[] }
 ├─ layers:   Layer[]      { id, name, order, eye, pin, zoomOverride? }
-├─ sections: Section[]    { id, name, depth, start, end, parentId?, pathId? }
-├─ items:    Item[]       { id, typeId, layerId?, pathId?, pos, duration,
+├─ sections: Section[]    { id, name, depth, start, end, parentId? }
+├─ items:    Item[]       { id, typeId, layerId?, pos, duration,
 │                           title, descriptionMd, tags[], link?, images[],
 │                           customValues{}, vOffset? }
-├─ branches: Branch[]     { id, mode: "any"|"all", forkPos, joinPos?,
-│                           paths: Path[] { id, label?, order, terminal? } }
 └─ views:    View[]       { id, name, filters{ typeIds, layerIds, tags, text } }
 ```
 
