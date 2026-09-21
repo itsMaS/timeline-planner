@@ -7,6 +7,7 @@ import { useActiveProject, useStore } from '../model/store'
 import type { ItemType } from '../model/types'
 import { PALETTE } from '../model/util'
 import { IconPicker } from './IconPicker'
+import { Select } from './Select'
 import { FieldAttachList } from './SchemaEditors'
 
 export function TypeEditor() {
@@ -76,29 +77,26 @@ export function TypeEditor() {
 
         <div className="field">
           <label>Default layer</label>
-          <select
-            className="input"
+          <Select
             value={type.defaultLayerId ?? ''}
-            onChange={e => edit(t => { t.defaultLayerId = e.target.value || null })}
-          >
-            <option value="">(none)</option>
-            {proj.layers.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
-          </select>
+            options={[{ value: '', label: '(none)' }, ...proj.layers.map(l => ({ value: l.id, label: l.name }))]}
+            searchPlaceholder="Search layers…"
+            onChange={v => edit(t => { t.defaultLayerId = v || null })}
+          />
         </div>
 
         {proj.typeFolders.length > 0 && (
           <div className="field">
             <label>Folder</label>
-            <select
-              className="input"
+            <Select
               value={type.folderId ?? ''}
-              onChange={e => edit(t => { t.folderId = e.target.value || null })}
-            >
-              <option value="">(none)</option>
-              {folderTree(proj).map(({ folder, depth }) => (
-                <option key={folder.id} value={folder.id}>{'  '.repeat(depth)}{folder.name}</option>
-              ))}
-            </select>
+              options={[
+                { value: '', label: '(none)' },
+                ...folderTree(proj).map(({ folder, depth }) => ({ value: folder.id, label: folder.name, depth })),
+              ]}
+              searchPlaceholder="Search folders…"
+              onChange={v => edit(t => { t.folderId = v || null })}
+            />
           </div>
         )}
 

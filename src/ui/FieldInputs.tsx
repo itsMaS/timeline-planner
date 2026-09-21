@@ -10,6 +10,7 @@ import type { FieldAttachment, FieldDef, FieldValue, Id, Project } from '../mode
 import { formatUnit, unitSuffix } from '../model/util'
 import { Markdown } from './Markdown'
 import { nav } from './nav'
+import { Select } from './Select'
 
 /** Fly the camera to an item or section and select it. */
 export function jumpTo(p: Project, id: Id) {
@@ -101,15 +102,17 @@ export function FieldValueInput(props: {
     if (!field.selectMultiple) {
       return (
         <div className="fv-select">
-          <select
-            className={`input ${props.compact ? 'sm' : ''}`}
+          <Select
+            className={props.compact ? 'sm' : ''}
             value={chosen[0] ?? ''}
-            onChange={e => props.onChange(e.target.value ? [e.target.value] : null)}
-          >
-            <option value="">{placeholder ? `— ${placeholder} —` : '—'}</option>
-            {field.options.map(o => <option key={o} value={o}>{o}</option>)}
-            {stale.map(o => <option key={`stale-${o}`} value={o}>{o} (removed option)</option>)}
-          </select>
+            options={[
+              { value: '', label: placeholder ? `— ${placeholder} —` : '—' },
+              ...field.options.map(o => ({ value: o, label: o })),
+              ...stale.map(o => ({ value: o, label: o, hint: 'removed option' })),
+            ]}
+            searchPlaceholder="Search options…"
+            onChange={v => props.onChange(v ? [v] : null)}
+          />
           {field.options.length === 0 && <div className="sb-hint">no options yet — add some in the field settings</div>}
         </div>
       )

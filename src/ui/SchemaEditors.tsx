@@ -11,6 +11,7 @@ import { useActiveProject, useStore } from '../model/store'
 import type { FieldAttachment, FieldDef, FieldKind, HierarchyLevel, Id, ProcessorAttachment, ProcessorDef, ProcessorOp } from '../model/types'
 import { uid } from '../model/util'
 import { FieldValueInput } from './FieldInputs'
+import { Select } from './Select'
 
 // ------------------------------------------------------------------ small controls
 
@@ -534,25 +535,33 @@ export function ProcessorEditor() {
     >
       <div className="field">
         <label>Operation</label>
-        <select className="input" value={proc.op} onChange={e => edit(f => {
-          f.op = e.target.value as ProcessorOp
-          const need = PROCESSOR_OPS.find(o => o.op === f.op)!.needsField
-          if (need === 'none') f.fieldId = null
-          else if (need === 'number') {
-            const cur = proj.fields.find(x => x.id === f.fieldId)
-            if (!cur || !numeric(cur.kind, f.op)) f.fieldId = proj.fields.find(x => numeric(x.kind, f.op))?.id ?? null
-          } else if (!f.fieldId) f.fieldId = proj.fields[0]?.id ?? null
-        })}>
-          {PROCESSOR_OPS.map(o => <option key={o.op} value={o.op}>{o.label}</option>)}
-        </select>
+        <Select
+          value={proc.op}
+          options={PROCESSOR_OPS.map(o => ({ value: o.op, label: o.label }))}
+          searchPlaceholder="Search operations…"
+          onChange={v => edit(f => {
+            f.op = v as ProcessorOp
+            const need = PROCESSOR_OPS.find(o => o.op === f.op)!.needsField
+            if (need === 'none') f.fieldId = null
+            else if (need === 'number') {
+              const cur = proj.fields.find(x => x.id === f.fieldId)
+              if (!cur || !numeric(cur.kind, f.op)) f.fieldId = proj.fields.find(x => numeric(x.kind, f.op))?.id ?? null
+            } else if (!f.fieldId) f.fieldId = proj.fields[0]?.id ?? null
+          })}
+        />
       </div>
       {spec.needsField !== 'none' && (
         <div className="field">
           <label>Field</label>
-          <select className="input" value={proc.fieldId ?? ''} onChange={e => edit(f => { f.fieldId = e.target.value || null })}>
-            <option value="">— pick a field —</option>
-            {fieldChoices.map(f => <option key={f.id} value={f.id}>{f.name} ({kindLabel(f.kind).toLowerCase()})</option>)}
-          </select>
+          <Select
+            value={proc.fieldId ?? ''}
+            options={[
+              { value: '', label: '— pick a field —' },
+              ...fieldChoices.map(f => ({ value: f.id, label: f.name, hint: kindLabel(f.kind).toLowerCase() })),
+            ]}
+            searchPlaceholder="Search fields…"
+            onChange={v => edit(f => { f.fieldId = v || null })}
+          />
           {!fieldChoices.length && <div className="sb-hint">no {spec.needsField === 'number' ? 'number ' : ''}fields exist yet — create one in a type editor</div>}
         </div>
       )}

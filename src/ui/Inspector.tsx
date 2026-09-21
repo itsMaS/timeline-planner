@@ -5,17 +5,30 @@ import { iconByName } from '../model/icons'
 import { typeOf } from '../model/layout'
 import { processorResults, type ProcessorResult } from '../model/processors'
 import { useActiveProject, useCanEdit, useStore } from '../model/store'
-import type { Item, Section } from '../model/types'
+import type { Item, Project, Section } from '../model/types'
 import { formatUnit, uid, unitSuffix } from '../model/util'
 import { requestDelete } from './deletion'
 import { entityLook, FieldRow, jumpTo, ReadFieldValue, ReferencedBy } from './FieldInputs'
 import { exportDocPDF } from './exportDoc'
 import { Markdown } from './Markdown'
 import { nav } from './nav'
+import { Select, type SelectOption } from './Select'
 import { creatorStamp } from '../sync/client'
 import { uploadImage } from '../sync/share'
 import { HistorySection } from './History'
 import { ProposalChangeCard, usePendingChange } from './Proposals'
+
+/** Type options with the type's icon in its colour, for every "pick a type" dropdown. */
+function typeOptions(proj: Project): SelectOption[] {
+  return proj.types.map(t => {
+    const Icon = iconByName(t.icon)
+    return { value: t.id, label: t.name, icon: <Icon width={13} height={13} color={t.color} strokeWidth={2} /> }
+  })
+}
+
+function layerOptions(proj: Project): SelectOption[] {
+  return [{ value: '', label: 'Type default' }, ...proj.layers.map(l => ({ value: l.id, label: l.name }))]
+}
 
 export function Inspector() {
   const proj = useActiveProject()
@@ -304,20 +317,21 @@ function ItemPanel({ id }: { id: string }) {
         <div className="row gap">
           <div className="field grow">
             <label>Type</label>
-            <select className="input" value={item.typeId} onChange={e => edit(it => { it.typeId = e.target.value })}>
-              {proj.types.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-            </select>
+            <Select
+              value={item.typeId}
+              options={typeOptions(proj)}
+              searchPlaceholder="Search types…"
+              onChange={v => edit(it => { it.typeId = v })}
+            />
           </div>
           <div className="field grow">
             <label>Layer</label>
-            <select
-              className="input"
+            <Select
               value={item.layerId ?? ''}
-              onChange={e => edit(it => { it.layerId = e.target.value || null })}
-            >
-              <option value="">Type default</option>
-              {proj.layers.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
-            </select>
+              options={layerOptions(proj)}
+              searchPlaceholder="Search layers…"
+              onChange={v => edit(it => { it.layerId = v || null })}
+            />
           </div>
         </div>
         <div className="row gap">
@@ -435,22 +449,28 @@ function BulkPanel({ ids }: { ids: string[] }) {
       <div className="insp-body">
         <div className="field">
           <label>Set type</label>
-          <select className="input" value="" onChange={e => {
-            if (!e.target.value) return
-            mutate(p => { for (const it of p.items) if (ids.includes(it.id)) it.typeId = e.target.value })
-          }}>
-            <option value="">—</option>
-            {proj.types.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-          </select>
+          <Select
+            value={null}
+            placeholder="Choose a type…"
+            options={typeOptions(proj)}
+            searchPlaceholder="Search types…"
+            onChange={v => {
+              if (!v) return
+              mutate(p => { for (const it of p.items) if (ids.includes(it.id)) it.typeId = v })
+            }}
+          />
         </div>
         <div className="field">
           <label>Set layer</label>
-          <select className="input" value="" onChange={e => {
-            mutate(p => { for (const it of p.items) if (ids.includes(it.id)) it.layerId = e.target.value || null })
-          }}>
-            <option value="">Type default</option>
-            {proj.layers.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
-          </select>
+          <Select
+            value={null}
+            placeholder="Choose a layer…"
+            options={layerOptions(proj)}
+            searchPlaceholder="Search layers…"
+            onChange={v => {
+              mutate(p => { for (const it of p.items) if (ids.includes(it.id)) it.layerId = v || null })
+            }}
+          />
         </div>
         <div className="field">
           <label>Add tag</label>
@@ -511,9 +531,12 @@ function SectionPanel({ section }: { section: Section }) {
         </div>
         <div className="field">
           <label>Level</label>
-          <select className="input" value={section.depth} onChange={e => edit(s => { s.depth = Number(e.target.value) })}>
-            {proj.hierarchyLevels.map((l, d) => <option key={l.id} value={d}>{l.name}</option>)}
-          </select>
+          <Select
+            value={String(section.depth)}
+            options={proj.hierarchyLevels.map((l, d) => ({ value: String(d), label: l.name }))}
+            searchPlaceholder="Search levels…"
+            onChange={v => edit(s => { s.depth = Number(v) })}
+          />
           <div className="sb-hint">nesting is geometric — a section inside another sits one level deeper</div>
         </div>
         {attachmentsFor(proj, { kind: 'section', entity: section }).map(({ att, field }) => (

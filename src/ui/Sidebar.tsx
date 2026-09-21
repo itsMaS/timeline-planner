@@ -13,6 +13,7 @@ import type { ItemType, TypeFolder } from '../model/types'
 import { PALETTE, uid } from '../model/util'
 import { IconPicker } from './IconPicker'
 import { chipDrop, nav } from './nav'
+import { Select } from './Select'
 import { ProposalsPanel } from './Proposals'
 import { describeProcessor, FieldAttachList } from './SchemaEditors'
 import { TypeSearch } from './TypeSearch'
@@ -417,16 +418,15 @@ export function Sidebar() {
             </button>
             <label className="slider-row">
               <span>Inside</span>
-              <select
-                className="input"
+              <Select
                 value={f.parentId ?? ''}
-                onChange={e => editFolder(x => { x.parentId = e.target.value || null })}
-              >
-                <option value="">(top level)</option>
-                {moveTargets.map(({ folder, depth: d }) => (
-                  <option key={folder.id} value={folder.id}>{'  '.repeat(d)}{folder.name}</option>
-                ))}
-              </select>
+                options={[
+                  { value: '', label: '(top level)' },
+                  ...moveTargets.map(({ folder, depth: d }) => ({ value: folder.id, label: folder.name, depth: d })),
+                ]}
+                searchPlaceholder="Search folders…"
+                onChange={v => editFolder(x => { x.parentId = v || null })}
+              />
             </label>
             <div className="field folder-fields">
               <label>Fields <span className="muted">(every type inside inherits them)</span></label>

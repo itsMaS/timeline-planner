@@ -21,6 +21,7 @@ import { requestDelete } from './deletion'
 import { Inspector } from './Inspector'
 import { PanelDivider } from './Panels'
 import { FieldEditor, LevelEditor, ProcessorEditor } from './SchemaEditors'
+import { Select } from './Select'
 import { PresenceBar, ShareModal, TabSyncIcon } from './Share'
 import { ApiHelpModal } from './ApiHelp'
 import { Sidebar } from './Sidebar'
@@ -564,13 +565,12 @@ function SettingsModal() {
         <div className="field">
           <label>Time units</label>
           <div className="row gap">
-            <select
-              className="input"
+            <Select
               value={st.unit.preset}
-              onChange={e => patch(s => { s.unit.preset = e.target.value as UnitPreset })}
-            >
-              {UNIT_PRESETS.map(u => <option key={u.key} value={u.key}>{u.label}</option>)}
-            </select>
+              options={UNIT_PRESETS.map(u => ({ value: u.key, label: u.label }))}
+              searchPlaceholder="Search units…"
+              onChange={v => patch(s => { s.unit.preset = v as UnitPreset })}
+            />
             {st.unit.preset === 'custom' && (
               <input
                 className="input" placeholder="unit, e.g. beats"
