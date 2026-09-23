@@ -6,11 +6,11 @@ const sameSet = (a: string[], b: string[]) => a.length === b.length && b.every(x
 
 export function filtersEqual(a: Filters, b: Filters): boolean {
   return sameSet(a.offTypes, b.offTypes) && sameSet(a.offLayers, b.offLayers)
-    && sameSet(a.tags, b.tags) && a.text.trim() === b.text.trim()
+    && sameSet(a.tags, b.tags) && a.text.trim() === b.text.trim() && (a.rules ?? '').trim() === (b.rules ?? '').trim()
 }
 
 export function isUnfiltered(f: Filters): boolean {
-  return !f.offTypes.length && !f.offLayers.length && !f.tags.length && !f.text.trim()
+  return !f.offTypes.length && !f.offLayers.length && !f.tags.length && !f.text.trim() && !(f.rules ?? '').trim()
 }
 
 export const activeView = (p: Project): View | undefined =>

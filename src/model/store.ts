@@ -7,7 +7,18 @@ import { applyChanges, diffToChanges, type Proposal, type ProposalChange } from 
 import type { Camera, FieldAttachment, FieldDef, FieldValue, Filters, HierarchyLevel, Id, Item, Project, TimelineSettings } from './types'
 import { isMobile, uid } from './util'
 
-export const emptyFilters = (): Filters => ({ offTypes: [], offLayers: [], tags: [], text: '' })
+export const emptyFilters = (): Filters => ({ offTypes: [], offLayers: [], tags: [], text: '', rules: '' })
+
+/** Fill in filter fields missing from older saves (views and the live filters alike). */
+export function normalizeFilters(f: Partial<Filters> | undefined): Filters {
+  return {
+    offTypes: Array.isArray(f?.offTypes) ? f!.offTypes : [],
+    offLayers: Array.isArray(f?.offLayers) ? f!.offLayers : [],
+    tags: Array.isArray(f?.tags) ? f!.tags : [],
+    text: typeof f?.text === 'string' ? f!.text : '',
+    rules: typeof f?.rules === 'string' ? f!.rules : '',
+  }
+}
 
 export const defaultSettings = (): TimelineSettings => ({
   placement: 'above',
@@ -39,8 +50,9 @@ export function normalizeProject(p: Project): Project {
   p.sections ??= []
   p.items ??= []
   p.views ??= []
+  for (const v of p.views) v.filters = normalizeFilters(v.filters)
   p.camera ??= { x: -8, s: 14 }
-  p.filters ??= emptyFilters()
+  p.filters = normalizeFilters(p.filters)
   p.activeViewId ??= null
   for (const l of p.layers) {
     l.size ??= 1

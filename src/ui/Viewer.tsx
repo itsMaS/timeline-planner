@@ -11,6 +11,7 @@ import { nav } from './nav'
 import { PanelDivider } from './Panels'
 import { exportDocPDF } from './exportDoc'
 import { exportScope } from './exportScope'
+import { RuleFilterButton } from './RuleFilter'
 import { PresenceBar } from './Share'
 import { Sidebar } from './Sidebar'
 
@@ -91,6 +92,7 @@ export function Viewer() {
           {proj.filters.text && (
             <button className="ghost-btn" onClick={() => tweak(p => { p.filters.text = '' })}><X width={12} height={12} /></button>
           )}
+          <RuleFilterButton />
         </div>
         <div className="tools">
           <label className="density" title="Detail density — how eagerly items appear">

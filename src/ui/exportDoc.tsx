@@ -272,7 +272,7 @@ export function buildDocHTML(proj: Project, sectionIds: string[] | null): { html
   const f = proj.filters
   const activeFilters = [
     f.offTypes.length && 'types', f.offLayers.length && 'layers', f.tags.length && 'tags',
-    f.text.trim() && `text “${f.text.trim()}”`, proj.layers.some(l => l.eye) && 'hidden layers',
+    f.text.trim() && `text “${f.text.trim()}”`, (f.rules ?? '').trim() && `rules “${f.rules.trim()}”`, proj.layers.some(l => l.eye) && 'hidden layers',
   ].filter(Boolean)
   const visibility = hidden > 0
     ? `${total} visible item${total === 1 ? '' : 's'} (${hidden} hidden by ${activeFilters.join(', ') || 'filters'})`

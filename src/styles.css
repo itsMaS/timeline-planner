@@ -92,6 +92,45 @@ input, select, textarea { font: inherit; color: inherit; }
 .menu.ctx .type-search-row { padding: 6px 8px; }
 .menu.ctx .name-prompt .search-input { font-weight: 600; }
 
+/* Rule filter: funnel button in the search box, popover with the rule editor. */
+.rule-filter-wrap { position: relative; display: inline-flex; }
+.rule-filter-wrap > .ghost-btn { padding: 3px 4px; position: relative; }
+.rule-filter-wrap > .ghost-btn.err { color: #ef4444; }
+.rule-badge {
+  font-size: 9px; font-weight: 700; line-height: 1; padding: 1px 4px; border-radius: 999px;
+  background: var(--accent); color: #fff; margin-left: 1px;
+}
+.rule-pop {
+  position: absolute; right: -4px; top: 30px; z-index: 40; width: 460px; max-width: calc(100vw - 24px);
+  background: var(--panel); border: 1px solid var(--line-soft); border-radius: 10px; box-shadow: var(--shadow);
+  padding: 10px 12px 12px; cursor: default; text-align: left; font-size: 12.5px; color: var(--text);
+  animation: menu-in .14s cubic-bezier(.34,1.56,.64,1);
+}
+.rule-pop-head { display: flex; flex-direction: column; gap: 1px; margin-bottom: 8px; }
+.rule-pop-head strong { font-size: 12.5px; }
+.rule-editor { display: flex; flex-direction: column; gap: 6px; }
+.rule-tabs { display: flex; align-items: center; gap: 2px; }
+.rule-tabs > button { padding: 3px 9px; border-radius: 6px; font-size: 11.5px; color: var(--muted); }
+.rule-tabs > button.on { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--text); }
+.rule-tabs > button:disabled { opacity: .45; cursor: default; }
+.rule-rows { display: flex; flex-direction: column; gap: 5px; }
+.rule-match { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--muted); }
+.rule-match .seg { width: 90px; }
+.rule-row { display: flex; align-items: center; gap: 4px; }
+.rule-row .select-trigger { padding: 3px 6px; font-size: 11.5px; }
+.rule-row .rule-field { flex: 1 1 38%; min-width: 0; }
+.rule-row .rule-op { flex: 0 0 96px; }
+.rule-row .rule-value { flex: 1 1 32%; min-width: 0; }
+.rule-row .ghost-btn { padding: 3px; }
+.rule-text { display: flex; flex-direction: column; gap: 4px; }
+.rule-text textarea { resize: vertical; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; }
+.rule-error { color: #ef4444; font-size: 11.5px; }
+.rule-warn { color: #f59e0b; font-size: 11.5px; }
+.rule-editor.compact .rule-text textarea { font-size: 11.5px; }
+.rule-editor.compact .sb-hint { display: none; }
+.rule-editor .ghost-btn.add { align-self: flex-start; }
+@media (max-width: 760px) { .rule-pop { position: fixed; left: 8px; right: 8px; top: auto; width: auto; } }
+
 /* In-place list filters in the sidebar (types, fields & processors). */
 .list-filter { min-width: 0; margin: 2px 0 6px; padding: 3px 7px; }
 .list-filter .search-input { width: 100%; min-width: 0; font-size: 12px; }

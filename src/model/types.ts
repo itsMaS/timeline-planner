@@ -181,6 +181,12 @@ export interface Filters {
   /** Tags that must be present (OR within, AND with other groups). */
   tags: string[]
   text: string
+  /**
+   * Rule expression (src/model/expr.ts) every shown item must satisfy, e.g.
+   * `Implemented = no and [VFX Scope] >= 10`. Empty = no rule. ANDed with the
+   * other filter groups. Saved in views like the rest.
+   */
+  rules: string
 }
 
 export interface View {

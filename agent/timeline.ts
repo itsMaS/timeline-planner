@@ -326,7 +326,7 @@ function resolve<T extends { id: string; name: string }>(wanted: string[], pool:
 async function cmdExport() {
   const w = opt('in') ? loadDoc(opt('in'), 'in') : await open(TOKEN())
   const d = structuredClone(w.doc)
-  d.filters = { offTypes: [], offLayers: [], tags: [], text: '' }
+  d.filters = { offTypes: [], offLayers: [], tags: [], text: '', rules: '' }
   const types = listOpt('types')
   if (types.length) {
     const keep = new Set(resolve(types, d.types, 'type').map(t => t.id))

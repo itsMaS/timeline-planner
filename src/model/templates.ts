@@ -93,8 +93,8 @@ export function linearGameTemplate(): Project {
   )
   const storyType = p.types[0]
   p.views = [
-    { id: uid(), name: 'Story beats', filters: { offTypes: p.types.filter(t => t.id !== storyType.id && t.name !== 'Cutscene').map(t => t.id), offLayers: [], tags: [], text: '' } },
-    { id: uid(), name: 'Deaths', filters: { offTypes: p.types.filter(t => t.name !== 'Death opportunity').map(t => t.id), offLayers: [], tags: [], text: '' } },
+    { id: uid(), name: 'Story beats', filters: { offTypes: p.types.filter(t => t.id !== storyType.id && t.name !== 'Cutscene').map(t => t.id), offLayers: [], tags: [], text: '', rules: '' } },
+    { id: uid(), name: 'Deaths', filters: { offTypes: p.types.filter(t => t.name !== 'Death opportunity').map(t => t.id), offLayers: [], tags: [], text: '', rules: '' } },
   ]
   return p
 }

@@ -1,5 +1,6 @@
 import type { Camera, Filters, Item, Project } from './types'
 import { attachmentsFor, effectiveValue, formatValue } from './fields'
+import { matchesRule } from './scope'
 import { clamp, lerp } from './util'
 
 export interface PlacedItem {
@@ -78,6 +79,7 @@ export function itemMatchesFilters(p: Project, it: Item, f: Filters): boolean {
     const hay = `${it.title} ${it.description} ${it.tags.join(' ')} ${extra}`.toLowerCase()
     if (!hay.includes(q)) return false
   }
+  if (f.rules?.trim() && !matchesRule(p, { kind: 'item', entity: it }, f.rules)) return false
   return true
 }
 

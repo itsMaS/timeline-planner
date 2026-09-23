@@ -22,6 +22,7 @@ import { Inspector } from './Inspector'
 import { PanelDivider } from './Panels'
 import { FieldEditor, LevelEditor, ProcessorEditor } from './SchemaEditors'
 import { Select } from './Select'
+import { RuleFilterButton } from './RuleFilter'
 import { PresenceBar, ShareModal, TabSyncIcon } from './Share'
 import { ApiHelpModal } from './ApiHelp'
 import { Sidebar } from './Sidebar'
@@ -305,6 +306,7 @@ function Toolbar({ applyView }: { applyView: (id: string | null) => void }) {
           {proj.filters.text && (
             <button className="ghost-btn" onClick={() => tweak(p => { p.filters.text = '' })}><X width={12} height={12} /></button>
           )}
+          <RuleFilterButton />
         </div>
 
         <div className="tools">
