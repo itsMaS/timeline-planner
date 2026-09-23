@@ -3,7 +3,7 @@ import { iconByName } from '../model/icons'
 import { contentExtent, layoutTimeline, rowY, spineYFor, splitLabel, typeOf } from '../model/layout'
 import type { Camera, Project } from '../model/types'
 import { clamp, download, formatUnit, rulerStepFor, sectionHue, unitSuffix } from '../model/util'
-import { attachmentsFor, effectiveValue, formatValue, levelOf } from '../model/fields'
+import { attachmentsFor, effectiveValue, formatValue, levelOf, orderedFields } from '../model/fields'
 import { bandBadge, processorResults } from '../model/processors'
 import { scopedProject, type ExportScope } from './exportScope'
 
@@ -206,7 +206,9 @@ export function exportCSV(proj: Project, scope: ExportScope) {
     { length: maxDepth + 1 },
     (_, d) => proj.hierarchyLevels[d]?.name ?? `Level ${d + 1}`,
   )
-  const header = [...levels, 'Title', 'Type', 'Position', 'Duration', 'Tags', 'Description', 'Link', 'Created by', ...proj.fields.map(f => f.name)]
+  // Field columns follow the sidebar order (root fields, then folder by folder).
+  const fields = orderedFields(proj)
+  const header = [...levels, 'Title', 'Type', 'Position', 'Duration', 'Tags', 'Description', 'Link', 'Created by', ...fields.map(f => f.name)]
   const rows = scope.items
     .map(it => {
       const atts = attachmentsFor(proj, { kind: 'item', entity: it })
@@ -220,7 +222,7 @@ export function exportCSV(proj: Project, scope: ExportScope) {
         it.description,
         it.link,
         it.createdBy?.name ?? '',
-        ...proj.fields.map(f => {
+        ...fields.map(f => {
           const a = atts.find(x => x.field.id === f.id)
           return a ? formatValue(proj, f, effectiveValue(f, a.att, it.fieldValues[f.id])) : ''
         }),
@@ -231,7 +233,7 @@ export function exportCSV(proj: Project, scope: ExportScope) {
   const inScope = (sc: { start: number; end: number }) =>
     !scope.sections.length || scope.sections.some(s => sc.start >= s.start - 1e-9 && sc.end <= s.end + 1e-9)
   const sections = [...proj.sections].filter(inScope).sort((a, b) => a.start - b.start || a.depth - b.depth)
-  const secHeader = ['Level', 'Section', 'Start', 'End', 'Length', 'Description', ...proj.fields.map(f => f.name), ...proj.processors.map(p => p.name)]
+  const secHeader = ['Level', 'Section', 'Start', 'End', 'Length', 'Description', ...fields.map(f => f.name), ...proj.processors.map(p => p.name)]
   const secRows = sections.map(sc => {
     const atts = attachmentsFor(proj, { kind: 'section', entity: sc })
     const results = new Map(processorResults(proj, sc).map(r => [r.proc.id, r]))
@@ -242,7 +244,7 @@ export function exportCSV(proj: Project, scope: ExportScope) {
       sc.end,
       sc.end - sc.start,
       sc.description ?? '',
-      ...proj.fields.map(f => {
+      ...fields.map(f => {
         const a = atts.find(x => x.field.id === f.id)
         return a ? formatValue(proj, f, effectiveValue(f, a.att, sc.fieldValues?.[f.id])) : ''
       }),

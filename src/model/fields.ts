@@ -1,7 +1,7 @@
 import type {
-  FieldAttachment, FieldDef, FieldKind, FieldValue, HierarchyLevel, Id, Item, ItemType, Project, Section, TypeFolder,
+  FieldAttachment, FieldDef, FieldKind, FieldValue, Folder, HierarchyLevel, Id, Item, ItemType, Project, Section, TypeFolder,
 } from './types'
-import { folderChain } from './folders'
+import { folderChain, groupedMembers, orderedMembers } from './folders'
 import { formatUnit, unitSuffix } from './util'
 
 /**
@@ -101,6 +101,20 @@ export function attachmentsFor(p: Project, owner: Owner): { att: FieldAttachment
     if (field) out.push({ att, field })
   }
   return out
+}
+
+/** Project fields in sidebar order: root fields, then each field folder's fields depth-first. */
+export const orderedFields = (p: Project): FieldDef[] => orderedMembers(p, 'fields', p.fields)
+
+/**
+ * Attachments grouped by the field's sidebar folder, in sidebar order: the
+ * root group (folder null) first, then one group per folder that has any of
+ * the fields. Display code (inspector, exports) renders a heading per group.
+ */
+export function groupAttachments<T extends { field: FieldDef }>(p: Project, list: T[]): { folder: Folder | null; entries: T[] }[] {
+  const byId = new Map(list.map(x => [x.field.id, x]))
+  return groupedMembers(p, 'fields', list.map(x => x.field))
+    .map(g => ({ folder: g.folder, entries: g.members.map(f => byId.get(f.id)!) }))
 }
 
 /** Default that applies to an attachment: its own override, else the field's. */

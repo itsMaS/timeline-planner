@@ -45,7 +45,7 @@ export interface Proposal {
 
 type Entity = { id: string }
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
-const list = (p: Project, col: ColKey) => p[col] as unknown as Entity[]
+const list = (p: Project, col: ColKey) => ((p[col] ?? []) as unknown as Entity[])
 
 /** Entity-level changes that turn `base` into `edited`. Notes are keyed by entity id (or scalar name). */
 export function diffToChanges(base: Project, edited: Project, notes: Record<string, string> = {}): ProposalChange[] {
@@ -105,6 +105,7 @@ export function applyChanges(p: Project, changes: ProposalChange[]): void {
       ;(p as unknown as Record<string, unknown>)[c.entityId] = structuredClone(c.after)
       continue
     }
+    if (!p[c.col]) (p as unknown as Record<string, unknown>)[c.col] = []
     const arr = list(p, c.col)
     const i = arr.findIndex(e => e.id === c.entityId)
     if (c.kind === 'remove') {
@@ -122,6 +123,7 @@ export function applyChanges(p: Project, changes: ProposalChange[]): void {
 const COL_LABEL: Record<ColKey | 'project', string> = {
   items: 'Item', types: 'Type', typeFolders: 'Folder', layers: 'Layer', sections: 'Section',
   views: 'View', hierarchyLevels: 'Hierarchy level', fields: 'Field', processors: 'Processor',
+  fieldFolders: 'Field folder', processorFolders: 'Processor folder',
   project: 'Project',
 }
 
@@ -167,7 +169,7 @@ export function pendingChanges(p: Proposal, col: ColKey): Map<string, ProposalCh
 }
 
 /** Collections the canvas preview applies: what items look like and what they are made of. */
-const PREVIEW_COLS: ColKey[] = ['items', 'types', 'typeFolders', 'layers', 'fields', 'hierarchyLevels', 'processors']
+const PREVIEW_COLS: ColKey[] = ['items', 'types', 'typeFolders', 'layers', 'fields', 'fieldFolders', 'hierarchyLevels', 'processors', 'processorFolders']
 
 /**
  * The project as the canvas shows it while a proposal is under review: the

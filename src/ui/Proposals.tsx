@@ -290,7 +290,9 @@ function display(proj: Project, key: string, v: unknown): unknown {
   if (typeof v !== 'string') return v
   if (key === 'typeId') return proj.types.find(t => t.id === v)?.name ?? v
   if (key === 'layerId' || key === 'defaultLayerId') return proj.layers.find(l => l.id === v)?.name ?? v
-  if (key === 'folderId' || key === 'parentId') return proj.typeFolders.find(f => f.id === v)?.name ?? v
+  if (key === 'folderId' || key === 'parentId') {
+    return [...proj.typeFolders, ...proj.fieldFolders, ...proj.processorFolders].find(f => f.id === v)?.name ?? v
+  }
   return v
 }
 

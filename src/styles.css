@@ -815,8 +815,27 @@ body.col-resizing .inspector { animation: none; }
 .schema-sub { flex: 1; min-width: 0; font-size: 10.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .schema-row .row-gear { opacity: 0; color: var(--muted); flex-shrink: 0; }
 .schema-row:hover .row-gear { opacity: 1; }
-.sb-sub.row { display: flex; align-items: center; }
+.sb-sub.row { display: flex; align-items: center; gap: 2px; }
 .sidebar.readonly .schema-row { cursor: default; }
+/* Fields & processors tree: drag to reorder (line above / below a row) or into a folder. */
+.schema-tree { position: relative; }
+.schema-tree .schema-row { position: relative; user-select: none; }
+.schema-tree.dragging .schema-row { cursor: grabbing; }
+.schema-row.lifting { opacity: .35; }
+.schema-row.drop-before::before, .schema-row.drop-after::after {
+  content: ''; position: absolute; left: 6px; right: 6px; height: 2px; background: var(--accent); border-radius: 2px;
+}
+.schema-row.drop-before::before { top: -1px; }
+.schema-row.drop-after::after { bottom: -1px; }
+.schema-tree .folder-row.drop-into, .schema-tree .folder-types.drop-into,
+.schema-tree.drop-into { outline: 1.5px dashed var(--accent); outline-offset: -1px; border-radius: 8px; }
+.schema-tree .folder-row { cursor: grab; }
+.schema-tree .folder-row .row-act { display: none; }
+.schema-tree .folder-row:hover .row-act, .schema-tree .folder-row .row-act.on { display: inline-flex; }
+/* Inspector: fields grouped under their sidebar folder */
+.field-group { display: flex; flex-direction: column; gap: 10px; padding-left: 8px; border-left: 2px solid var(--c, var(--line-soft)); }
+.field-group-h { display: flex; align-items: center; gap: 6px; font-size: 10.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--c, var(--muted)); }
+.field-group-h svg { flex-shrink: 0; }
 .level-row .count { white-space: nowrap; }
 
 /* inspector: processors */

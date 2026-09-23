@@ -4,7 +4,7 @@ import {
   attachedToNames, changeFieldKind, conversionLoss, FIELD_KINDS, fieldUsage, isNumberKind, kindGlyph, kindLabel,
   newFieldDef, removeField, removeProcessor, targetOptions,
 } from '../model/fields'
-import { folderPath } from '../model/folders'
+import { folderPath, folderTree } from '../model/folders'
 import { iconByName } from '../model/icons'
 import { opLabel, PROCESSOR_OPS, processorUsage } from '../model/processors'
 import { useActiveProject, useStore } from '../model/store'
@@ -395,6 +395,17 @@ export function FieldEditor() {
         <label>Default value <span className="muted">(types and levels can override it)</span></label>
         <FieldValueInput field={field} value={field.defaultValue} asDefault onChange={v => edit(f => { f.defaultValue = v })} />
       </div>
+      {proj.fieldFolders.length > 0 && (
+        <div className="field">
+          <label>Folder <span className="muted">(groups it in the sidebar, inspector and exports)</span></label>
+          <Select
+            value={field.folderId ?? ''}
+            options={[{ value: '', label: '(none)' }, ...folderTree(proj, 'fields').map(({ folder, depth }) => ({ value: folder.id, label: folder.name, depth }))]}
+            searchPlaceholder="Search folders…"
+            onChange={v => edit(f => { f.folderId = v || null })}
+          />
+        </div>
+      )}
       <div className="field">
         <label>Help text</label>
         <input className="input" value={field.help} placeholder="shown under the input" onChange={e => edit(f => { f.help = e.target.value })} />
@@ -573,6 +584,17 @@ export function ProcessorEditor() {
           emptyLabel={spec.needsField === 'none' ? 'every item inside the section (pick types/levels to narrow)' : 'everything inside the section that has the field'}
         />
       </div>
+      {proj.processorFolders.length > 0 && (
+        <div className="field">
+          <label>Folder</label>
+          <Select
+            value={proc.folderId ?? ''}
+            options={[{ value: '', label: '(none)' }, ...folderTree(proj, 'processors').map(({ folder, depth }) => ({ value: folder.id, label: folder.name, depth }))]}
+            searchPlaceholder="Search folders…"
+            onChange={v => edit(f => { f.folderId = v || null })}
+          />
+        </div>
+      )}
       <div className="field">
         <label>Attached to levels</label>
         <div className="target-grid">

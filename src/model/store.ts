@@ -54,6 +54,11 @@ export function normalizeProject(p: Project): Project {
     f.fields = Array.isArray(f.fields) ? f.fields.map(a => ({ fieldId: a.fieldId, defaultValue: a.defaultValue ?? null })) : []
   }
   for (const t of p.types) t.folderId ??= null
+  p.fieldFolders = Array.isArray(p.fieldFolders) ? p.fieldFolders : []
+  p.processorFolders = Array.isArray(p.processorFolders) ? p.processorFolders : []
+  for (const f of [...p.fieldFolders, ...p.processorFolders]) { f.parentId ??= null; f.collapsed = !!f.collapsed }
+  for (const f of p.fields) f.folderId ??= null
+  for (const pr of p.processors) pr.folderId ??= null
   migrateLegacyFields(p)
   // Branching paths were removed: drop the leftovers from older saves so any
   // item that lived on a path comes back onto the main line.
@@ -137,6 +142,8 @@ export function blankProject(name: string): Project {
       { id: uid(), name: 'Note', icon: 'StickyNote', color: '#0ea5e9', defaultLayerId: layers[1].id, fields: [] },
     ],
     typeFolders: [],
+    fieldFolders: [],
+    processorFolders: [],
     layers,
     sections: [],
     items: [],

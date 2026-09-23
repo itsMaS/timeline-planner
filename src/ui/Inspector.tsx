@@ -1,11 +1,11 @@
 import React, { useMemo, useState } from 'react'
 import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Copy, FileText, Trash2, X } from 'lucide-react'
-import { attachmentsFor, effectiveValue, fieldLabel, levelOf, type Owner } from '../model/fields'
+import { attachmentsFor, effectiveValue, fieldLabel, groupAttachments, levelOf, type Owner } from '../model/fields'
 import { iconByName } from '../model/icons'
 import { typeOf } from '../model/layout'
 import { processorResults, type ProcessorResult } from '../model/processors'
 import { useActiveProject, useCanEdit, useStore } from '../model/store'
-import type { Item, Project, Section } from '../model/types'
+import type { FieldDef, Item, Project, Section } from '../model/types'
 import { formatUnit, uid, unitSuffix } from '../model/util'
 import { requestDelete } from './deletion'
 import { entityLook, FieldRow, jumpTo, ReadFieldValue, ReferencedBy } from './FieldInputs'
@@ -70,6 +70,29 @@ export function Inspector() {
 function ProposalSlot({ col, id }: { col: 'items' | 'sections'; id: string }) {
   const pending = usePendingChange(col, id)
   return pending ? <ProposalChangeCard proposal={pending.proposal} change={pending.change} /> : null
+}
+
+/**
+ * Field rows grouped under their sidebar folder: root fields plain, folder
+ * fields under a small coloured heading, in sidebar order.
+ */
+function FieldGroups<T extends { field: FieldDef }>({ list, render }: { list: T[]; render: (entry: T) => React.ReactNode }) {
+  const proj = useActiveProject()
+  const groups = groupAttachments(proj, list)
+  return (
+    <>
+      {groups.map(g => {
+        if (!g.folder) return <React.Fragment key="root">{g.entries.map(render)}</React.Fragment>
+        const Icon = iconByName(g.folder.icon)
+        return (
+          <div key={g.folder.id} className="field-group" style={{ '--c': g.folder.color } as React.CSSProperties}>
+            <div className="field-group-h"><Icon width={12} height={12} /> {g.folder.name}</div>
+            {g.entries.map(render)}
+          </div>
+        )
+      })}
+    </>
+  )
 }
 
 /**
@@ -194,9 +217,9 @@ function ReadItemPanel({ id }: { id: string }) {
             <a className="link-btn" href={item.link} target="_blank" rel="noreferrer noopener">{item.link} ↗</a>
           </ReadField>
         )}
-        {fields.map(f => (
+        <FieldGroups list={fields} render={f => (
           <ReadField key={f.field.id} label={fieldLabel(f.field)} title={f.field.showName ? undefined : f.field.name}><ReadFieldValue field={f.field} value={f.value} /></ReadField>
-        ))}
+        )} />
         {item.createdBy && (
           <ReadField label="Created by"><Creator who={item.createdBy} /></ReadField>
         )}
@@ -265,9 +288,9 @@ function ReadSectionPanel({ section }: { section: Section }) {
           <ReadField label="Ends">{fmt(section.end)}</ReadField>
           <ReadField label="Length">{fmt(section.end - section.start)}</ReadField>
         </div>
-        {fields.map(f => (
+        <FieldGroups list={fields} render={f => (
           <ReadField key={f.field.id} label={fieldLabel(f.field)} title={f.field.showName ? undefined : f.field.name}><ReadFieldValue field={f.field} value={f.value} /></ReadField>
-        ))}
+        )} />
         <ProcessorPanel section={section} />
         <ReferencedBy id={section.id} />
         <div className="field">
@@ -391,13 +414,13 @@ function ItemPanel({ id }: { id: string }) {
             <Creator who={item.createdBy} />
           </div>
         )}
-        {attachmentsFor(proj, { kind: 'item', entity: item }).map(({ att, field }) => (
+        <FieldGroups list={attachmentsFor(proj, { kind: 'item', entity: item })} render={({ att, field }) => (
           <FieldRow
             key={`${item.id}:${field.id}`} field={field} att={att} ownerId={item.id}
             raw={item.fieldValues[field.id]}
             onChange={v => edit(it => { if (v === null) delete it.fieldValues[field.id]; else it.fieldValues[field.id] = v })}
           />
-        ))}
+        )} />
         <ReferencedBy id={item.id} />
         <div className="field">
           <label>
@@ -558,13 +581,13 @@ function SectionPanel({ section }: { section: Section }) {
           />
           <div className="sb-hint">nesting is geometric — a section inside another sits one level deeper</div>
         </div>
-        {attachmentsFor(proj, { kind: 'section', entity: section }).map(({ att, field }) => (
+        <FieldGroups list={attachmentsFor(proj, { kind: 'section', entity: section })} render={({ att, field }) => (
           <FieldRow
             key={`${section.id}:${field.id}`} field={field} att={att} ownerId={section.id}
             raw={section.fieldValues?.[field.id]}
             onChange={v => edit(sc => { sc.fieldValues ??= {}; if (v === null) delete sc.fieldValues[field.id]; else sc.fieldValues[field.id] = v })}
           />
-        ))}
+        )} />
         <ProcessorPanel section={section} />
         <ReferencedBy id={section.id} />
         <div className="field">

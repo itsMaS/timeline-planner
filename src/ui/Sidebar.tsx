@@ -4,9 +4,7 @@ import {
 } from 'lucide-react'
 import { childFolders, dissolveFolder, folderPath, folderTree, isSelfOrDescendant, typesInFolder, typesInSubtree } from '../model/folders'
 import { iconByName } from '../model/icons'
-import { attachedToNames, fieldUsage, kindGlyph, kindLabel, newFieldDef } from '../model/fields'
 import { itemMatchesFilters, typeOf } from '../model/layout'
-import { processorUsage } from '../model/processors'
 import { hideNewTypeInFilters } from '../model/views'
 import { newLevel, useActiveProject, useActiveShare, useCanEdit, useStore } from '../model/store'
 import type { ItemType, TypeFolder } from '../model/types'
@@ -15,7 +13,8 @@ import { IconPicker } from './IconPicker'
 import { chipDrop, nav } from './nav'
 import { Select } from './Select'
 import { ProposalsPanel } from './Proposals'
-import { describeProcessor, FieldAttachList } from './SchemaEditors'
+import { FieldAttachList } from './SchemaEditors'
+import { SchemaTree, SchemaTreeActions } from './SchemaTree'
 
 /** Small in-place filter box for a sidebar list: typing narrows the list below, Escape clears. */
 function ListFilter(props: {
@@ -99,7 +98,6 @@ export function Sidebar() {
   const sq = schemaQ.trim().toLowerCase()
   const typeMatches = (t: ItemType) => !tq || t.name.toLowerCase().includes(tq) || folderPath(proj, t.folderId ?? null).toLowerCase().includes(tq)
   const anyTypeMatch = proj.types.some(typeMatches)
-  const fieldMatches = (name: string, kind: string) => !sq || name.toLowerCase().includes(sq) || kind.toLowerCase().includes(sq)
   const [folderIconPick, setFolderIconPick] = useState(false)
   // Folder collapse state lives in the document (and syncs); a read-only
   // viewer can't write it, so it keeps its own overrides locally instead.
@@ -753,63 +751,23 @@ export function Sidebar() {
       )}
 
       {/* -------- fields & processors */}
-      <SectionHeader
-        title="Fields & processors" open={open.schema} toggle={() => toggle('schema')}
-        action={canEdit && (
-          <>
-            <button className="ghost-btn" title="New field" onClick={() => {
-              const id = uid()
-              mutate(p => p.fields.push(newFieldDef(id, 'New field')))
-              setUI({ editFieldId: id })
-            }}><Plus width={14} height={14} /></button>
-          </>
-        )}
-      />
+      <SectionHeader title="Fields & processors" open={open.schema} toggle={() => toggle('schema')} />
       {open.schema && (
         <div className="sb-body">
           {(proj.fields.length + proj.processors.length > 3 || sq) && (
             <ListFilter value={schemaQ} onChange={setSchemaQ} placeholder="Filter fields & processors…" hasMatch />
           )}
-          <div className="sb-sub">Fields</div>
-          {proj.fields.filter(f => fieldMatches(f.name, kindLabel(f.kind))).map(f => {
-            const u = fieldUsage(proj, f.id)
-            const attached = attachedToNames(proj, f.id)
-            const values = u.items.length + u.sections.length
-            return (
-              <div key={f.id} className="schema-row" title={`${kindLabel(f.kind)} · on ${attached.join(', ') || 'nothing'} · ${values} value(s)`}
-                onClick={() => { if (canEdit) setUI({ editFieldId: f.id }) }}>
-                <span className="kind-glyph">{kindGlyph(f.kind)}</span>
-                <span className="type-name">{f.name}</span>
-                <span className="schema-sub">{attached.length ? attached.join(', ') : 'unused'}</span>
-                <span className="count">{values}</span>
-                {canEdit && <Settings2 width={12} height={12} className="row-gear" />}
-              </div>
-            )
-          })}
-          {proj.fields.length === 0 && <div className="sb-hint">{canEdit ? 'no fields yet — add one here or from a type editor' : 'no fields'}</div>}
+          <div className="sb-sub row">
+            <span className="grow">Fields</span>
+            {canEdit && <SchemaTreeActions kind="fields" />}
+          </div>
+          <SchemaTree kind="fields" query={schemaQ} />
           <div className="sb-sub row">
             <span className="grow">Processors</span>
-            {canEdit && (
-              <button className="ghost-btn" title="New processor" onClick={() => {
-                const id = uid()
-                mutate(p => p.processors.push({ id, name: 'New processor', op: 'count', fieldId: null, targets: [] }))
-                setUI({ editProcessorId: id })
-              }}><Plus width={13} height={13} /></button>
-            )}
+            {canEdit && <SchemaTreeActions kind="processors" />}
           </div>
-          {proj.processors.filter(pr => fieldMatches(pr.name, describeProcessor(proj.fields, pr))).map(pr => {
-            const levels = processorUsage(proj, pr.id)
-            return (
-              <div key={pr.id} className="schema-row" title={`${describeProcessor(proj.fields, pr)} · on ${levels.map(l => l.name).join(', ') || 'no level'}`}
-                onClick={() => { if (canEdit) setUI({ editProcessorId: pr.id }) }}>
-                <span className="kind-glyph">Σ</span>
-                <span className="type-name">{pr.name}</span>
-                <span className="schema-sub">{describeProcessor(proj.fields, pr)}{levels.length ? ` · ${levels.map(l => l.name).join(', ')}` : ''}</span>
-                {canEdit && <Settings2 width={12} height={12} className="row-gear" />}
-              </div>
-            )
-          })}
-          {proj.processors.length === 0 && <div className="sb-hint">{canEdit ? 'processors sum or count what sits inside a section — attach them to a hierarchy level' : 'no processors'}</div>}
+          <SchemaTree kind="processors" query={schemaQ} />
+          {canEdit && <div className="sb-hint">drag rows to reorder or file them into folders · click a row for its settings</div>}
         </div>
       )}
 

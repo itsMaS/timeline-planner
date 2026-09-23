@@ -43,6 +43,8 @@ export interface FieldDef {
   refMultiple: boolean
   /** ref: draw connector lines on the canvas while the owner is selected. */
   refShowLinks: boolean
+  /** Sidebar folder (Project.fieldFolders); null/undefined = root. Groups the field in the inspector and exports too. */
+  folderId?: Id | null
 }
 
 /** A field attached to a type or a hierarchy level. */
@@ -63,6 +65,8 @@ export interface ProcessorDef {
   fieldId: Id | null
   /** Item type ids / hierarchy level ids to include; empty = everything. */
   targets: Id[]
+  /** Sidebar folder (Project.processorFolders); null/undefined = root. */
+  folderId?: Id | null
 }
 
 export interface ProcessorAttachment {
@@ -90,8 +94,13 @@ export interface ItemType {
   folderId?: Id | null
 }
 
-/** A loose sidebar folder for organizing item types. Folders nest via parentId. */
-export interface TypeFolder {
+/**
+ * A loose sidebar folder. The same shape organizes item types
+ * (`Project.typeFolders`), fields (`fieldFolders`) and processors
+ * (`processorFolders`); folders nest via parentId, members point at their
+ * folder through their own `folderId`.
+ */
+export interface Folder {
   id: Id
   name: string
   color: string
@@ -100,12 +109,17 @@ export interface TypeFolder {
   /** Parent folder; null/undefined = top level. */
   parentId?: Id | null
   /**
-   * Fields every type filed in this folder (at any depth) inherits on top of
-   * its own attachments; a nearer attachment (sub-folder or the type itself)
-   * overrides the default. See `typeAttachments` in fields.ts.
+   * Type folders only: fields every type filed in this folder (at any depth)
+   * inherits on top of its own attachments; a nearer attachment (sub-folder
+   * or the type itself) overrides the default. See `typeAttachments` in fields.ts.
    */
   fields?: FieldAttachment[]
 }
+
+export type TypeFolder = Folder
+
+/** Which folder list a folder or member belongs to. */
+export type FolderKind = 'types' | 'fields' | 'processors'
 
 /** Order in Project.layers = significance (index 0 is most significant). */
 export interface Layer {
@@ -226,7 +240,9 @@ export interface Project {
   fields: FieldDef[]
   processors: ProcessorDef[]
   types: ItemType[]
-  typeFolders: TypeFolder[]
+  typeFolders: Folder[]
+  fieldFolders: Folder[]
+  processorFolders: Folder[]
   layers: Layer[]
   sections: Section[]
   items: Item[]

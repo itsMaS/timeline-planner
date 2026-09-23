@@ -1,10 +1,10 @@
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { iconByName } from '../model/icons'
-import { attachmentsFor, effectiveValue, formatValue } from '../model/fields'
+import { attachmentsFor, effectiveValue, formatValue, groupAttachments } from '../model/fields'
 import { typeOf } from '../model/layout'
 import { processorResults } from '../model/processors'
-import type { Item, Project, Section } from '../model/types'
+import type { FieldDef, Item, Project, Section } from '../model/types'
 import { formatUnit, unitSuffix } from '../model/util'
 import { isItemVisible } from './exportScope'
 import { Markdown } from './Markdown'
@@ -94,6 +94,26 @@ function Heading({ level, className, children }: { level: number; className?: st
   return <Tag className={className}>{children}</Tag>
 }
 
+/** Field values as a definition list, grouped under their sidebar folder (a caption row per folder). */
+function FieldList({ proj, fields }: { proj: Project; fields: { field: FieldDef; text: string }[] }) {
+  if (!fields.length) return null
+  return (
+    <dl className="fields">
+      {groupAttachments(proj, fields).map(g => (
+        <React.Fragment key={g.folder?.id ?? 'root'}>
+          {g.folder && <div className="group"><dt style={{ color: g.folder.color }}>{g.folder.name}</dt><dd /></div>}
+          {g.entries.map(f => (
+            <div key={f.field.id} className={f.field.showName ? '' : 'noname'}>
+              {f.field.showName && <dt>{f.field.name}</dt>}
+              <dd title={f.field.showName ? undefined : f.field.name}>{f.field.kind === 'text' ? <Markdown text={f.text} /> : f.text}</dd>
+            </div>
+          ))}
+        </React.Fragment>
+      ))}
+    </dl>
+  )
+}
+
 function DocBody({ proj, roots, loose }: { proj: Project; roots: SectionNode[]; loose: Item[] }) {
   const st = proj.settings
   const suffix = unitSuffix(st.unit.preset, st.unit.custom)
@@ -121,16 +141,7 @@ function DocBody({ proj, roots, loose }: { proj: Project; roots: SectionNode[]; 
         </Heading>
         <p className="meta">{meta.join(' · ')}</p>
         {it.description.trim() && <Markdown text={it.description} />}
-        {fields.length > 0 && (
-          <dl className="fields">
-            {fields.map(f => (
-              <div key={f.field.id} className={f.field.showName ? '' : 'noname'}>
-                {f.field.showName && <dt>{f.field.name}</dt>}
-                <dd title={f.field.showName ? undefined : f.field.name}>{f.field.kind === 'text' ? <Markdown text={f.text} /> : f.text}</dd>
-              </div>
-            ))}
-          </dl>
-        )}
+        <FieldList proj={proj} fields={fields} />
         {it.link && <p className="link">Link: <a href={it.link}>{it.link}</a></p>}
         {it.images.length > 0 && (
           <div className="images">{it.images.map((src, i) => <img key={i} src={src} alt="" />)}</div>
@@ -169,16 +180,7 @@ function DocBody({ proj, roots, loose }: { proj: Project; roots: SectionNode[]; 
             ))}
           </p>
         )}
-        {secFields.length > 0 && (
-          <dl className="fields">
-            {secFields.map(f => (
-              <div key={f.field.id} className={f.field.showName ? '' : 'noname'}>
-                {f.field.showName && <dt>{f.field.name}</dt>}
-                <dd title={f.field.showName ? undefined : f.field.name}>{f.field.kind === 'text' ? <Markdown text={f.text} /> : f.text}</dd>
-              </div>
-            ))}
-          </dl>
-        )}
+        <FieldList proj={proj} fields={secFields} />
         {sc.description?.trim() && <Markdown text={sc.description} />}
         {entries.map((e, i) => <React.Fragment key={i}>{e.node}</React.Fragment>)}
       </section>
@@ -246,6 +248,8 @@ h1.item-h { font-size: 19pt; } h2.item-h { font-size: 15.5pt; } h3.item-h { font
 .fields dt { font-weight: 600; color: #4b5162; }
 .fields dd { margin: 0; }
 .fields > div.noname dd { grid-column: 1 / -1; }
+.fields > div.group dt { grid-column: 1 / -1; font-size: 9pt; text-transform: uppercase; letter-spacing: .04em; margin-top: 3px; }
+.fields > div.group dd { display: none; }
 .link { margin: 0 0 6px; font-size: 10.5pt; word-break: break-all; }
 .images { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0 8px; }
 .images img { max-width: 240px; max-height: 180px; border-radius: 6px; border: 1px solid #d8dce6; }
