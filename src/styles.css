@@ -534,6 +534,7 @@ input, select, textarea { font: inherit; color: inherit; }
 .insp-item-row svg { flex-shrink: 0; }
 .insp-item-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .insp-item-pos { font-size: 10.5px; color: var(--muted); flex-shrink: 0; }
+.insp-item-val { font-size: 11.5px; color: var(--accent); font-variant-numeric: tabular-nums; flex-shrink: 0; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .seg { display: flex; border: 1px solid var(--line-soft); border-radius: 8px; overflow: hidden; }
 .seg button { flex: 1; padding: 6px 4px; font-size: 11.5px; color: var(--muted); transition: all .14s; }

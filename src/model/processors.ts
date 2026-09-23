@@ -26,6 +26,8 @@ export interface ProcessorResult {
   text: string
   /** Entities that contributed. */
   matched: Owner[]
+  /** What each matched entity contributed (aligned with `matched`); null for a bare count. */
+  values: (FieldValue | null)[]
   error?: string
 }
 
@@ -47,29 +49,32 @@ export function entitiesInside(p: Project, section: Section): Owner[] {
 export function evalProcessor(p: Project, section: Section, proc: ProcessorDef, att: ProcessorAttachment | null = null): ProcessorResult {
   const field = fieldById(p, proc.fieldId)
   const spec = PROCESSOR_OPS.find(o => o.op === proc.op)!
-  if (spec.needsField !== 'none' && !field) return { proc, att, text: '—', matched: [], error: 'needs a field' }
+  if (spec.needsField !== 'none' && !field) return { proc, att, text: '—', matched: [], values: [], error: 'needs a field' }
   if (spec.needsField === 'number' && field && !isNumberKind(field.kind) && !(proc.op === 'sum' && field.kind === 'toggle')) {
-    return { proc, att, text: '—', matched: [], error: 'needs a number field' }
+    return { proc, att, text: '—', matched: [], values: [], error: 'needs a number field' }
   }
 
   const targets = new Set(proc.targets)
   const inside = entitiesInside(p, section)
   const matched: Owner[] = []
   const values: FieldValue[] = []
+  const contributed: (FieldValue | null)[] = []
   const where = proc.where?.trim() ?? ''
   for (const o of inside) {
     const key = o.kind === 'item' ? o.entity.typeId : levelOf(p, o.entity)?.id
     if (targets.size) { if (!key || !targets.has(key)) continue }
     else if (proc.op === 'count' && o.kind === 'section') continue // bare count = items only
     if (where && !matchesRule(p, o, where)) continue
+    let v: FieldValue | null = null
     if (field) {
       const a = attachmentsFor(p, o).find(x => x.field.id === field.id)
       if (!a) continue
-      const v = readValue(p, o, field, a.att)
+      v = readValue(p, o, field, a.att)
       if (v === null) continue
       values.push(v)
     }
     matched.push(o)
+    contributed.push(v)
   }
 
   let text: string
@@ -102,7 +107,7 @@ export function evalProcessor(p: Project, section: Section, proc: ProcessorDef, 
         : formatNumber(f, n)
     }
   }
-  return { proc, att, text, matched }
+  return { proc, att, text, matched, values: contributed }
 }
 
 /** Results of every processor attached to the section's level, in attachment order. */

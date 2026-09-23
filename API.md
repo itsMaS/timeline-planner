@@ -209,7 +209,8 @@ Content-Type: application/json
     "items":    { "<item id>": { "<derived field id>": value } },
     "sections": { "<section id>": {
         "fields":     { "<derived field id>": value },
-        "processors": { "<processor id>": { "text": "12 / 30", "value": 12, "matched": ["item id", …] } } } } }
+        "processors": { "<processor id>": { "text": "12 / 30", "value": 12, "matched": ["item id", …],
+                                            "contributions": { "<item id>": 5, … } } } } } }
 ```
 
 Errors come back the same way as from the functions

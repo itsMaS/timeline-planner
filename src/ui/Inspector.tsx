@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react'
 import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Copy, FileText, Trash2, X } from 'lucide-react'
-import { attachmentsFor, fieldLabel, groupAttachments, groupText, kindGlyph, levelOf, readValue, type Owner } from '../model/fields'
+import { attachmentsFor, fieldById, fieldLabel, formatValue, groupAttachments, groupText, kindGlyph, levelOf, readValue, type Owner } from '../model/fields'
 import { iconByName } from '../model/icons'
 import { typeOf } from '../model/layout'
 import { processorResults, type ProcessorResult } from '../model/processors'
@@ -700,6 +700,7 @@ function ProcessorPanel({ section }: { section: Section }) {
 function ProcessorRow({ r, open, toggle }: { r: ProcessorResult; open: boolean; toggle: () => void }) {
   const proj = useActiveProject()
   const Chev = open ? ChevronDown : ChevronRight
+  const field = fieldById(proj, r.proc.fieldId)
   return (
     <div className={`proc-row ${r.error ? 'err' : ''}`}>
       <button className="proc-head" onClick={toggle} title={r.error ?? `${r.matched.length} matched`}>
@@ -712,15 +713,20 @@ function ProcessorRow({ r, open, toggle }: { r: ProcessorResult; open: boolean; 
       {open && (
         <div className="insp-items">
           {r.matched.length === 0 && <div className="sb-hint">nothing inside matches</div>}
-          {r.matched.map(o => {
+          {r.matched.map((o, i) => {
             const look = entityLook(proj, o)
             const Icon = iconByName(look.icon)
             const title = o.kind === 'item' ? o.entity.title : o.entity.name
+            // The column shows what this entry contributed; the type or level moves to the tooltip.
+            const v = r.values[i]
+            const contributed = field && v !== null && v !== undefined ? formatValue(proj, field, v) : null
             return (
-              <button key={o.entity.id} className="insp-item-row" title="Jump" onClick={() => jumpTo(proj, o.entity.id)}>
+              <button key={o.entity.id} className="insp-item-row" title={`${look.typeName} · jump`} onClick={() => jumpTo(proj, o.entity.id)}>
                 <Icon width={13} height={13} color={look.color} strokeWidth={2} />
                 <span className="insp-item-title">{title || '…'}</span>
-                <span className="insp-item-pos">{look.typeName}</span>
+                {contributed !== null
+                  ? <span className="insp-item-val">{contributed}</span>
+                  : <span className="insp-item-pos">{look.typeName}</span>}
               </button>
             )
           })}

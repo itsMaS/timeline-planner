@@ -4872,14 +4872,15 @@ function entitiesInside(p, section) {
 function evalProcessor(p, section, proc, att = null) {
   const field = fieldById(p, proc.fieldId);
   const spec = PROCESSOR_OPS.find((o) => o.op === proc.op);
-  if (spec.needsField !== "none" && !field) return { proc, att, text: "\u2014", matched: [], error: "needs a field" };
+  if (spec.needsField !== "none" && !field) return { proc, att, text: "\u2014", matched: [], values: [], error: "needs a field" };
   if (spec.needsField === "number" && field && !isNumberKind(field.kind) && !(proc.op === "sum" && field.kind === "toggle")) {
-    return { proc, att, text: "\u2014", matched: [], error: "needs a number field" };
+    return { proc, att, text: "\u2014", matched: [], values: [], error: "needs a number field" };
   }
   const targets = new Set(proc.targets);
   const inside = entitiesInside(p, section);
   const matched = [];
   const values = [];
+  const contributed = [];
   const where = proc.where?.trim() ?? "";
   for (const o of inside) {
     const key = o.kind === "item" ? o.entity.typeId : levelOf(p, o.entity)?.id;
@@ -4887,14 +4888,16 @@ function evalProcessor(p, section, proc, att = null) {
       if (!key || !targets.has(key)) continue;
     } else if (proc.op === "count" && o.kind === "section") continue;
     if (where && !matchesRule(p, o, where)) continue;
+    let v = null;
     if (field) {
       const a = attachmentsFor(p, o).find((x) => x.field.id === field.id);
       if (!a) continue;
-      const v = readValue(p, o, field, a.att);
+      v = readValue(p, o, field, a.att);
       if (v === null) continue;
       values.push(v);
     }
     matched.push(o);
+    contributed.push(v);
   }
   let text;
   switch (proc.op) {
@@ -4931,7 +4934,7 @@ function evalProcessor(p, section, proc, att = null) {
       text = proc.op === "avg" && f.kind === "int" ? `${Number(n.toFixed(2))}${f.unit ? " " + f.unit : ""}` : formatNumber(f, n);
     }
   }
-  return { proc, att, text, matched };
+  return { proc, att, text, matched, values: contributed };
 }
 function processorResults(p, section) {
   const level = levelOf(p, section);
@@ -5142,7 +5145,12 @@ function computeDoc(p) {
     for (const r of processorResults(view, sc)) {
       if (r.error) continue;
       const n = Number(String(r.text).replace(/[^\d.,-].*$/, "").replace(",", "."));
-      processors[r.proc.id] = { text: r.text, value: Number.isFinite(n) ? n : null, matched: r.matched.map((o) => o.entity.id) };
+      const contributions = {};
+      r.matched.forEach((o, i) => {
+        const v = r.values[i];
+        if (v !== null && v !== void 0) contributions[o.entity.id] = v;
+      });
+      processors[r.proc.id] = { text: r.text, value: Number.isFinite(n) ? n : null, matched: r.matched.map((o) => o.entity.id), contributions };
     }
     if (Object.keys(fields).length || Object.keys(processors).length) out.sections[sc.id] = { fields, processors };
   }

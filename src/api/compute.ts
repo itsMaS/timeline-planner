@@ -17,7 +17,7 @@ export interface ComputedDoc {
   /** item id → derived field id → value (only derived fields the item carries, only non-null values). */
   items: Record<Id, Record<Id, FieldValue>>
   /** section id → { fields: derived values, processors: processor id → { text, value } } */
-  sections: Record<Id, { fields: Record<Id, FieldValue>; processors: Record<Id, { text: string; value: number | null; matched: Id[] }> }>
+  sections: Record<Id, { fields: Record<Id, FieldValue>; processors: Record<Id, { text: string; value: number | null; matched: Id[]; contributions: Record<Id, FieldValue> }> }>
 }
 
 /** A normalised working copy of a raw stored document. */
@@ -65,7 +65,9 @@ export function computeDoc(p: Project): ComputedDoc {
     for (const r of processorResults(view, sc)) {
       if (r.error) continue
       const n = Number(String(r.text).replace(/[^\d.,-].*$/, '').replace(',', '.'))
-      processors[r.proc.id] = { text: r.text, value: Number.isFinite(n) ? n : null, matched: r.matched.map(o => o.entity.id) }
+      const contributions: Record<Id, FieldValue> = {}
+      r.matched.forEach((o, i) => { const v = r.values[i]; if (v !== null && v !== undefined) contributions[o.entity.id] = v })
+      processors[r.proc.id] = { text: r.text, value: Number.isFinite(n) ? n : null, matched: r.matched.map(o => o.entity.id), contributions }
     }
     if (Object.keys(fields).length || Object.keys(processors).length) out.sections[sc.id] = { fields, processors }
   }
