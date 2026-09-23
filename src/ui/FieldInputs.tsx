@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
-import { Crosshair, X } from 'lucide-react'
+import { Crosshair, RotateCcw, X } from 'lucide-react'
 import {
   backlinks, clampValue, coerceValue, defaultFor, effectiveValue, entityTitle, formatToggle, formatValue, kindGlyph, levelOf, locationOf,
   ownerOf, parseInput, refCandidates, type Owner,
@@ -40,6 +40,7 @@ export function FieldRow(props: {
   onChange: (v: FieldValue | null) => void
 }) {
   const { field, att } = props
+  const proj = useActiveProject()
   const explicit = coerceValue(field, props.raw)
   const eff = effectiveValue(field, att, props.raw)
   const invalid = field.required && eff === null
@@ -55,7 +56,11 @@ export function FieldRow(props: {
           {field.showName && field.name}
           {field.required && <span className="req" title="Required"> *</span>}
           {canReset && (
-            <button className="link-btn right" title="Clear and fall back to the default" onClick={() => props.onChange(null)}>reset</button>
+            <button
+              className="ghost-btn reset-btn right"
+              title={`Reset to default: ${formatValue(proj, field, defaultFor(field, att))}`}
+              onClick={() => props.onChange(null)}
+            ><RotateCcw width={12} height={12} /></button>
           )}
         </label>
       )}
@@ -148,20 +153,28 @@ export function FieldValueInput(props: {
         </div>
       )
     }
+    // Yes / No buttons: only an explicit value lights one up, so an inherited
+    // default can never be mistaken for a value the user set. The default (if
+    // any) is named in a hint instead; clicking the lit button clears it again.
     const inherited = typeof fallback === 'boolean' ? fallback : null
-    const shown = explicit ?? inherited
     return (
-      <label className={`check-row fv-toggle ${props.compact ? 'sm' : ''} ${explicit === null ? 'inherit' : ''}`}>
-        <input
-          type="checkbox"
-          checked={shown === true}
-          onChange={e => props.onChange(e.target.checked)}
-        />
-        <span className={shown === null ? 'muted' : ''}>
-          {shown === null ? 'not set' : formatToggle(shown)}
-          {explicit === null && inherited !== null && <span className="muted"> (default)</span>}
-        </span>
-      </label>
+      <div className={`fv-toggle-row ${props.compact ? 'sm' : ''}`}>
+        <div className={`seg fv-toggle ${props.compact ? 'sm' : ''} ${explicit === null ? 'inherit' : ''}`}>
+          <button
+            className={explicit === true ? 'on' : ''}
+            title={explicit === true ? 'Click again to clear' : 'Set to yes'}
+            onClick={() => props.onChange(explicit === true ? null : true)}
+          >Yes</button>
+          <button
+            className={explicit === false ? 'on' : ''}
+            title={explicit === false ? 'Click again to clear' : 'Set to no'}
+            onClick={() => props.onChange(explicit === false ? null : false)}
+          >No</button>
+        </div>
+        {explicit === null && !props.compact && (
+          <span className="muted fv-toggle-hint">{inherited === null ? 'not set' : `default: ${formatToggle(inherited)}`}</span>
+        )}
+      </div>
     )
   }
   if (field.kind === 'text') {
