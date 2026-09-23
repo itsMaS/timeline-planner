@@ -9,6 +9,7 @@ import { hideNewTypeInFilters } from '../model/views'
 import { newLevel, useActiveProject, useActiveShare, useActiveWhole, useCanEdit, useStore } from '../model/store'
 import type { ItemType, TypeFolder } from '../model/types'
 import { PALETTE, uid } from '../model/util'
+import { HierarchyLevels } from './HierarchyLevels'
 import { IconPicker } from './IconPicker'
 import { chipDrop, nav } from './nav'
 import { Select } from './Select'
@@ -682,56 +683,7 @@ export function Sidebar() {
       {open.structure && (
         <div className="sb-body">
           <div className="sb-sub">Hierarchy levels</div>
-          {proj.hierarchyLevels.map((level, d) => (
-            <div key={level.id} className="row gap level-row">
-              {canEdit ? (
-                <input
-                  className="bare-input grow"
-                  value={level.name}
-                  onChange={e => mutate(p => { const l = p.hierarchyLevels.find(x => x.id === level.id); if (l) l.name = e.target.value })}
-                />
-              ) : (
-                <span className="level-name grow" style={{ paddingLeft: d * 10 }}>{level.name}</span>
-              )}
-              {(level.fields.length > 0 || level.processors.length > 0) && (
-                <span className="count" title={`${level.fields.length} field(s) · ${level.processors.length} processor(s)`}>
-                  {level.fields.length}f · {level.processors.length}p
-                </span>
-              )}
-              {canEdit && (
-                <button
-                  className="ghost-btn" title={`Add ${level.name} at current view`}
-                  onClick={() => {
-                    const st = useStore.getState()
-                    const p0 = st.projects.find(p => p.id === st.activeId)!
-                    const w = window.innerWidth * 0.5
-                    const center = p0.camera.x + w / p0.camera.s
-                    const span = (w * 0.6) / p0.camera.s
-                    mutate(p => p.sections.push({
-                      id: uid(), name: `New ${level.name.toLowerCase()}`, timelineId: p.activeTimelineId ?? p.timelines[0].id, depth: d,
-                      start: center - span / 2, end: center + span / 2, fieldValues: {},
-                    }))
-                  }}
-                ><Plus width={13} height={13} /></button>
-              )}
-              {canEdit && (
-                <button className="ghost-btn" title="Level fields & processors" onClick={() => setUI({ editLevelId: level.id })}>
-                  <Settings2 width={13} height={13} />
-                </button>
-              )}
-              {canEdit && d === proj.hierarchyLevels.length - 1 && d > 0 && (
-                <button
-                  className="ghost-btn" title="Remove level" disabled={whole.sections.some(s => s.depth === d)}
-                  onClick={() => mutate(p => { p.hierarchyLevels.pop() })}
-                ><Trash2 width={13} height={13} /></button>
-              )}
-            </div>
-          ))}
-          {canEdit && proj.hierarchyLevels.length < 5 && (
-            <button className="ghost-btn add" onClick={() => mutate(p => p.hierarchyLevels.push(newLevel('Sub-level')))}>
-              + Add hierarchy level
-            </button>
-          )}
+          <HierarchyLevels />
           <div className="sb-sub">Sections</div>
           {sectionTree.map(({ sc, level }) => (
             <div key={sc.id} className="section-row" style={{ paddingLeft: 8 + level * 14 }}>

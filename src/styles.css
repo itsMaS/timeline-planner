@@ -896,6 +896,17 @@ body.col-resizing .inspector { animation: none; }
 .field-group-h { display: flex; align-items: center; gap: 6px; font-size: 10.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--c, var(--muted)); }
 .field-group-h svg { flex-shrink: 0; }
 .level-row .count { white-space: nowrap; }
+.level-list { display: flex; flex-direction: column; gap: 2px; }
+.level-row { position: relative; border-radius: 6px; }
+.level-row .grip { display: inline-flex; color: var(--muted); cursor: grab; touch-action: none; opacity: .55; }
+.level-row:hover .grip { opacity: 1; }
+.level-list.dragging, .level-list.dragging .grip { cursor: grabbing; }
+.level-row.lifting { opacity: .35; }
+.level-row.drop-before::before, .level-row.drop-after::after {
+  content: ''; position: absolute; left: 6px; right: 6px; height: 2px; background: var(--accent); border-radius: 2px;
+}
+.level-row.drop-before::before { top: -2px; }
+.level-row.drop-after::after { bottom: -2px; }
 
 /* inspector: processors */
 .proc-list { display: flex; flex-direction: column; gap: 3px; }
