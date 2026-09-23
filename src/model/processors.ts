@@ -116,12 +116,19 @@ export function processorResults(p: Project, section: Section): ProcessorResult[
   return out
 }
 
-/** "Coins 27 · Enemies 3" for band labels — only attachments flagged showOnBand. */
+/** "Coins 27 · Enemies 3" for band labels — only attachments flagged showOnBand and not hidden by the filters. */
 export function bandBadge(p: Project, section: Section): string {
+  const off = p.filters?.offProcessors ?? []
   return processorResults(p, section)
-    .filter(r => r.att?.showOnBand && !r.error)
+    .filter(r => r.att?.showOnBand && !r.error && !off.includes(r.proc.id))
     .map(r => `${r.proc.name} ${r.text}`)
     .join(' · ')
+}
+
+/** Processor results for exports: everything on the level except what the filters hide. */
+export function shownProcessorResults(p: Project, section: Section): ProcessorResult[] {
+  const off = p.filters?.offProcessors ?? []
+  return processorResults(p, section).filter(r => !r.error && !off.includes(r.proc.id))
 }
 
 /** Levels a processor is attached to. */

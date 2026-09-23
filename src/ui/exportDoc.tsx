@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { iconByName } from '../model/icons'
 import { attachmentsFor, effectiveValue, formatValue, groupAttachments } from '../model/fields'
 import { typeOf } from '../model/layout'
-import { processorResults } from '../model/processors'
+import { shownProcessorResults } from '../model/processors'
 import type { FieldDef, Item, Project, Section } from '../model/types'
 import { formatUnit, unitSuffix } from '../model/util'
 import { isItemVisible } from './exportScope'
@@ -124,6 +124,7 @@ function DocBody({ proj, roots, loose }: { proj: Project; roots: SectionNode[]; 
     const Icon = iconByName(t?.icon ?? 'Circle')
     const layer = proj.layers.find(l => l.id === (it.layerId ?? t?.defaultLayerId))
     const fields = attachmentsFor(proj, { kind: 'item', entity: it })
+      .filter(({ field }) => !(proj.filters.offFields ?? []).includes(field.id))
       .map(({ att, field }) => ({ field, text: formatValue(proj, field, effectiveValue(field, att, it.fieldValues[field.id])) }))
       .filter(f => f.text.trim())
     const meta: string[] = [
@@ -160,9 +161,10 @@ function DocBody({ proj, roots, loose }: { proj: Project; roots: SectionNode[]; 
     // The section's own field values and its processor results (the same
     // numbers the inspector shows), so a reader gets the totals too.
     const secFields = attachmentsFor(proj, { kind: 'section', entity: sc })
+      .filter(({ field }) => !(proj.filters.offFields ?? []).includes(field.id))
       .map(({ att, field }) => ({ field, text: formatValue(proj, field, effectiveValue(field, att, sc.fieldValues?.[field.id])) }))
       .filter(f => f.text.trim())
-    const procs = processorResults(proj, sc).filter(r => !r.error)
+    const procs = shownProcessorResults(proj, sc)
     return (
       <section key={sc.id} className={`sec l${level}`}>
         <Heading level={level} className="sec-h">
@@ -273,6 +275,7 @@ export function buildDocHTML(proj: Project, sectionIds: string[] | null): { html
   const activeFilters = [
     f.offTypes.length && 'types', f.offLayers.length && 'layers', f.tags.length && 'tags',
     f.text.trim() && `text “${f.text.trim()}”`, (f.rules ?? '').trim() && `rules “${f.rules.trim()}”`, proj.layers.some(l => l.eye) && 'hidden layers',
+    (f.offFields ?? []).length && 'hidden fields', (f.offProcessors ?? []).length && 'hidden processors',
   ].filter(Boolean)
   const visibility = hidden > 0
     ? `${total} visible item${total === 1 ? '' : 's'} (${hidden} hidden by ${activeFilters.join(', ') || 'filters'})`

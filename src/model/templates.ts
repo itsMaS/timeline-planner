@@ -1,5 +1,5 @@
 import { newFieldDef } from './fields'
-import { blankProject, newLevel } from './store'
+import { blankProject, emptyFilters, newLevel } from './store'
 import type { Item, Project } from './types'
 import { uid } from './util'
 
@@ -93,8 +93,8 @@ export function linearGameTemplate(): Project {
   )
   const storyType = p.types[0]
   p.views = [
-    { id: uid(), name: 'Story beats', filters: { offTypes: p.types.filter(t => t.id !== storyType.id && t.name !== 'Cutscene').map(t => t.id), offLayers: [], tags: [], text: '', rules: '' } },
-    { id: uid(), name: 'Deaths', filters: { offTypes: p.types.filter(t => t.name !== 'Death opportunity').map(t => t.id), offLayers: [], tags: [], text: '', rules: '' } },
+    { id: uid(), name: 'Story beats', filters: { ...emptyFilters(), offTypes: p.types.filter(t => t.id !== storyType.id && t.name !== 'Cutscene').map(t => t.id) } },
+    { id: uid(), name: 'Deaths', filters: { ...emptyFilters(), offTypes: p.types.filter(t => t.name !== 'Death opportunity').map(t => t.id) } },
   ]
   return p
 }

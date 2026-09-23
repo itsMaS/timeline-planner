@@ -1,5 +1,5 @@
-import type { Camera, Filters, Item, Project } from './types'
-import { attachmentsFor, effectiveValue, formatValue } from './fields'
+import type { Camera, FieldDef, Filters, Item, Project } from './types'
+import { attachmentsFor, effectiveValue, formatValue, type Owner } from './fields'
 import { matchesRule } from './scope'
 import { clamp, lerp } from './util'
 
@@ -99,16 +99,33 @@ export function displayLabel(title: string, max = LABEL_MAX): string {
   return title.slice(0, Math.floor(max / 6.6) - 1) + '…'
 }
 
+/** Fields hidden by the live filters (canvas labels, tooltip, exports); badged toggles never ride in the label. */
+export function isFieldShown(p: Project, field: FieldDef): boolean {
+  return !(p.filters?.offFields ?? []).includes(field.id) && !(field.kind === 'toggle' && field.badge)
+}
+
 /**
  * "Name: value · Name: value" for every custom field the item has filled in
- * (just "value" for fields that hide their name).
+ * (just "value" for fields that hide their name), skipping fields hidden by
+ * the filters and toggles that show as an icon badge instead.
  */
 export function itemFieldText(p: Project, it: Item): string {
   return attachmentsFor(p, { kind: 'item', entity: it })
+    .filter(({ field }) => isFieldShown(p, field))
     .map(({ att, field }) => ({ field, v: formatValue(p, field, effectiveValue(field, att, it.fieldValues[field.id])) }))
     .filter(x => x.v.trim())
     .map(x => (x.field.showName ? `${x.field.name}: ${x.v}` : x.v))
     .join(FIELD_SEP)
+}
+
+/** ✓ / ✗ badges to draw on an entity: its badged toggle fields (not hidden), with the effective state. */
+export function toggleBadges(p: Project, owner: Owner): { field: FieldDef; on: boolean | null }[] {
+  return attachmentsFor(p, owner)
+    .filter(({ field }) => field.kind === 'toggle' && field.badge && !(p.filters?.offFields ?? []).includes(field.id))
+    .map(({ att, field }) => {
+      const v = effectiveValue(field, att, owner.entity.fieldValues?.[field.id])
+      return { field, on: typeof v === 'boolean' ? v : null }
+    })
 }
 
 /**

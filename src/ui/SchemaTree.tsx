@@ -1,6 +1,6 @@
 import React, { useRef, useState } from 'react'
-import { ChevronDown, ChevronRight, FolderPlus, Plus, Settings2, Trash2 } from 'lucide-react'
-import { attachedToNames, fieldUsage, kindGlyph, kindLabel, newFieldDef } from '../model/fields'
+import { ChevronDown, ChevronRight, Eye, EyeOff, FolderPlus, Plus, Settings2, Target, Trash2 } from 'lucide-react'
+import { attachedToNames, fieldUsage, kindGlyph, kindLabel, newFieldDef, typesWithField } from '../model/fields'
 import {
   childFolders, dissolveFolder, foldersOf, folderTree, isSelfOrDescendant, membersInFolder, membersInSubtree, membersOf,
   moveMember, newFolder, type FolderMember,
@@ -57,6 +57,23 @@ export function SchemaTree({ kind, query }: { kind: Kind; query: string }) {
   const editFolder = (id: string, recipe: (f: Folder) => void) =>
     mutate(p => { const x = foldersOf(p, kind).find(y => y.id === id); if (x) recipe(x) })
   const openEditor = (id: string) => setUI(kind === 'fields' ? { editFieldId: id } : { editProcessorId: id })
+
+  // ---- visibility (per-user filters, saved with views): hidden fields leave
+  // the canvas labels, tooltip and exports; hidden processors the band badge
+  // and exports. The inspector always shows both.
+  const offList = (f: typeof proj.filters) => (kind === 'fields' ? f.offFields : f.offProcessors)
+  const isOff = (id: string) => offList(proj.filters).includes(id)
+  const setOff = (ids: string[], off: boolean) => tweak(p => {
+    const set = new Set(offList(p.filters))
+    for (const id of ids) { if (off) set.add(id); else set.delete(id) }
+    if (kind === 'fields') p.filters.offFields = [...set]; else p.filters.offProcessors = [...set]
+  })
+  /** Unhide every type whose items carry the field (and the field itself). */
+  const reveal = (fieldId: string) => tweak(p => {
+    const ids = new Set(typesWithField(p, fieldId).map(t => t.id))
+    p.filters.offTypes = p.filters.offTypes.filter(id => !ids.has(id))
+    p.filters.offFields = p.filters.offFields.filter(id => id !== fieldId)
+  })
 
   const addMember = (folderId: string | null) => {
     const id = uid()
@@ -168,10 +185,12 @@ export function SchemaTree({ kind, query }: { kind: Kind; query: string }) {
       title = `${describeProcessor(proj.fields, pr)} · on ${levels.map(l => l.name).join(', ') || 'no level'}`
     }
     const lifting = drag?.what === 'member' && drag.id === m.id
+    const off = isOff(m.id)
+    const stop = (e: React.SyntheticEvent) => e.stopPropagation()
     return (
       <div
         key={m.id}
-        className={`schema-row ${dropClass(m.id)} ${lifting ? 'lifting' : ''}`}
+        className={`schema-row ${dropClass(m.id)} ${lifting ? 'lifting' : ''} ${off ? 'off' : ''}`}
         data-st-member={m.id}
         title={canEdit ? `${title} · drag to reorder or file into a folder` : title}
         onPointerDown={e => startDrag(e, { what: 'member', id: m.id, x: e.clientX, y: e.clientY, started: false })}
@@ -181,6 +200,19 @@ export function SchemaTree({ kind, query }: { kind: Kind; query: string }) {
         <span className="type-name">{m.name}</span>
         <span className="schema-sub">{sub}</span>
         {count !== null && <span className="count">{count}</span>}
+        {kind === 'fields' && (
+          <button
+            className="ghost-btn row-act" title="Reveal: show every type that has this field (and the field)"
+            onPointerDown={stop} onClick={e => { stop(e); reveal(m.id) }}
+          ><Target width={12} height={12} /></button>
+        )}
+        <button
+          className={`ghost-btn row-act ${off ? 'on' : ''}`}
+          title={kind === 'fields'
+            ? (off ? 'Hidden from the canvas, tooltip and exports · click to show' : 'Hide from the canvas, tooltip and exports (saved with views)')
+            : (off ? 'Hidden from the band and exports · click to show' : 'Hide from the band and exports (saved with views)')}
+          onPointerDown={stop} onClick={e => { stop(e); setOff([m.id], !off) }}
+        >{off ? <EyeOff width={12} height={12} /> : <Eye width={12} height={12} />}</button>
         {canEdit && <Settings2 width={12} height={12} className="row-gear" />}
       </div>
     )
@@ -195,11 +227,12 @@ export function SchemaTree({ kind, query }: { kind: Kind; query: string }) {
     const collapsed = isCollapsed(f)
     const Chev = collapsed ? ChevronRight : ChevronDown
     const lifting = drag?.what === 'folder' && drag.id === f.id
+    const allOff = all.length > 0 && all.every(m => isOff(m.id))
     const moveTargets = folderTree(proj, kind).filter(({ folder }) => !isSelfOrDescendant(proj, f.id, folder.id, kind))
     return (
       <React.Fragment key={f.id}>
         <div
-          className={`folder-row ${lifting ? 'lifting' : ''} ${folderDropClass(f.id)}`}
+          className={`folder-row ${lifting ? 'lifting' : ''} ${allOff ? 'off' : ''} ${folderDropClass(f.id)}`}
           data-st-folder={f.id}
           onPointerDown={e => startDrag(e, { what: 'folder', id: f.id, x: e.clientX, y: e.clientY, started: false })}
           title={canEdit ? 'Drag onto another folder to nest it' : undefined}
@@ -217,6 +250,12 @@ export function SchemaTree({ kind, query }: { kind: Kind; query: string }) {
               <Plus width={13} height={13} />
             </button>
           )}
+          <button
+            className={`ghost-btn row-act ${allOff ? 'on' : ''}`}
+            title={allOff ? 'Show everything in this folder' : 'Hide everything in this folder'}
+            disabled={all.length === 0}
+            onClick={() => setOff(all.map(m => m.id), !allOff)}
+          >{allOff ? <EyeOff width={13} height={13} /> : <Eye width={13} height={13} />}</button>
           {canEdit && (
             <button
               className={`ghost-btn row-act ${openFolderId === f.id ? 'on' : ''}`} title="Folder settings"

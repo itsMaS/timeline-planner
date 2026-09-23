@@ -45,6 +45,11 @@ export interface FieldDef {
   refShowLinks: boolean
   /** Sidebar folder (Project.fieldFolders); null/undefined = root. Groups the field in the inspector and exports too. */
   folderId?: Id | null
+  /**
+   * toggle: draw a ✓ / ✗ badge on the item's icon (and a ✓ after a section's
+   * name) so the state reads at a glance. Off by default.
+   */
+  badge?: boolean
 }
 
 /** A field attached to a type or a hierarchy level. */
@@ -192,6 +197,10 @@ export interface Filters {
    * other filter groups. Saved in views like the rest.
    */
   rules: string
+  /** Field ids hidden from the canvas labels, tooltip and exports (the inspector always shows them). */
+  offFields: Id[]
+  /** Processor ids hidden from the band badge and exports (the inspector always shows them). */
+  offProcessors: Id[]
 }
 
 export interface View {

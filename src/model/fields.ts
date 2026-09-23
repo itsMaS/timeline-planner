@@ -29,7 +29,13 @@ export function newFieldDef(id: Id, name: string, kind: FieldKind = 'text'): Fie
     maxLength: null, min: null, max: null, decimals: null, unit: '',
     options: [], selectMultiple: false,
     refTargets: [], refMultiple: false, refShowLinks: false,
+    folderId: null, badge: false,
   }
+}
+
+/** Types whose items carry `fieldId` (own attachment or inherited from a folder). */
+export function typesWithField(p: Project, fieldId: Id): ItemType[] {
+  return p.types.filter(t => typeAttachments(p, t).some(a => a.field.id === fieldId))
 }
 
 /** Fill in anything missing from a field saved by an older build. */

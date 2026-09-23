@@ -1,10 +1,11 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { iconByName } from '../model/icons'
-import { contentExtent, layoutTimeline, rowY, spineYFor, splitLabel, typeOf } from '../model/layout'
+import { contentExtent, isFieldShown, layoutTimeline, rowY, spineYFor, splitLabel, toggleBadges, typeOf } from '../model/layout'
 import type { Camera, Project } from '../model/types'
 import { clamp, download, formatUnit, rulerStepFor, sectionHue, unitSuffix } from '../model/util'
 import { attachmentsFor, effectiveValue, formatValue, levelOf, orderedFields } from '../model/fields'
-import { bandBadge, processorResults } from '../model/processors'
+import { bandBadge, shownProcessorResults } from '../model/processors'
+import { ToggleBadges } from './Canvas'
 import { scopedProject, type ExportScope } from './exportScope'
 
 interface Colors { bg: string; text: string; line: string; muted: string }
@@ -74,7 +75,8 @@ function ExportScene(props: { proj: Project; cam: Camera; w: number; h: number }
             const labelPx = sizeAt(sc.depth)
             const barTop = -spineY + barTopFor(sc.depth)
             const avail = x2 - (Math.max(x1, 0) + 8)
-            const nameW = sc.name.length * labelPx * 0.62
+            const marks = toggleBadges(proj, { kind: 'section', entity: sc }).filter(b => b.on).map(() => ' ✓').join('')
+            const nameW = (sc.name.length + marks.length) * labelPx * 0.62
             const showText = avail >= nameW + 8
             const dur = sc.end - sc.start
             const durText = st.sectionStyle.showDuration
@@ -93,7 +95,7 @@ function ExportScene(props: { proj: Project; cam: Camera; w: number; h: number }
                 {showText && (
                   <text x={Math.max(x1, 0) + 8} y={barTop + labelPx + 3} fontFamily={font} fontSize={labelPx}
                     fontWeight={sc.depth === 0 ? 700 : 600}
-                    fill={`hsl(${hue} 50% ${theme === 'dark' ? '70%' : '38%'})`}>{sc.name}</text>
+                    fill={`hsl(${hue} 50% ${theme === 'dark' ? '70%' : '38%'})`}>{sc.name}{marks && <tspan fill="#22c55e">{marks}</tspan>}</text>
                 )}
                 {showDur && (
                   <text x={Math.max(x1, 0) + 8 + nameW + 8} y={barTop + labelPx + 3} fontFamily={font} fontSize={durPx}
@@ -157,6 +159,7 @@ function ExportScene(props: { proj: Project; cam: Camera; w: number; h: number }
               )}
               <circle r={14 * z} fill={C.bg} stroke={t?.color} strokeWidth={1.5} />
               <Icon x={-8 * z} y={-8 * z} width={16 * z} height={16 * z} color={t?.color} strokeWidth={2} />
+              <ToggleBadges badges={toggleBadges(proj, { kind: 'item', entity: pl.item })} z={z} plain />
               {pl.labelShown && (() => {
                 const label = splitLabel(proj, pl.item, showFields, showTitles)
                 return (
@@ -206,8 +209,9 @@ export function exportCSV(proj: Project, scope: ExportScope) {
     { length: maxDepth + 1 },
     (_, d) => proj.hierarchyLevels[d]?.name ?? `Level ${d + 1}`,
   )
-  // Field columns follow the sidebar order (root fields, then folder by folder).
-  const fields = orderedFields(proj)
+  // Field columns follow the sidebar order (root fields, then folder by folder); hidden fields and processors stay out.
+  const fields = orderedFields(proj).filter(f => !(proj.filters.offFields ?? []).includes(f.id))
+  const processors = proj.processors.filter(pr => !(proj.filters.offProcessors ?? []).includes(pr.id))
   const header = [...levels, 'Title', 'Type', 'Position', 'Duration', 'Tags', 'Description', 'Link', 'Created by', ...fields.map(f => f.name)]
   const rows = scope.items
     .map(it => {
@@ -233,10 +237,10 @@ export function exportCSV(proj: Project, scope: ExportScope) {
   const inScope = (sc: { start: number; end: number }) =>
     !scope.sections.length || scope.sections.some(s => sc.start >= s.start - 1e-9 && sc.end <= s.end + 1e-9)
   const sections = [...proj.sections].filter(inScope).sort((a, b) => a.start - b.start || a.depth - b.depth)
-  const secHeader = ['Level', 'Section', 'Start', 'End', 'Length', 'Description', ...fields.map(f => f.name), ...proj.processors.map(p => p.name)]
+  const secHeader = ['Level', 'Section', 'Start', 'End', 'Length', 'Description', ...fields.map(f => f.name), ...processors.map(p => p.name)]
   const secRows = sections.map(sc => {
     const atts = attachmentsFor(proj, { kind: 'section', entity: sc })
-    const results = new Map(processorResults(proj, sc).map(r => [r.proc.id, r]))
+    const results = new Map(shownProcessorResults(proj, sc).map(r => [r.proc.id, r]))
     return [
       levelOf(proj, sc)?.name ?? `Level ${sc.depth + 1}`,
       sc.name,
@@ -248,7 +252,7 @@ export function exportCSV(proj: Project, scope: ExportScope) {
         const a = atts.find(x => x.field.id === f.id)
         return a ? formatValue(proj, f, effectiveValue(f, a.att, sc.fieldValues?.[f.id])) : ''
       }),
-      ...proj.processors.map(p => { const r = results.get(p.id); return r && !r.error ? r.text : '' }),
+      ...processors.map(p => { const r = results.get(p.id); return r && !r.error ? r.text : '' }),
     ].map(esc).join(',')
   })
   const parts = [header.map(esc).join(','), ...rows]

@@ -859,6 +859,14 @@ body.col-resizing .inspector { animation: none; }
 /* Fields & processors tree: drag to reorder (line above / below a row) or into a folder. */
 .schema-tree { position: relative; }
 .schema-tree .schema-row { position: relative; user-select: none; }
+.schema-row.off { opacity: .42; }
+.schema-row .row-act { display: none; padding: 2px; }
+.schema-row:hover .row-act, .schema-row .row-act.on, .schema-row.off .row-act { display: inline-flex; }
+.badge-demo { display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; border-radius: 50%; font-size: 10px; font-weight: 700; background: var(--panel2); color: var(--muted); margin: 0 2px; }
+.badge-demo.on { background: #22c55e; color: #fff; }
+/* Toggle badges on item icons: ✓ green when on, ✗ muted when off. */
+.tbadge-bg { stroke-width: 1.2; }
+.tbadge { pointer-events: none; }
 .schema-tree.dragging .schema-row { cursor: grabbing; }
 .schema-row.lifting { opacity: .35; }
 .schema-row.drop-before::before, .schema-row.drop-after::after {

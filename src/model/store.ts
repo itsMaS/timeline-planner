@@ -7,7 +7,7 @@ import { applyChanges, diffToChanges, type Proposal, type ProposalChange } from 
 import type { Camera, FieldAttachment, FieldDef, FieldValue, Filters, HierarchyLevel, Id, Item, Project, TimelineSettings } from './types'
 import { isMobile, uid } from './util'
 
-export const emptyFilters = (): Filters => ({ offTypes: [], offLayers: [], tags: [], text: '', rules: '' })
+export const emptyFilters = (): Filters => ({ offTypes: [], offLayers: [], tags: [], text: '', rules: '', offFields: [], offProcessors: [] })
 
 /** Fill in filter fields missing from older saves (views and the live filters alike). */
 export function normalizeFilters(f: Partial<Filters> | undefined): Filters {
@@ -17,6 +17,8 @@ export function normalizeFilters(f: Partial<Filters> | undefined): Filters {
     tags: Array.isArray(f?.tags) ? f!.tags : [],
     text: typeof f?.text === 'string' ? f!.text : '',
     rules: typeof f?.rules === 'string' ? f!.rules : '',
+    offFields: Array.isArray(f?.offFields) ? f!.offFields : [],
+    offProcessors: Array.isArray(f?.offProcessors) ? f!.offProcessors : [],
   }
 }
 

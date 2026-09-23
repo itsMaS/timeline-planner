@@ -423,6 +423,12 @@ export function FieldEditor() {
         <input type="checkbox" checked={field.showName} onChange={e => edit(f => { f.showName = e.target.checked })} />
         Show the field's name next to its value
       </label>
+      {field.kind === 'toggle' && (
+        <label className="check-row">
+          <input type="checkbox" checked={!!field.badge} onChange={e => edit(f => { f.badge = e.target.checked })} />
+          Badge on the item icon: <span className="badge-demo on">✓</span> when on, <span className="badge-demo">✗</span> when off (a ✓ after a section's name)
+        </label>
+      )}
       <div className="sb-hint" style={{ marginTop: -4 }}>
         Off when the value speaks for itself (e.g. “12 {field.unit || 'coins'}”) — the name then only identifies the field here and in the sidebar.
       </div>

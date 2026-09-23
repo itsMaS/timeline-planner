@@ -6,13 +6,13 @@ import {
 import { allowsTarget, attachmentsFor, backlinks, effectiveValue, formatValue, ownerOf } from '../model/fields'
 import { iconByName } from '../model/icons'
 import {
-  PlacedItem, ROW_H, contentExtent, fitCamera, itemMatchesFilters, splitLabel,
+  PlacedItem, ROW_H, contentExtent, fitCamera, isFieldShown, itemMatchesFilters, splitLabel, toggleBadges,
   layoutTimeline, minZoomFor, refreshSectionDepths, rowY, spineYFor, typeOf,
 } from '../model/layout'
 import { bandBadge } from '../model/processors'
 import { diffToChanges, pendingChanges, previewProject, type ChangeKind, type ProposalChange } from '../model/proposal'
 import { useActiveProject, useStore } from '../model/store'
-import type { Camera, Item, Section } from '../model/types'
+import type { Camera, FieldDef, Item, Section } from '../model/types'
 import { hideNewTypeInFilters } from '../model/views'
 import { PALETTE, clamp, formatUnit, rulerStepFor, sectionHue, snapPos, timeBaseFor, uid, unitSuffix } from '../model/util'
 import { bindParticleCanvas, burst, puff, ripple, setParticleLevel } from '../fx/particles'
@@ -1348,7 +1348,7 @@ export function CanvasView() {
   const hoverType = hoverItem ? typeOf(view, hoverItem) : null
   const hoverFields = hoverItem
     ? attachmentsFor(view, { kind: 'item', entity: hoverItem })
-      .filter(a => a.field.showInTooltip)
+      .filter(a => a.field.showInTooltip && isFieldShown(view, a.field))
       .map(a => ({ field: a.field, text: formatValue(view, a.field, effectiveValue(a.field, a.att, hoverItem.fieldValues[a.field.id])) }))
       .filter(a => a.text)
     : []
@@ -1357,7 +1357,12 @@ export function CanvasView() {
   // when the document changes, never per pointer move.
   const badges = useMemo(
     () => new Map(proj.sections.map(sc => [sc.id, bandBadge(proj, sc)])),
-    [proj.sections, proj.items, proj.fields, proj.processors, proj.hierarchyLevels, proj.types],
+    [proj.sections, proj.items, proj.fields, proj.processors, proj.hierarchyLevels, proj.types, proj.filters.offProcessors],
+  )
+  // " ✓" per badged toggle that is on, appended to the section name.
+  const sectionMarks = useMemo(
+    () => new Map(proj.sections.map(sc => [sc.id, toggleBadges(proj, { kind: 'section', entity: sc }).filter(b => b.on).map(() => ' ✓').join('')])),
+    [proj.sections, proj.fields, proj.hierarchyLevels, proj.filters.offFields],
   )
 
   // Reference connectors for the single selected entry: outgoing links of its
@@ -1401,11 +1406,13 @@ export function CanvasView() {
     if (x2 < -40 || x1 > size.w + 40 || w < 2) return []
     const sel = selection.has(`S:${sc.id}`)
     const labelPx = sizeAtDepth(sc.depth)
+    // Badged toggles that are on append a ✓ each to the section's name.
+    const marks = sectionMarks.get(sc.id) ?? ''
     // The label renders only when it fits fully inside the (visible part of
     // the) bar — otherwise the colored bar alone marks the section. The faint
     // duration follows only if it fits too.
     const avail = x2 - (Math.max(x1, 0) + 8)
-    const nameW = sc.name.length * labelPx * 0.62
+    const nameW = (sc.name.length + marks.length) * labelPx * 0.62
     const dur = sc.end - sc.start
     const durText = st.sectionStyle.showDuration
       ? formatUnit(dur, dur, unitSuffix(st.unit.preset, st.unit.custom), st.unit.preset)
@@ -1419,7 +1426,7 @@ export function CanvasView() {
     const badgeX = Math.min(x2, size.w) - 8
     const showBadge = !!badge && avail >= nameW + 8 && badgeX - badge.length * durPx * 0.62 >= textEnd + 14
     return [{
-      sc, x1, x2, w, sel, labelPx, hl: highlightId === sc.id, badge, badgeX, showBadge,
+      sc, x1, x2, w, sel, labelPx, hl: highlightId === sc.id, badge, badgeX, showBadge, marks,
       hue: sectionHue(depthIndex.get(sc.id) ?? 0),
       barTop: -spineY + barTopFor(sc.depth),
       barH: labelPx + 10,
@@ -1502,7 +1509,7 @@ export function CanvasView() {
           {/* section header bars — a padding-free, fully opaque strip spanning
               the whole section at its depth row, drawn above everything else in
               the band so nothing cuts through it. Also the section's drag target. */}
-          {bandGeo.map(({ sc, x1, w, hue, sel, hl, labelPx, barTop, barH, showText, showDur, durText, durX, durPx, badge, badgeX, showBadge }) => (
+          {bandGeo.map(({ sc, x1, w, hue, sel, hl, labelPx, barTop, barH, showText, showDur, durText, durX, durPx, badge, badgeX, showBadge, marks }) => (
             <g
               key={`hdr-${sc.id}`}
               className="band-label-g"
@@ -1527,6 +1534,7 @@ export function CanvasView() {
                   }}
                 >
                   {sc.name}
+                  {marks && <tspan fill="#22c55e">{marks}</tspan>}
                 </text>
               )}
               {showDur && (
@@ -1903,6 +1911,44 @@ export function CanvasView() {
   )
 }
 
+// ------------------------------------------------------------------ ToggleBadges
+
+/**
+ * ✓ / ✗ badges on the corner of an item icon, one per badged toggle field:
+ * green when on, faint when off, dashed outline when unset. Several shrink
+ * and line up along the bottom-right edge; each carries its field name as a
+ * tooltip. Shared by the canvas and the PNG / SVG export scene.
+ */
+export function ToggleBadges({ badges, z, plain }: { badges: { field: FieldDef; on: boolean | null }[]; z: number; plain?: boolean }) {
+  if (!badges.length) return null
+  const r = (badges.length === 1 ? 5.5 : badges.length === 2 ? 4.8 : 4.2) * z
+  const step = r * 2 + 1
+  const cx0 = 10 * z
+  const cy = 10 * z
+  return (
+    <g className="tbadge">
+      {badges.map((b, i) => {
+        const cx = cx0 - i * step
+        const bg = b.on === true ? '#22c55e' : plain ? '#8b91a0' : 'var(--panel2)'
+        const stroke = b.on === true ? '#16a34a' : plain ? '#8b91a0' : 'var(--line)'
+        const fg = b.on === true ? '#fff' : plain ? '#fff' : 'var(--muted)'
+        const k = r / 5.5
+        return (
+          <g key={b.field.id} transform={`translate(${cx}, ${cy})`}>
+            <title>{`${b.field.name}: ${b.on === null ? 'not set' : b.on ? 'yes' : 'no'}`}</title>
+            <circle r={r} fill={bg} stroke={stroke} strokeDasharray={b.on === null ? '1.5 1.5' : undefined} className="tbadge-bg" />
+            {b.on === true
+              ? <path d={`M ${-2.6 * k} ${0.2 * k} L ${-0.8 * k} ${2 * k} L ${2.8 * k} ${-2 * k}`} fill="none" stroke={fg} strokeWidth={1.6 * k} strokeLinecap="round" strokeLinejoin="round" />
+              : b.on === false
+                ? <path d={`M ${-2.2 * k} ${-2.2 * k} L ${2.2 * k} ${2.2 * k} M ${2.2 * k} ${-2.2 * k} L ${-2.2 * k} ${2.2 * k}`} fill="none" stroke={fg} strokeWidth={1.4 * k} strokeLinecap="round" opacity={0.75} />
+                : null}
+          </g>
+        )
+      })}
+    </g>
+  )
+}
+
 // ------------------------------------------------------------------ NamePrompt
 
 /** Single-line title prompt: Enter or blur commits, Escape cancels. */
@@ -1964,6 +2010,7 @@ function ItemG(props: {
   const type = typeOf(proj, pl.item)
   const Icon = iconByName(type?.icon ?? 'Circle')
   const label = splitLabel(proj, pl.item, props.showFields, props.showTitles)
+  const badges = toggleBadges(proj, { kind: 'item', entity: pl.item })
   const color = type?.color ?? '#888'
   const z = pl.size || 1
   const barY = 3 + 14 * z
@@ -2027,6 +2074,7 @@ function ItemG(props: {
         <circle r={14 * z} className="node-under" />
         <circle r={14 * z} className="node-bg" style={{ fill: `${color}26`, stroke: color }} />
         <Icon x={-8 * z} y={-8 * z} width={16 * z} height={16 * z} color={color} strokeWidth={2} />
+        <ToggleBadges badges={badges} z={z} />
         {pl.labelShown && (
           <text
             x={20 * z} y={4 * z} className="node-label"
