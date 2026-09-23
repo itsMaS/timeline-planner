@@ -5,7 +5,7 @@ import {
   levelOf, locationOf, ownerOf, parseInput, refCandidates, type Owner,
 } from '../model/fields'
 import { iconByName } from '../model/icons'
-import { useActiveProject, useStore } from '../model/store'
+import { useActiveWhole, useStore } from '../model/store'
 import type { FieldAttachment, FieldDef, FieldValue, Id, Project } from '../model/types'
 import { formatUnit, unitSuffix } from '../model/util'
 import { Markdown } from './Markdown'
@@ -40,7 +40,7 @@ export function FieldRow(props: {
   onChange: (v: FieldValue | null) => void
 }) {
   const { field, att } = props
-  const proj = useActiveProject()
+  const proj = useActiveWhole()
   const explicit = coerceValue(field, props.raw)
   const eff = effectiveValue(field, att, props.raw)
   if (isDerived(field)) {
@@ -102,7 +102,7 @@ export function FieldValueInput(props: {
   compact?: boolean
 }) {
   const { field, value } = props
-  const proj = useActiveProject()
+  const proj = useActiveWhole()
   const fallback = props.asDefault ? null : defaultFor(field, props.att)
   const placeholder = props.asDefault
     ? (props.att && field.defaultValue !== null ? `field default: ${formatValue(proj, field, field.defaultValue)}` : 'no default')
@@ -291,7 +291,7 @@ function RefPicker(props: {
   compact?: boolean
 }) {
   const { field, value } = props
-  const proj = useActiveProject()
+  const proj = useActiveWhole()
   const setUI = useStore(s => s.setUI)
   const pickRef = useStore(s => s.ui.pickRef)
   const readOnly = useStore(s => s.ui.readOnly)
@@ -391,7 +391,7 @@ function RefPicker(props: {
  * and location, span, tags, and its description (click the text to expand).
  */
 export function RefEntry({ id, onRemove }: { id: Id; onRemove?: () => void }) {
-  const proj = useActiveProject()
+  const proj = useActiveWhole()
   const setUI = useStore(s => s.setUI)
   const [expanded, setExpanded] = useState(false)
   const o = ownerOf(proj, id)
@@ -442,7 +442,7 @@ export function RefEntry({ id, onRemove }: { id: Id; onRemove?: () => void }) {
 
 /** Chip for one referenced entity; click jumps to it. */
 export function RefChip({ id, onRemove, via }: { id: Id; onRemove?: () => void; via?: string }) {
-  const proj = useActiveProject()
+  const proj = useActiveWhole()
   const setUI = useStore(s => s.setUI)
   const o = ownerOf(proj, id)
   if (!o) return <span className="ref-chip missing">missing</span>
@@ -469,7 +469,7 @@ export function RefChip({ id, onRemove, via }: { id: Id; onRemove?: () => void; 
 
 /** Formatted value for the read-only inspector / viewer. */
 export function ReadFieldValue({ field, value }: { field: FieldDef; value: FieldValue | null }) {
-  const proj = useActiveProject()
+  const proj = useActiveWhole()
   if (value === null) return <span className="muted">—</span>
   if (field.kind === 'ref' && Array.isArray(value)) {
     return <div className="ref-list">{value.map(id => <RefEntry key={id} id={id} />)}</div>
@@ -482,7 +482,7 @@ export function ReadFieldValue({ field, value }: { field: FieldDef; value: Field
 
 /** "Referenced by" list for an item or section. */
 export function ReferencedBy({ id }: { id: Id }) {
-  const proj = useActiveProject()
+  const proj = useActiveWhole()
   const links = useMemo(() => backlinks(proj, id), [proj, id])
   if (!links.length) return null
   return (

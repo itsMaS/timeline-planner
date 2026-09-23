@@ -9,7 +9,7 @@ import {
 } from '../model/folders'
 import { iconByName } from '../model/icons'
 import { processorUsage } from '../model/processors'
-import { useActiveProject, useCanEdit, useStore } from '../model/store'
+import { useActiveWhole, useCanEdit, useStore } from '../model/store'
 import type { FieldDef, Folder, FolderKind, ProcessorDef } from '../model/types'
 import { PALETTE, uid } from '../model/util'
 import { IconPicker } from './IconPicker'
@@ -31,7 +31,7 @@ type Drop = { folderId: string } | { memberId: string; side: 'before' | 'after' 
  * into a folder. Clicking a member opens its editor.
  */
 export function SchemaTree({ kind, query }: { kind: Kind; query: string }) {
-  const proj = useActiveProject()
+  const proj = useActiveWhole()
   const canEdit = useCanEdit()
   const mutate = useStore(s => s.mutate)
   const tweak = useStore(s => s.tweak)

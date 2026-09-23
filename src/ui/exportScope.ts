@@ -1,4 +1,5 @@
 import { itemMatchesFilters, typeOf } from '../model/layout'
+import { derived } from '../model/timelines'
 import type { Item, Project, Section } from '../model/types'
 
 /**
@@ -55,5 +56,5 @@ export function exportScope(proj: Project, selection: string[]): ExportScope {
 
 /** A copy of the project holding only the items in scope (sections and layers stay for context). */
 export function scopedProject(proj: Project, scope: ExportScope): Project {
-  return { ...proj, items: scope.items }
+  return derived(proj, { items: scope.items })
 }

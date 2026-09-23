@@ -29,15 +29,16 @@ export interface ProcessorResult {
   error?: string
 }
 
-/** Items and nested sections inside `section` (item start inside the range). */
+/** Items and nested sections inside `section` (item start inside the range), on the section's own timeline. */
 export function entitiesInside(p: Project, section: Section): Owner[] {
   const eps = 1e-9
   const out: Owner[] = []
   for (const it of p.items) {
+    if (it.timelineId !== section.timelineId) continue
     if (it.pos >= section.start - eps && it.pos <= section.end + eps) out.push({ kind: 'item', entity: it })
   }
   for (const sc of p.sections) {
-    if (sc.id === section.id) continue
+    if (sc.id === section.id || sc.timelineId !== section.timelineId) continue
     if (sc.depth > section.depth && sc.start >= section.start - eps && sc.end <= section.end + eps) out.push({ kind: 'section', entity: sc })
   }
   return out

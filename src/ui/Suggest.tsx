@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react'
 import { Lightbulb, Send, X } from 'lucide-react'
 import { diffToChanges, type ProposalChange } from '../model/proposal'
-import { useActiveBase, useActiveProject, useActiveShare, useStore } from '../model/store'
+import { useActiveBase, useActiveShare, useActiveWhole, useStore } from '../model/store'
 import { getIdentity } from '../sync/client'
 import { submitSuggestion } from '../sync/proposals'
 import { ChangeRow } from './Proposals'
@@ -41,7 +41,7 @@ export function SuggestBar() {
       <strong>Suggest mode</strong>
       <span className="muted">
         {n === 0
-          ? 'your edits are collected here and sent for review instead of changing the timeline'
+          ? 'your edits are collected here and sent for review instead of changing the project'
           : `${n} pending change${n === 1 ? '' : 's'} — only you can see them until you send`}
       </span>
       <span className="grow" />
@@ -53,7 +53,7 @@ export function SuggestBar() {
         onClick={() => { if (window.confirm(`Discard ${n} unsent change${n === 1 ? '' : 's'}?`)) resetDraft(activeId, []) }}
       >discard</button>
       {share.role === 'edit' && (
-        <button className="ghost-btn add" title="Back to editing the timeline directly" onClick={() => exitSuggestSafely(activeId)}>
+        <button className="ghost-btn add" title="Back to editing the project directly" onClick={() => exitSuggestSafely(activeId)}>
           <X width={12} height={12} /> exit
         </button>
       )}
@@ -64,7 +64,7 @@ export function SuggestBar() {
 export function SuggestModal() {
   const activeId = useStore(s => s.activeId)
   const base = useActiveBase()
-  const draft = useActiveProject()
+  const draft = useActiveWhole()
   const share = useActiveShare()
   const setUI = useStore(s => s.setUI)
   const resetDraft = useStore(s => s.resetDraft)

@@ -15,8 +15,9 @@
   `tsc --noEmit` first, so it doubles as the typecheck.
 - `src/model/` — data types, store (persistence/undo), layout solver, utils.
 - `src/ui/` — components; `Canvas.tsx` holds all pointer interactions.
-- Per-project display settings live on `Project.settings` (see
-  `normalizeProject` in `src/model/store.ts` for migration of old saves).
+- Display settings live on each timeline (`Timeline.settings`, see the
+  Timelines section); `Project.settings` only seeds new timelines. See
+  `normalizeProject` in `src/model/store.ts` for migration of old saves.
 
 ## Sharing / realtime (Supabase)
 
@@ -74,6 +75,49 @@
 - The live project has anonymous sign-ins off, so tabs poll (every 4 s) and
   `realtime.messages` has no partitions; the API broadcast is a no-op there
   and the version-checked autosave is what keeps API writes safe.
+
+## Timelines (subtabs)
+
+- A project holds `Project.timelines` (`Timeline = {id, name, settings}`), a
+  synced collection; items and sections carry `timelineId`. Fields, types,
+  folders, layers, hierarchy levels, processors and views are shared by the
+  project; sections, items, settings and the camera belong to a timeline.
+  Helpers live in `src/model/timelines.ts`; `repairTimelines` runs with every
+  other repair (load, mutate, undo, remote patch) and gives entities without a
+  timeline the one on screen (mutate) or the first one.
+- Migration is deterministic: an older document becomes one timeline
+  `timeline-0` named "Main" carrying the old `Project.settings` (kept only as
+  the seed for new timelines). `0008_timelines.sql` backfills stored documents
+  the same way.
+- Per-user, never synced: `activeTimelineId` and `cameras` (parked cameras of
+  the other timelines; `Project.camera` is the active one's). `keepUserState`
+  in the store carries them across remote replaces, drafts and suggest mode.
+- **Reads are scoped, writes are whole.** `useActiveProject()` returns
+  `timelineView(project)`: only the active timeline's items and sections, with
+  its settings and camera (cached per project object, so selectors stay
+  stable). Everything position based (canvas, layout, section nesting,
+  processors, snapping, ripple, exports) works on that view. `mutate` recipes
+  still get the whole project. Use `useActiveWhole()` (or `store.active()`) for
+  anything that must see every timeline: references (`ownerOf` also falls
+  back from a view to the whole project it was cut from), proposal conflicts,
+  suggest diffs, Project JSON, field usage counts, tags.
+- UI (`src/ui/Timelines.tsx`): the active project tab shows "› name ▾" once
+  the project has two or more timelines; the menu switches, renames,
+  reorders, duplicates (fresh ids, internal references remapped) and deletes
+  (confirm lists cross-timeline references; undoable). The first extra
+  timeline comes from the tab's context menu (right-click / long-press). The
+  viewer gets a switch-only menu. Cross-timeline jumps (references, proposal
+  rows, search hints under the filter box) switch the timeline and set
+  `ui.jumpTo`; the canvas flies to the entity once it is on screen.
+- Share links may end in `/<timelineId>` (`parseShareRoute`); the Share
+  dialog has a toggle for it. Exports: PNG/SVG are the active timeline; CSV
+  and the document PDF take an "All timelines" toggle (`exportCSV(..., true)`
+  adds a Timeline column, `buildDocHTML(whole, sectionIds, timelineIds)` puts
+  each timeline under its own H1). The API takes `timelineId`/`timelineName`
+  on `api_create_item` and lists timelines in `api_schema`; the agent CLI's
+  `outline` groups by timeline and `export` takes `--timeline`.
+- In user-facing copy the shared document is a **project**; "timeline" means
+  a subtab. Database tables, channels and RPC names keep their old names.
 
 ## Suggest mode and history
 

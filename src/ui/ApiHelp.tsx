@@ -51,15 +51,15 @@ const FUNCTIONS: Fn[] = [
   },
   {
     name: 'api_read', kind: 'read',
-    what: 'The whole timeline, exactly like Export → Project JSON: sections, items, types, fields, layers.',
+    what: 'The whole project, exactly like Export → Project JSON: timelines, sections, items, types, fields, layers.',
     params: [],
     returns: '{ id, name, version, updatedAt, doc }',
   },
   {
     name: 'api_schema', kind: 'read',
-    what: 'Only the schema: fields (with dropdown options), types, hierarchy levels, layers, folders, processors, and every tag in use. Build your tool’s settings from it.',
+    what: 'Only the schema: timelines, fields (with dropdown options), types, hierarchy levels, layers, folders, processors, and every tag in use. Build your tool’s settings from it.',
     params: [],
-    returns: '{ id, name, version, fields, types, typeFolders, hierarchyLevels, layers, processors, tags }',
+    returns: '{ id, name, version, timelines, fields, types, typeFolders, hierarchyLevels, layers, processors, tags }',
   },
   {
     name: 'api_set_field', kind: 'write',
@@ -85,7 +85,7 @@ const FUNCTIONS: Fn[] = [
   },
   {
     name: 'api_update_item', kind: 'write',
-    what: 'Change an item’s title, description (Markdown) and/or link. Nothing else: position, type and layer stay under the planner’s control.',
+    what: 'Change an item’s title, description (Markdown) and/or link. Nothing else: position, type, layer and timeline stay under the planner’s control.',
     params: [
       ['p_item_id', 'item id'],
       ['p_patch', '{ title?, description?, link? } — strings only'],
@@ -95,9 +95,9 @@ const FUNCTIONS: Fn[] = [
   },
   {
     name: 'api_create_item', kind: 'write',
-    what: 'Create an item, for example a checkpoint that exists in the scene but not on the timeline. Without pos it lands right after the last item of the section (at the section start when empty; after the last item of the timeline when no section is given).',
+    what: 'Create an item, for example a checkpoint that exists in the scene but not on the timeline. It lands on the timeline you name, else the section’s, else the first one. Without pos it sits right after the last item of the section (at the section start when empty; after the last item of the timeline when no section is given).',
     params: [
-      ['p_item', '{ typeName | typeId, title, sectionName? | sectionId?, pos?, duration?, description?, link?, tags?, layerId?, fieldValues? }'],
+      ['p_item', '{ typeName | typeId, title, timelineName? | timelineId?, sectionName? | sectionId?, pos?, duration?, description?, link?, tags?, layerId?, fieldValues? }'],
       ['p_author', 'optional'],
     ],
     returns: '{ version, changed, item }',
@@ -182,7 +182,7 @@ await Rpc("api_set_field", new {
             <h3>What it is</h3>
             <p>
               A small HTTP API that lets another program, such as a Unity editor plugin, a build script or a
-              spreadsheet, read this timeline and make a few well-defined changes to it. It is built for
+              spreadsheet, read this project and make a few well-defined changes to it. It is built for
               things like <em>“warn me when the open scene is missing a checkpoint that is on the timeline”</em>
               and <em>“set this item’s Progress to Done from inside the editor”</em>.
             </p>
@@ -190,11 +190,11 @@ await Rpc("api_set_field", new {
               <div>
                 <h4>It can</h4>
                 <ul>
-                  <li>Read the whole timeline, or just its schema (types, fields with options, levels, layers, tags)</li>
+                  <li>Read the whole project, or just its schema (timelines, types, fields with options, levels, layers, tags)</li>
                   <li>Set any field value on an item or section (dropdowns, numbers, text, references)</li>
                   <li>Add and remove tags on items</li>
                   <li>Edit an item’s title, description and link</li>
-                  <li>Create items by type name and section name</li>
+                  <li>Create items by type name, timeline name and section name</li>
                   <li>Check cheaply whether anything changed</li>
                 </ul>
               </div>
@@ -204,6 +204,7 @@ await Rpc("api_set_field", new {
                   <li>Delete anything</li>
                   <li>Move or resize items or sections</li>
                   <li>Change the schema: types, fields, hierarchy levels, layers</li>
+                  <li>Create, rename or delete timelines, or move items between them</li>
                   <li>Create, rotate or revoke share links</li>
                   <li>Act without a valid API token</li>
                 </ul>
@@ -211,7 +212,7 @@ await Rpc("api_set_field", new {
             </div>
             <p className="muted small">
               Every change made through the API is validated the same way the app validates it, bumps the
-              timeline’s version, shows up in the item’s history (source <code>api</code>, with the author you
+              project’s version, shows up in the item’s history (source <code>api</code>, with the author you
               pass), and reaches open tabs within a few seconds. A tab that is behind can never overwrite an API
               change: its save is refused, it pulls the new document, replays its own pending edits and saves again.
             </p>
@@ -220,7 +221,7 @@ await Rpc("api_set_field", new {
           <section>
             <h3>Getting started</h3>
             <ol>
-              <li>Share this timeline (you have, if you came from the Share dialog). Only the owner sees the API token.</li>
+              <li>Share this project (you have, if you came from the Share dialog). Only the owner sees the API token.</li>
               <li>
                 {token
                   ? <>Copy the <strong>API token</strong> from the Share dialog. It is already filled into the examples below.</>
@@ -288,12 +289,17 @@ await Rpc("api_set_field", new {
             <h3>Reading the document</h3>
             <ul>
               <li>
+                <strong>Timelines</strong> are the subtabs of the project: <code>timelines</code> lists them
+                (<code>{'{ id, name, settings }'}</code>) and every item and section carries a <code>timelineId</code>.
+                Positions on different timelines are unrelated{proj.timelines.length > 1 ? `; this project has ${proj.timelines.length}` : ''}.
+              </li>
+              <li>
                 <strong>Sections</strong> carry <code>depth</code>, an index into <code>hierarchyLevels</code>
                 (0 = {proj.hierarchyLevels[0]?.name ?? 'Chapter'}, 1 = {proj.hierarchyLevels[1]?.name ?? 'Level'}, …).
                 To find the section for a scene, match the section’s <code>name</code> at the level you use for scenes.
               </li>
               <li>
-                <strong>Items</strong> belong to a section when <code>section.start ≤ item.pos &lt; section.end</code>.
+                <strong>Items</strong> belong to a section when they share a timeline and <code>section.start ≤ item.pos &lt; section.end</code>.
                 Sections nest, so an item is in one section per depth. Resolve <code>item.typeId</code> in
                 <code>types</code> to know that an item is, say, a Checkpoint.
               </li>
@@ -336,9 +342,9 @@ await Rpc("api_set_field", new {
           <section>
             <h3>Good to know</h3>
             <ul>
-              <li>One token per timeline, held by the owner. There is no per-token scoping; rotate it if it leaks.</li>
-              <li><code>api_read</code> returns everything, including inline images on timelines that were never shared before. Prefer <code>api_schema</code> and <code>api_version</code> for frequent calls.</li>
-              <li>Name lookups (<code>typeName</code>, <code>sectionName</code>) are case-insensitive and must be unique; when two sections share a name the error lists their ids so you can pass <code>sectionId</code>.</li>
+              <li>One token per project, held by the owner. There is no per-token scoping; rotate it if it leaks.</li>
+              <li><code>api_read</code> returns everything, including inline images on projects that were never shared before. Prefer <code>api_schema</code> and <code>api_version</code> for frequent calls.</li>
+              <li>Name lookups (<code>typeName</code>, <code>timelineName</code>, <code>sectionName</code>) are case-insensitive and must be unique; when two sections share a name the error lists their ids so you can pass <code>sectionId</code>, or name the timeline to search only there.</li>
               <li>Two edits to the very same entity within a couple of seconds, one from a tab and one from the API, resolve to whichever came last.</li>
               <li>The full reference with every value shape and error lives in <a href={DOC_URL} target="_blank" rel="noreferrer noopener">API.md</a>.</li>
             </ul>

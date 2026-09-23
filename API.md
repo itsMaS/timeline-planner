@@ -1,22 +1,27 @@
 # Timeline Planner API
 
 A small HTTP API for external tools, built for a Unity editor plugin: read a
-shared timeline, set field values (for example a *Progress* dropdown), add and
+shared project, set field values (for example a *Progress* dropdown), add and
 remove tags, edit an item's text, and create items. It is deliberately narrow.
-The API token cannot change the schema (types, fields, hierarchy levels),
-delete anything, move items, or manage share links; those stay in the app.
+The API token cannot change the schema (types, fields, hierarchy levels,
+timelines), delete anything, move items, or manage share links; those stay in
+the app.
+
+A project holds one or more **timelines** (the subtabs of a project tab in the
+app). They share the schema; each has its own sections, items and settings.
+Items and sections carry `timelineId`.
 
 Everything is a Postgres function exposed through Supabase's REST layer
 (PostgREST), so any HTTP client works: `UnityWebRequest`, `HttpClient`, curl.
 
 ## Getting a token
 
-1. Share the timeline (toolbar → Share). Only the owner of a shared timeline
+1. Share the project (toolbar → Share). Only the owner of a shared project
    sees the **API token** row.
 2. Click **Create API token**. Copy it. **Rotate** invalidates the old token
    and mints a new one; **Revoke** removes it (create a new one later).
 
-Keep the token out of version control. It grants write access to the timeline
+Keep the token out of version control. It grants write access to the project
 to anyone who has it. Store it the way you would store any other secret in a
 Unity project, for example in `UserSettings/` or `EditorPrefs`, not in a
 committed `ScriptableObject`.
@@ -94,14 +99,20 @@ README for the format).
 
 Things a Unity tool typically needs from `doc`:
 
-- `doc.sections`: `{ id, name, depth, start, end, fieldValues }`. `depth`
-  indexes `doc.hierarchyLevels` (0 = Chapter, 1 = Level, … as named in the
-  project). **Match a scene by section name**: the section at the *Level*
-  depth whose `name` equals the scene name.
-- `doc.items`: `{ id, typeId, pos, duration, title, description, tags, link,
-  fieldValues }`. An item belongs to a section when
-  `section.start <= item.pos < section.end` (sections nest, so an item is in
-  one section per depth).
+- `doc.timelines`: `{ id, name, settings }`, in tab order. Every project has
+  at least one (older projects were migrated to a single timeline named
+  *Main*). `settings` holds the unit, grid and spine display settings of that
+  timeline.
+- `doc.sections`: `{ id, name, timelineId, depth, start, end, fieldValues }`.
+  `depth` indexes `doc.hierarchyLevels` (0 = Chapter, 1 = Level, … as named
+  in the project). **Match a scene by section name**: the section at the
+  *Level* depth whose `name` equals the scene name (on the timeline you
+  care about, when names repeat across timelines).
+- `doc.items`: `{ id, typeId, timelineId, pos, duration, title, description,
+  tags, link, fieldValues }`. An item belongs to a section when they share a
+  `timelineId` and `section.start <= item.pos < section.end` (sections nest,
+  so an item is in one section per depth). Positions on different timelines
+  are unrelated.
 - `doc.types`: `{ id, name, icon, color, folderId, fields: [{ fieldId, defaultValue }] }`.
   Resolve `item.typeId` here to know that an item is a *Checkpoint*.
 - `doc.typeFolders`: `{ id, name, parentId, fields: [{ fieldId, defaultValue }] }`.
@@ -125,8 +136,10 @@ Value shapes in `fieldValues`, by field `kind`:
 | `select` | array of option strings (single-choice fields still use a one-element array, e.g. `["Done"]`) |
 | `ref`    | array of item/section ids              |
 
-The app ignores `camera`, `filters`, `views` and `activeViewId` for anything
-but its own UI; a tool can too.
+The app ignores `camera`, `cameras`, `filters`, `views`, `activeViewId` and
+`activeTimelineId` for anything but its own UI; a tool can too. The
+top-level `settings` object is the legacy copy that seeds new timelines;
+the display settings that matter are on each timeline.
 
 ### `api_schema`
 
@@ -138,6 +151,7 @@ without downloading all items.
 // →
 {
   "id": "…", "name": "…", "version": 42,
+  "timelines": [ { "id": "timeline-0", "name": "Main", "settings": { "…": "…" } } ],
   "fields": [ { "id": "f1", "name": "Progress", "kind": "select",
                 "options": ["Planned", "In progress", "Done"], "selectMultiple": false,
                 "required": false, "defaultValue": null, "min": null, "max": null, "…": "…" } ],
@@ -217,7 +231,8 @@ Both `p_add` and `p_remove` are optional.
 ### `api_update_item`
 
 Change an item's `title`, `description` (Markdown) and/or `link`. Nothing else
-is accepted, so position, type and layer stay under the planner's control.
+is accepted, so position, type, layer and timeline stay under the planner's
+control.
 
 ```jsonc
 { "p_api_token": "…", "p_item_id": "…", "p_patch": { "link": "unity://Assets/Scenes/Forest_02.unity#Checkpoint_3" } }
@@ -235,6 +250,7 @@ the timeline.
   "p_item": {
     "typeName": "Checkpoint",        // or "typeId"
     "title": "Checkpoint_3",
+    "timelineName": "Main",          // or "timelineId"; optional
     "sectionName": "Forest_02",      // or "sectionId"; optional
     "pos": 14.5,                     // optional
     "duration": 0,                   // optional, default 0
@@ -247,18 +263,23 @@ the timeline.
 { "version": 46, "changed": true, "item": { "id": "k3j9x0a1b2c3", "typeId": "…", "pos": 14.5, … } }
 ```
 
+The item lands on the timeline named by `timelineName` / `timelineId`, else
+on the section's timeline, else on the project's first timeline. When a
+timeline is named, `sectionName` is looked up on that timeline only, so
+sections may share a name across timelines.
+
 Position when `pos` is omitted: right after the last item inside the section
 (clamped to the section's end), at the section's start when the section is
-empty, and after the last item on the whole timeline when no section is given.
-Name lookups (`typeName`, `sectionName`) are case-insensitive and must be
-unique; when two sections share a name the error lists their ids so you can
-pass `sectionId` instead.
+empty, and after the last item on that timeline when no section is given.
+Name lookups (`typeName`, `timelineName`, `sectionName`) are case-insensitive
+and must be unique; when two sections share a name the error lists their ids
+so you can pass `sectionId` (or name the timeline) instead.
 
 ## Recipes for the Unity tool
 
 **Validate the open scene.** `api_read` once. Find the section at the *Level*
-depth whose name equals the scene name. Collect items with
-`section.start <= pos < section.end` whose type is *Checkpoint*. For each,
+depth whose name equals the scene name. Collect items on the same timeline
+with `section.start <= pos < section.end` whose type is *Checkpoint*. For each,
 look for a matching object in the scene (by `item.title`, or by an id you
 stored in `item.link` or a text field). Warn about the ones that are missing.
 Optionally offer *Add to timeline* for scene checkpoints that have no item,
@@ -274,14 +295,16 @@ picked from `api_schema` (a `select` field, say *Progress*, and the option
 
 ## Limits and notes
 
-- One token per timeline, held by the timeline owner. There is no per-token
+- One token per project, held by the project owner. There is no per-token
   scoping; rotate it if it leaks.
-- The API never deletes. Delete in the app, where references are checked.
+- The API never deletes, and never creates, renames or removes timelines or
+  moves items between them. Do that in the app, where references are checked.
 - Large documents: `api_read` returns everything, including inline images on
-  timelines that were never shared before images moved to storage. Use
+  projects that were never shared before images moved to storage. Use
   `api_schema` and `api_version` for the frequent calls.
 - Concurrency: the app's autosave is version-checked. A tab whose copy is
   older than an API write cannot overwrite it; the tab pulls the new document,
   replays its own pending edits on top, and saves again. Two edits to the very
   same entity within a couple of seconds still resolve to whichever came last.
-- The functions live in `supabase/migrations/0004_api.sql`.
+- The functions live in `supabase/migrations/0004_api.sql`; timelines were
+  added in `0008_timelines.sql`.

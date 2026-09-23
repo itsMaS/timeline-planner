@@ -352,6 +352,9 @@ export async function openShared(token: string): Promise<{ project: Project; inf
   const project = normalizeProject(structuredClone(r.doc))
   project.id = r.id
   project.name = r.name
+  // The saved document carries whichever timeline its last editor had open; a
+  // fresh tab starts on the first one (the link's suffix may pick another).
+  project.activeTimelineId = project.timelines[0]?.id ?? null
   const info: ShareInfo = { id: r.id, role: r.role, editToken: r.editToken, suggestToken: r.suggestToken, viewToken: r.viewToken, apiToken: r.apiToken ?? null, version: r.version, owner: r.owner }
   return { project, info }
 }
@@ -387,12 +390,18 @@ export async function stopSharing(projectId: string): Promise<void> {
   store().setShare(projectId, null)
 }
 
-export function shareLink(token: string): string {
+/** `#/s/<token>`, or `#/s/<token>/<timelineId>` to open on a specific timeline (subtab). */
+export function shareLink(token: string, timelineId?: string | null): string {
   const base = `${location.origin}${location.pathname}${location.search}`
-  return `${base}#/s/${token}`
+  return `${base}#/s/${token}${timelineId ? `/${timelineId}` : ''}`
 }
 
 export function parseShareHash(hash = location.hash): string | null {
-  const m = hash.match(/^#\/s\/([A-Za-z0-9_-]{8,})/)
-  return m ? m[1] : null
+  return parseShareRoute(hash)?.token ?? null
+}
+
+/** Token and optional timeline id from a share link hash. */
+export function parseShareRoute(hash = location.hash): { token: string; timelineId: string | null } | null {
+  const m = hash.match(/^#\/s\/([A-Za-z0-9_-]{8,})(?:\/([A-Za-z0-9_-]+))?/)
+  return m ? { token: m[1], timelineId: m[2] ?? null } : null
 }

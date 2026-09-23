@@ -5,9 +5,10 @@ import {
 } from 'lucide-react'
 import { iconByName } from '../model/icons'
 import { itemMatchesFilters } from '../model/layout'
-import { blankProject, emptyFilters, useActiveProject, useActiveShare, useStore, useSuggesting } from '../model/store'
+import { blankProject, emptyFilters, useActiveProject, useActiveShare, useActiveTimeline, useActiveWhole, useStore, useSuggesting } from '../model/store'
 import { TEMPLATES } from '../model/templates'
-import type { TimelineSettings, UnitPreset } from '../model/types'
+import { timelineView } from '../model/timelines'
+import type { Id, Project, TimelineSettings, UnitPreset } from '../model/types'
 import { uid } from '../model/util'
 import { activeView, filtersEqual, isUnfiltered, viewDirty } from '../model/views'
 import { exportCSV, exportFullSVG, exportJSON, exportPNG } from './export'
@@ -27,6 +28,7 @@ import { PresenceBar, ShareModal, TabSyncIcon } from './Share'
 import { ApiHelpModal } from './ApiHelp'
 import { Sidebar } from './Sidebar'
 import { SuggestBar, SuggestModal, exitSuggestSafely } from './Suggest'
+import { TabContextMenu, TimelineTabControl, useTabPress, type TabMenuState } from './Timelines'
 import { TypeEditor } from './TypeEditor'
 import { nav } from './nav'
 import { useIsMobile } from './mobile'
@@ -108,6 +110,8 @@ export function App() {
             const cp = structuredClone(src)
             cp.id = uid()
             cp.pos = center + (src.pos - base)
+            // Pasting lands on the timeline on screen, wherever the copy came from.
+            cp.timelineId = pr.activeTimelineId ?? pr.timelines[0].id
             cp.createdBy = creatorStamp()
             nids.push(cp.id)
             pr.items.push(cp)
@@ -140,7 +144,7 @@ export function App() {
         const center = p.camera.x + (window.innerWidth * 0.5) / p.camera.s
         const id = uid()
         s.mutate(pr => pr.items.push({
-          id, typeId, layerId: null, pos: center, duration: 0,
+          id, typeId, timelineId: pr.activeTimelineId ?? pr.timelines[0].id, layerId: null, pos: center, duration: 0,
           title: type.name, description: '', tags: [], link: '', images: [], fieldValues: {},
           createdBy: creatorStamp(),
         }))
@@ -211,16 +215,74 @@ export function App() {
 
 // ------------------------------------------------------------------ toolbar
 
+/** One project tab: click to activate, double-click to rename, right-click / long-press for the menu. */
+function ProjectTab({ project: p, onMenu, onRename, onClose }: {
+  project: Project
+  onMenu: (state: TabMenuState) => void
+  onRename: (id: Id) => void
+  onClose: (id: Id) => void
+}) {
+  const activeId = useStore(s => s.activeId)
+  const setActive = useStore(s => s.setActive)
+  const projects = useStore(s => s.projects)
+  const press = useTabPress((x, y) => onMenu({ projectId: p.id, x, y }))
+  const on = p.id === activeId
+  return (
+    <div
+      className={`tab ${on ? 'on' : ''}`}
+      onClick={() => setActive(p.id)}
+      onDoubleClick={() => onRename(p.id)}
+      {...press}
+    >
+      <TabSyncIcon projectId={p.id} />
+      <span>{p.name}</span>
+      {on && <TimelineTabControl />}
+      {projects.length > 1 && (
+        <button
+          className="tab-x"
+          onClick={e => { e.stopPropagation(); onClose(p.id) }}
+        ><X width={11} height={11} /></button>
+      )}
+    </div>
+  )
+}
+
+/**
+ * "also 3 in Level 2" under the filter box: matches of the text filter on the
+ * other timelines, each a click away.
+ */
+function SearchHints() {
+  const whole = useActiveWhole()
+  const setActiveTimeline = useStore(s => s.setActiveTimeline)
+  const text = whole.filters.text.trim()
+  if (!text || whole.timelines.length < 2) return null
+  const active = whole.activeTimelineId ?? whole.timelines[0].id
+  const hits = whole.timelines
+    .filter(t => t.id !== active)
+    .map(t => ({ t, n: whole.items.filter(it => it.timelineId === t.id && itemMatchesFilters(whole, it, whole.filters)).length }))
+    .filter(h => h.n > 0)
+  if (!hits.length) return null
+  return (
+    <div className="search-hints">
+      <span className="muted">also</span>
+      {hits.map(({ t, n }) => (
+        <button key={t.id} className="link-btn" title={`Show “${t.name}”`} onClick={() => setActiveTimeline(t.id)}>
+          {n} in {t.name}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 function Toolbar({ applyView }: { applyView: (id: string | null) => void }) {
   const proj = useActiveProject()
+  const whole = useActiveWhole()
+  const timeline = useActiveTimeline()
   const projects = useStore(s => s.projects)
-  const activeId = useStore(s => s.activeId)
   const shares = useStore(s => s.shares)
   const share = useActiveShare()
   const ui = useStore(s => s.ui)
   const setUI = useStore(s => s.setUI)
-  const setActive = useStore(s => s.setActive)
-  const addProject = useStore(s => s.addProject)
   const closeProject = useStore(s => s.closeProject)
   const renameProject = useStore(s => s.renameProject)
   const importProject = useStore(s => s.importProject)
@@ -232,6 +294,9 @@ function Toolbar({ applyView }: { applyView: (id: string | null) => void }) {
   const suggesting = useSuggesting()
   const enterSuggest = useStore(s => s.enterSuggest)
   const [exportOpen, setExportOpen] = useState(false)
+  // CSV and the document PDF can cover every timeline of the project; PNG and SVG always show the one on screen.
+  const [allTimelines, setAllTimelines] = useState(false)
+  const [tabMenu, setTabMenu] = useState<TabMenuState | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   // Every export follows the canvas: filtered-out items are left out, and
   // selected sections narrow it to just those sub-trees.
@@ -242,6 +307,28 @@ function Toolbar({ applyView }: { applyView: (id: string | null) => void }) {
     : scope.filtered ? 'Items hidden by the current filters are left out.' : 'Everything is visible, so everything is included.'
   const view = activeView(proj)
   const dirty = viewDirty(proj)
+  const multi = whole.timelines.length > 1
+  const everyTimeline = multi && allTimelines && !scope.sections.length
+  const timelineIds = everyTimeline ? whole.timelines.map(t => t.id) : [timeline.id]
+  /** The document CSV / PDF exports read: every timeline, or the one on screen. */
+  const docProject = everyTimeline ? whole : proj
+  const docScope = everyTimeline ? exportScope(whole, []) : scope
+  const describeDoc = (what: string) => (everyTimeline ? `${what} of all timelines` : scope.describe(what))
+
+  const renameProjectPrompt = (id: Id) => {
+    const p = projects.find(x => x.id === id)
+    if (!p) return
+    const name = window.prompt('Project name', p.name)
+    if (name) renameProject(id, name)
+  }
+  const closeProjectPrompt = (id: Id) => {
+    const p = projects.find(x => x.id === id)
+    if (!p) return
+    const msg = shares[id]
+      ? `Close “${p.name}”? The shared project stays online — keep your link to reopen it here.`
+      : `Close and delete “${p.name}”? Export it first if you want to keep it.`
+    if (window.confirm(msg)) closeProject(id)
+  }
 
   return (
     <>
@@ -254,35 +341,15 @@ function Toolbar({ applyView }: { applyView: (id: string | null) => void }) {
         ><PanelLeft width={15} height={15} /></button>
         <div className="tabs">
           {projects.map(p => (
-            <div
-              key={p.id}
-              className={`tab ${p.id === activeId ? 'on' : ''}`}
-              onClick={() => setActive(p.id)}
-              onDoubleClick={() => {
-                const name = window.prompt('Project name', p.name)
-                if (name) renameProject(p.id, name)
-              }}
-            >
-              <TabSyncIcon projectId={p.id} />
-              <span>{p.name}</span>
-              {projects.length > 1 && (
-                <button
-                  className="tab-x"
-                  onClick={e => {
-                    e.stopPropagation()
-                    const msg = shares[p.id]
-                      ? `Close “${p.name}”? The shared timeline stays online — keep your link to reopen it here.`
-                      : `Close and delete “${p.name}”? Export it first if you want to keep it.`
-                    if (window.confirm(msg)) closeProject(p.id)
-                  }}
-                ><X width={11} height={11} /></button>
-              )}
-            </div>
+            <ProjectTab key={p.id} project={p} onMenu={setTabMenu} onRename={renameProjectPrompt} onClose={closeProjectPrompt} />
           ))}
           <button className="ghost-btn" title="New project" onClick={() => setUI({ overlay: 'templates' })}>
             <Plus width={15} height={15} />
           </button>
         </div>
+        {tabMenu && (
+          <TabContextMenu state={tabMenu} onClose={() => setTabMenu(null)} onRename={renameProjectPrompt} onClose_={closeProjectPrompt} />
+        )}
         <PresenceBar />
 
         <div className="search-box">
@@ -307,6 +374,7 @@ function Toolbar({ applyView }: { applyView: (id: string | null) => void }) {
             <button className="ghost-btn" onClick={() => tweak(p => { p.filters.text = '' })}><X width={12} height={12} /></button>
           )}
           <RuleFilterButton />
+          <SearchHints />
         </div>
 
         <div className="tools">
@@ -351,11 +419,11 @@ function Toolbar({ applyView }: { applyView: (id: string | null) => void }) {
           {share?.role === 'edit' && (
             <button
               className={`ghost-btn ${suggesting ? 'on suggest' : ''}`}
-              title={suggesting ? 'Suggest mode is on — exit to edit directly' : 'Suggest mode — collect edits into a suggestion for review instead of changing the timeline'}
+              title={suggesting ? 'Suggest mode is on — exit to edit directly' : 'Suggest mode — collect edits into a suggestion for review instead of changing the project'}
               onClick={() => { if (suggesting) exitSuggestSafely(proj.id); else enterSuggest(proj.id) }}
             ><Lightbulb width={15} height={15} /></button>
           )}
-          <button className={`ghost-btn ${share ? 'on' : ''}`} title={share ? 'Sharing — links, people, status' : 'Share this timeline…'}
+          <button className={`ghost-btn ${share ? 'on' : ''}`} title={share ? 'Sharing — links, people, status' : 'Share this project…'}
             onClick={() => setUI({ overlay: 'share' })}>
             <Share2 width={15} height={15} />
           </button>
@@ -365,7 +433,7 @@ function Toolbar({ applyView }: { applyView: (id: string | null) => void }) {
             </button>
             {exportOpen && (
               <div className="menu export-menu" onPointerLeave={() => setExportOpen(false)}>
-                <button title="The complete project, for backups and re-import — never filtered." onClick={() => { exportJSON(proj); setExportOpen(false) }}>
+                <button title="The complete project with every timeline, for backups and re-import — never filtered." onClick={() => { exportJSON(whole); setExportOpen(false) }}>
                   <Download width={13} height={13} /> Project JSON <span className="muted">(everything)</span>
                 </button>
                 <div className="menu-hint">{scopeHint}</div>
@@ -377,19 +445,25 @@ function Toolbar({ applyView }: { applyView: (id: string | null) => void }) {
                   onClick={() => { exportFullSVG(proj, scope, scene); setExportOpen(false) }}>
                   <Download width={13} height={13} /> {scope.describe('SVG', 'full timeline')}
                 </button>
-                <button title={`One row per item, in timeline order. ${scopeHint}`} onClick={() => { exportCSV(proj, scope); setExportOpen(false) }}>
-                  <Download width={13} height={13} /> {scope.describe('CSV', 'all items')}
+                {multi && (
+                  <label className="check-row menu-check" title="CSV and the document PDF cover every timeline of the project instead of just “${timeline.name}” (not while sections are selected)">
+                    <input type="checkbox" checked={allTimelines} disabled={scope.sections.length > 0} onChange={e => setAllTimelines(e.target.checked)} />
+                    All timelines <span className="muted">(CSV, PDF)</span>
+                  </label>
+                )}
+                <button title={`One row per item, in timeline order. ${scopeHint}`} onClick={() => { exportCSV(docProject, docScope, everyTimeline); setExportOpen(false) }}>
+                  <Download width={13} height={13} /> {describeDoc('CSV')}
                 </button>
                 <button
                   title={`Sections become headings, items sub-headings with their type and icon. ${scopeHint} Opens the print dialog — choose “Save as PDF”.`}
                   onClick={() => {
-                    if (!exportDocPDF(proj, scope.sectionIds)) {
+                    if (!exportDocPDF(whole, everyTimeline ? null : scope.sectionIds, timelineIds)) {
                       showToast('Pop-up blocked — allow pop-ups for this site to export the document.')
                     }
                     setExportOpen(false)
                   }}
                 >
-                  <FileText width={13} height={13} /> {scope.describe('Document PDF')}
+                  <FileText width={13} height={13} /> {describeDoc('Document PDF')}
                 </button>
                 <button onClick={() => { fileRef.current?.click(); setExportOpen(false) }}>
                   <Upload width={13} height={13} /> Import JSON…
@@ -407,7 +481,7 @@ function Toolbar({ applyView }: { applyView: (id: string | null) => void }) {
               }}
             />
           </div>
-          <button className="ghost-btn" title="Timeline settings" onClick={() => setUI({ overlay: 'settings' })}>
+          <button className="ghost-btn" title={multi ? `Timeline settings — “${timeline.name}”` : 'Timeline settings'} onClick={() => setUI({ overlay: 'settings' })}>
             <Settings2 width={15} height={15} />
           </button>
           <button className="ghost-btn" title="Shortcuts (?)" onClick={() => setUI({ overlay: 'cheatsheet' })}>
@@ -509,7 +583,7 @@ function TemplateModal() {
   return (
     <div className="modal-scrim" onPointerDown={e => { if (e.target === e.currentTarget) setUI({ overlay: null }) }}>
       <div className="modal templates">
-        <h2>New timeline</h2>
+        <h2>New project</h2>
         <p className="muted">Pick a starting point — everything in it is editable.</p>
         <div className="tpl-grid">
           {TEMPLATES.map(t => (
@@ -536,21 +610,27 @@ const UNIT_PRESETS: { key: UnitPreset; label: string }[] = [
 ]
 
 function SettingsModal() {
-  const proj = useActiveProject()
+  const whole = useActiveWhole()
+  const timeline = useActiveTimeline()
   const setUI = useStore(s => s.setUI)
   const tweak = useStore(s => s.tweak)
-  const st = proj.settings
+  const st = timeline.settings
+  const multi = whole.timelines.length > 1
 
-  const patch = (recipe: (s: TimelineSettings) => void) => tweak(p => recipe(p.settings))
+  // Settings belong to the timeline on screen; the project-level copy only seeds new timelines.
+  const patch = (recipe: (s: TimelineSettings) => void) => tweak(p => {
+    const t = p.timelines.find(x => x.id === timeline.id)
+    if (t) recipe(t.settings)
+  })
 
   return (
     <div className="modal-scrim" onPointerDown={e => { if (e.target === e.currentTarget) setUI({ overlay: null }) }}>
       <div className="modal settings">
-        <div className="modal-head"><strong>Timeline settings</strong>
+        <div className="modal-head"><strong>Timeline settings{multi && <span className="muted"> — {timeline.name}</span>}</strong>
           <span className="grow" />
           <button className="ghost-btn" onClick={() => setUI({ overlay: null })}><X width={16} height={16} /></button>
         </div>
-        <p className="muted">These apply to this project and are saved with it.</p>
+        <p className="muted">{multi ? 'These apply to this timeline only and are saved with the project.' : 'These apply to this timeline and are saved with the project.'}</p>
 
         <div className="field">
           <label>Marker placement</label>

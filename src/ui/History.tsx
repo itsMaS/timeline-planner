@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { History as HistoryIcon, RotateCcw } from 'lucide-react'
 import type { ColKey } from '../model/patch'
 import { changedFields, type ProposalChange } from '../model/proposal'
-import { useActiveProject, useActiveShare, useCanEdit, useStore, useSuggesting } from '../model/store'
+import { useActiveShare, useActiveWhole, useCanEdit, useStore, useSuggesting } from '../model/store'
 import { fetchHistory, type HistoryEntry } from '../sync/history'
 import { ChangeBody, FIELD_LABEL } from './Proposals'
 
@@ -35,7 +35,7 @@ function summary(e: HistoryEntry): string {
 export function HistorySection({ col, entityId }: { col: ColKey; entityId: string }) {
   const activeId = useStore(s => s.activeId)
   const share = useActiveShare()
-  const proj = useActiveProject()
+  const proj = useActiveWhole()
   const canEdit = useCanEdit()
   const suggesting = useSuggesting()
   const mutate = useStore(s => s.mutate)

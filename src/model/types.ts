@@ -174,6 +174,8 @@ export interface Layer {
 export interface Section {
   id: Id
   name: string
+  /** The timeline (subtab) this section lives on; see Project.timelines. */
+  timelineId: Id
   /** Index into Project.hierarchyLevels. */
   depth: number
   start: number
@@ -187,6 +189,8 @@ export interface Section {
 export interface Item {
   id: Id
   typeId: Id
+  /** The timeline (subtab) this item lives on; see Project.timelines. */
+  timelineId: Id
   /** null = use the type's default layer. */
   layerId: Id | null
   pos: number
@@ -274,6 +278,19 @@ export interface TimelineSettings {
   }
 }
 
+/**
+ * One timeline (a subtab of the project): its own sections and items on a
+ * shared schema. Items and sections point at it through `timelineId`; the
+ * project always has at least one. Settings are per timeline, so one can run
+ * in minutes while another counts beats; fields, types, folders, layers,
+ * hierarchy levels, processors and views are shared by the whole project.
+ */
+export interface Timeline {
+  id: Id
+  name: string
+  settings: TimelineSettings
+}
+
 export interface Project {
   schemaVersion: 1
   id: Id
@@ -286,11 +303,23 @@ export interface Project {
   fieldFolders: Folder[]
   processorFolders: Folder[]
   layers: Layer[]
+  /** Timelines (subtabs), in tab order; never empty after normalization. */
+  timelines: Timeline[]
   sections: Section[]
   items: Item[]
   views: View[]
+  /** Camera of the active timeline (per user, never synced). */
   camera: Camera
+  /** Cameras of the other timelines, keyed by timeline id (per user, never synced). */
+  cameras: Record<Id, Camera>
   filters: Filters
   activeViewId: Id | null
+  /** Which timeline this tab shows (per user, never synced); null resolves to the first. */
+  activeTimelineId: Id | null
+  /**
+   * Project-level settings from before timelines had their own: kept as the
+   * migration source and the default for new timelines. What the canvas uses
+   * is the active timeline's `settings` (see `timelineView`).
+   */
   settings: TimelineSettings
 }

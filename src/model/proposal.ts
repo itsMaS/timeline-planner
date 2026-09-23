@@ -1,4 +1,5 @@
 import { SYNC_COLLECTIONS, SYNC_SCALARS, type ColKey, type ScalarKey } from './patch'
+import { derived } from './timelines'
 import type { Project } from './types'
 import { uid } from './util'
 
@@ -45,7 +46,7 @@ export interface Proposal {
 
 type Entity = { id: string }
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
-const list = (p: Project, col: ColKey) => ((p[col] ?? []) as unknown as Entity[])
+const list = (p: Project, col: ColKey) => (p[col] ?? []) as unknown as Entity[]
 
 /** Entity-level changes that turn `base` into `edited`. Notes are keyed by entity id (or scalar name). */
 export function diffToChanges(base: Project, edited: Project, notes: Record<string, string> = {}): ProposalChange[] {
@@ -105,7 +106,7 @@ export function applyChanges(p: Project, changes: ProposalChange[]): void {
       ;(p as unknown as Record<string, unknown>)[c.entityId] = structuredClone(c.after)
       continue
     }
-    if (!p[c.col]) (p as unknown as Record<string, unknown>)[c.col] = []
+    if (!Array.isArray(p[c.col])) (p as unknown as Record<string, unknown>)[c.col] = []
     const arr = list(p, c.col)
     const i = arr.findIndex(e => e.id === c.entityId)
     if (c.kind === 'remove') {
@@ -124,7 +125,7 @@ const COL_LABEL: Record<ColKey | 'project', string> = {
   items: 'Item', types: 'Type', typeFolders: 'Folder', layers: 'Layer', sections: 'Section',
   views: 'View', hierarchyLevels: 'Hierarchy level', fields: 'Field', processors: 'Processor',
   fieldFolders: 'Field folder', processorFolders: 'Processor folder',
-  project: 'Project',
+  timelines: 'Timeline', project: 'Project',
 }
 
 const SCALAR_LABEL: Record<string, string> = { name: 'name', settings: 'settings' }
@@ -161,6 +162,15 @@ export function proposalItemIds(p: Proposal): string[] {
   return p.changes.filter(c => c.col === 'items' && !p.decisions[c.id]).map(c => c.entityId)
 }
 
+/** The timeline a change's item or section lives on (from its snapshot, else the live entity); null for anything else. */
+export function changeTimelineId(proj: Project, c: ProposalChange): string | null {
+  if (c.col !== 'items' && c.col !== 'sections') return null
+  const snap = (c.after ?? c.before) as { timelineId?: string } | null
+  if (snap?.timelineId) return snap.timelineId
+  const live = list(proj, c.col).find(e => e.id === c.entityId) as { timelineId?: string } | undefined
+  return live?.timelineId ?? proj.timelines?.[0]?.id ?? null
+}
+
 /** Undecided changes of one collection keyed by entity id. */
 export function pendingChanges(p: Proposal, col: ColKey): Map<string, ProposalChange> {
   const out = new Map<string, ProposalChange>()
@@ -183,7 +193,7 @@ export function previewProject(base: Project, p: Proposal): Project {
   const pending = p.changes.filter(c =>
     !p.decisions[c.id] && c.kind !== 'remove' && c.col !== 'project' && PREVIEW_COLS.includes(c.col as ColKey))
   if (!pending.length) return base
-  const out = { ...base } as Project
+  const out = derived(base, {})
   for (const col of PREVIEW_COLS) (out as unknown as Record<string, unknown>)[col] = [...list(base, col)]
   applyChanges(out, pending)
   return out

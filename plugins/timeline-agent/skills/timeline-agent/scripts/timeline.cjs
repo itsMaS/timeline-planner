@@ -3617,7 +3617,7 @@ var import_node_path = require("node:path");
 var import_node_url = require("node:url");
 
 // src/model/patch.ts
-var SYNC_COLLECTIONS = ["hierarchyLevels", "fields", "processors", "types", "typeFolders", "layers", "sections", "items", "views"];
+var SYNC_COLLECTIONS = ["hierarchyLevels", "fields", "processors", "types", "typeFolders", "layers", "timelines", "sections", "items", "views"];
 var SYNC_SCALARS = ["name", "settings"];
 
 // src/model/util.ts
@@ -3716,9 +3716,90 @@ function formatUnit(v, step, suffix, preset = "none") {
   return suffix ? `${n} ${suffix}` : n;
 }
 
+// src/model/timelines.ts
+var FIRST_TIMELINE_ID = "timeline-0";
+var FIRST_TIMELINE_NAME = "Main";
+var defaultSettings = () => ({
+  placement: "above",
+  unit: { preset: "none", custom: "", showRuler: false },
+  grid: { show: false, style: "solid", opacity: 0.35 },
+  spine: { width: 2, opacity: 1 },
+  bandStrength: 1,
+  sectionStyle: { labelSize: 14, edgeStrength: 0.5, showDuration: false }
+});
+function normalizeSettings(raw) {
+  const d = defaultSettings();
+  const s = raw && typeof raw === "object" ? raw : {};
+  return {
+    placement: s.placement === "both" ? "both" : d.placement,
+    unit: { ...d.unit, ...s.unit ?? {} },
+    grid: { ...d.grid, ...s.grid ?? {} },
+    spine: { ...d.spine, ...s.spine ?? {} },
+    bandStrength: typeof s.bandStrength === "number" ? s.bandStrength : d.bandStrength,
+    sectionStyle: { ...d.sectionStyle, ...s.sectionStyle ?? {} }
+  };
+}
+function newTimeline(name, settings, id = uid()) {
+  return { id, name, settings: settings ? structuredClone(settings) : defaultSettings() };
+}
+function repairTimelines(p, fallback) {
+  if (!Array.isArray(p.timelines)) p.timelines = [];
+  if (!p.timelines.length) {
+    p.timelines.push(newTimeline(FIRST_TIMELINE_NAME, normalizeSettings(p.settings), FIRST_TIMELINE_ID));
+  }
+  const ids = new Set(p.timelines.map((t) => t.id));
+  const first = p.timelines[0].id;
+  const fb = fallback && ids.has(fallback) ? fallback : first;
+  for (const it of p.items) {
+    if (!it.timelineId) it.timelineId = fb;
+    else if (!ids.has(it.timelineId)) it.timelineId = first;
+  }
+  for (const sc of p.sections) {
+    if (!sc.timelineId) sc.timelineId = fb;
+    else if (!ids.has(sc.timelineId)) sc.timelineId = first;
+  }
+  if (!p.cameras || typeof p.cameras !== "object") p.cameras = {};
+  for (const k of Object.keys(p.cameras)) if (!ids.has(k)) delete p.cameras[k];
+  if (!p.activeTimelineId || !ids.has(p.activeTimelineId)) p.activeTimelineId = first;
+}
+function activeTimeline(p) {
+  return p.timelines.find((t) => t.id === p.activeTimelineId) ?? p.timelines[0];
+}
+var timelineById = (p, id) => id ? p.timelines.find((t) => t.id === id) : void 0;
+var itemsOf = (p, timelineId) => p.items.filter((it) => it.timelineId === timelineId);
+var sectionsOf = (p, timelineId) => p.sections.filter((sc) => sc.timelineId === timelineId);
+var viewCache = /* @__PURE__ */ new WeakMap();
+var WHOLE = Symbol("whole");
+function wholeOf(p) {
+  return p[WHOLE] ?? p;
+}
+function timelineView(p, timelineId) {
+  const tl = timelineById(p, timelineId) ?? activeTimeline(p);
+  if (!tl) return p;
+  let perTimeline = viewCache.get(p);
+  if (!perTimeline) {
+    perTimeline = /* @__PURE__ */ new Map();
+    viewCache.set(p, perTimeline);
+  }
+  const hit = perTimeline.get(tl.id);
+  if (hit) return hit;
+  const camera = tl.id === p.activeTimelineId || !p.cameras?.[tl.id] ? p.camera : p.cameras[tl.id];
+  const view = {
+    ...p,
+    items: itemsOf(p, tl.id),
+    sections: sectionsOf(p, tl.id),
+    settings: tl.settings,
+    camera,
+    activeTimelineId: tl.id
+  };
+  Object.defineProperty(view, WHOLE, { value: wholeOf(p), enumerable: false });
+  perTimeline.set(tl.id, view);
+  return view;
+}
+
 // src/model/proposal.ts
 var same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
-var list = (p, col) => p[col];
+var list = (p, col) => p[col] ?? [];
 function diffToChanges(base, edited, notes = {}) {
   const out = [];
   const push = (c) => {
@@ -3768,7 +3849,8 @@ function ownerOf(p, id) {
   if (it) return { kind: "item", entity: it };
   const sc = p.sections.find((s) => s.id === id);
   if (sc) return { kind: "section", entity: sc };
-  return null;
+  const whole = wholeOf(p);
+  return whole === p ? null : ownerOf(whole, id);
 }
 function typeAttachments(p, type) {
   if (!type) return [];
@@ -23112,7 +23194,7 @@ function Heading7({ level, className, children }) {
   const Tag2 = `h${Math.min(6, Math.max(1, level))}`;
   return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Tag2, { className, children });
 }
-function DocBody({ proj, roots, loose }) {
+function DocBody({ proj, roots, loose, base = 1 }) {
   const st = proj.settings;
   const suffix = unitSuffix(st.unit.preset, st.unit.custom);
   const fmt = (v) => formatUnit(v, 0.05, suffix, st.unit.preset);
@@ -23173,10 +23255,10 @@ function DocBody({ proj, roots, loose }) {
     ] }, sc.id);
   };
   return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(import_jsx_runtime2.Fragment, { children: [
-    roots.map((r) => renderSection(r, 1)),
-    loose.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("section", { className: "sec l1", children: [
-      roots.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Heading7, { level: 1, className: "sec-h", children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "title", children: "Outside any section" }) }),
-      loose.map((it) => renderItem(it, roots.length > 0 ? 2 : 1))
+    roots.map((r) => renderSection(r, base)),
+    loose.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("section", { className: `sec l${base}`, children: [
+      roots.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Heading7, { level: base, className: "sec-h", children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "title", children: "Outside any section" }) }),
+      loose.map((it) => renderItem(it, roots.length > 0 ? base + 1 : base))
     ] })
   ] });
 }
@@ -23204,6 +23286,8 @@ header.cover p { margin: 0; color: #5a6172; font-size: 10.5pt; }
 h1, h2, h3, h4, h5, h6 { line-height: 1.25; margin: 0; page-break-after: avoid; break-after: avoid; }
 .sec-h { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
 .sec.l1 > .sec-h { font-size: 21pt; margin-top: 30px; padding-bottom: 5px; border-bottom: 1.5px solid #c6cbd6; }
+.sec.timeline + .sec.timeline { page-break-before: always; break-before: page; }
+.sec.timeline > .sec-h { font-size: 24pt; border-bottom-width: 2.5px; border-bottom-color: #1c1f26; }
 .sec.l2 > .sec-h { font-size: 17pt; margin-top: 24px; }
 .sec.l3 > .sec-h { font-size: 14.5pt; margin-top: 18px; }
 .sec.l4 > .sec-h, .sec.l5 > .sec-h, .sec.l6 > .sec-h { font-size: 13pt; margin-top: 14px; }
@@ -23235,12 +23319,21 @@ h1.item-h { font-size: 19pt; } h2.item-h { font-size: 15.5pt; } h3.item-h { font
   .images img { max-width: 200px; max-height: 150px; }
 }
 `;
-function buildDocHTML(proj, sectionIds) {
-  const { roots, loose } = buildTree(proj, sectionIds);
-  const rootNames = roots.map((r) => r.section.name || "Untitled");
-  const title = sectionIds && rootNames.length ? `${proj.name} \u2014 ${rootNames.join(", ")}` : proj.name;
-  const total = roots.reduce((s, r) => s + countItems(r), 0) + loose.length;
-  const hidden = proj.items.filter((it) => !isItemVisible(proj, it)).length;
+function buildDocHTML(proj, sectionIds, timelineIds = null) {
+  const wanted = timelineIds ?? proj.timelines.map((t) => t.id);
+  const timelines = proj.timelines.filter((t) => wanted.includes(t.id));
+  const single = timelines.length === 1;
+  const parts = timelines.map((t) => {
+    const view = timelineView(proj, t.id);
+    const { roots, loose } = buildTree(view, single ? sectionIds : null);
+    return { t, view, roots, loose, total: roots.reduce((s, r) => s + countItems(r), 0) + loose.length };
+  });
+  const first = parts[0];
+  const rootNames = single ? first.roots.map((r) => r.section.name || "Untitled") : [];
+  const named = proj.timelines.length > 1 && single ? `${proj.name} \u2014 ${first.t.name}` : proj.name;
+  const title = single && sectionIds && rootNames.length ? `${named} \u2014 ${rootNames.join(", ")}` : named;
+  const total = parts.reduce((s, p) => s + p.total, 0);
+  const hidden = parts.reduce((s, p) => s + p.view.items.filter((it) => !isItemVisible(p.view, it)).length, 0);
   const f = proj.filters;
   const activeFilters = [
     f.offTypes.length && "types",
@@ -23250,7 +23343,8 @@ function buildDocHTML(proj, sectionIds) {
     proj.layers.some((l) => l.eye) && "hidden layers"
   ].filter(Boolean);
   const visibility = hidden > 0 ? `${total} visible item${total === 1 ? "" : "s"} (${hidden} hidden by ${activeFilters.join(", ") || "filters"})` : `${total} item${total === 1 ? "" : "s"}`;
-  const scope = sectionIds ? `${rootNames.length === 1 ? proj.hierarchyLevels[roots[0].section.depth]?.name ?? "Section" : "Sections"}: ${rootNames.join(", ")}` : "Whole timeline";
+  const scope = single && sectionIds ? `${rootNames.length === 1 ? proj.hierarchyLevels[first.roots[0]?.section.depth]?.name ?? "Section" : "Sections"}: ${rootNames.join(", ")}` : single ? "Whole timeline" : `${parts.length} timelines`;
+  const empty = parts.every((p) => p.roots.length === 0 && p.loose.length === 0);
   const body = (0, import_server2.renderToStaticMarkup)(
     /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(import_jsx_runtime2.Fragment, { children: [
       /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "doc-bar", children: [
@@ -23271,7 +23365,18 @@ function buildDocHTML(proj, sectionIds) {
           (/* @__PURE__ */ new Date()).toISOString().slice(0, 10)
         ] })
       ] }),
-      roots.length === 0 && loose.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { className: "empty", children: hidden > 0 ? "Nothing visible to export \u2014 every item is hidden by the current filters." : "Nothing to export." }) : /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(DocBody, { proj, roots, loose })
+      empty ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { className: "empty", children: hidden > 0 ? "Nothing visible to export \u2014 every item is hidden by the current filters." : "Nothing to export." }) : single ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(DocBody, { proj: first.view, roots: first.roots, loose: first.loose }) : parts.map((p) => /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("section", { className: "sec l1 timeline", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(Heading7, { level: 1, className: "sec-h", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "title", children: p.t.name }),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "type", children: "Timeline" })
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("p", { className: "meta", children: [
+          p.total,
+          " item",
+          p.total === 1 ? "" : "s"
+        ] }),
+        p.roots.length === 0 && p.loose.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { className: "empty", children: "Nothing on this timeline." }) : /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(DocBody, { proj: p.view, roots: p.roots, loose: p.loose, base: 2 })
+      ] }, p.t.id))
     ] })
   );
   const esc = (s) => s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]);
@@ -23350,15 +23455,20 @@ async function open(token) {
   const r = await rpc("share_open", { p_token: token });
   if (!r) fail("this link is not valid (revoked or mistyped)");
   if (r.role === "view") fail("this is a view-only link: it can read but not propose or apply. Ask for the suggest or edit link.");
+  repairTimelines(r.doc);
   return { version: r.version, timelineId: r.id, name: r.name, role: r.role, doc: r.doc };
 }
 function loadDoc(path, what) {
   if (!path) fail(`--${what} <file> is required`);
   if (!(0, import_node_fs.existsSync)(path)) fail(`${path} does not exist`);
   const raw = JSON.parse((0, import_node_fs.readFileSync)(path, "utf8"));
-  if ("doc" in raw && raw.doc && typeof raw.doc === "object") return raw;
+  if ("doc" in raw && raw.doc && typeof raw.doc === "object") {
+    repairTimelines(raw.doc);
+    return raw;
+  }
   const doc = raw;
-  if (!Array.isArray(doc.items)) fail(`${path} is not a timeline document`);
+  if (!Array.isArray(doc.items)) fail(`${path} is not a project document`);
+  repairTimelines(doc);
   return { version: 0, timelineId: "", name: doc.name, role: "edit", doc };
 }
 var plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
@@ -23368,7 +23478,7 @@ async function cmdRead() {
   (0, import_node_fs.writeFileSync)(out, JSON.stringify(w, null, 2));
   const d = w.doc;
   console.log(`${w.name} (${w.role} link, version ${w.version}) \u2192 ${out}`);
-  console.log(`${plural(d.items.length, "item")}, ${plural(d.types.length, "type")}, ${plural(d.sections.length, "section")}, ${plural(d.layers.length, "layer")}`);
+  console.log(`${plural(d.timelines.length, "timeline")} (${d.timelines.map((t) => t.name).join(", ")}), ${plural(d.items.length, "item")}, ${plural(d.types.length, "type")}, ${plural(d.sections.length, "section")}, ${plural(d.layers.length, "layer")}`);
   console.log(`edit the "doc" object in ${out}, then: propose --base ${out} --edited <edited.json> --title "\u2026"`);
 }
 function outlineOf(d) {
@@ -23380,25 +23490,33 @@ function outlineOf(d) {
   if (d.processors.length) lines.push(`processors: ${d.processors.map((p) => `${p.name} (${p.op}) [${p.id}]`).join(", ")}`);
   lines.push(`types: ${d.types.map((t) => `${t.name} [${t.id}]`).join(", ") || "(none)"}`);
   lines.push(`layers: ${d.layers.map((l) => `${l.name} [${l.id}]`).join(", ") || "(none)"}`);
-  lines.push("");
-  const secs = [...d.sections].sort((a, b) => a.start - b.start || a.depth - b.depth);
-  const items = [...d.items].sort((a, b) => a.pos - b.pos);
-  const placed = /* @__PURE__ */ new Set();
-  for (const sc of secs) {
-    lines.push(`${"#".repeat(sc.depth + 2)} ${sc.name || "Untitled"} [${sc.id}]  (${fmt(sc.start)} \u2192 ${fmt(sc.end)})`);
-    if (sc.description?.trim()) lines.push(`  ${sc.description.trim().replace(/\n/g, "\n  ")}`);
-    for (const it of items) {
-      if (placed.has(it.id) || it.pos < sc.start || it.pos > sc.end) continue;
-      const deeper = secs.some((o) => o.depth > sc.depth && it.pos >= o.start && it.pos <= o.end);
-      if (deeper) continue;
-      placed.add(it.id);
-      lines.push(itemLine(d, it, fmt));
+  const multi = d.timelines.length > 1;
+  if (multi) lines.push(`timelines: ${d.timelines.map((t) => `${t.name} [${t.id}]`).join(", ")}`);
+  for (const tl of d.timelines) {
+    const v = timelineView(d, tl.id);
+    lines.push("");
+    if (multi) lines.push(`## Timeline: ${tl.name} [${tl.id}]  (unit: ${tl.settings.unit.preset}${tl.settings.unit.preset === "custom" ? ` ${tl.settings.unit.custom}` : ""})`);
+    const base = multi ? 3 : 2;
+    const secs = [...v.sections].sort((a, b) => a.start - b.start || a.depth - b.depth);
+    const items = [...v.items].sort((a, b) => a.pos - b.pos);
+    const placed = /* @__PURE__ */ new Set();
+    for (const sc of secs) {
+      lines.push(`${"#".repeat(sc.depth + base)} ${sc.name || "Untitled"} [${sc.id}]  (${fmt(sc.start)} \u2192 ${fmt(sc.end)})`);
+      if (sc.description?.trim()) lines.push(`  ${sc.description.trim().replace(/\n/g, "\n  ")}`);
+      for (const it of items) {
+        if (placed.has(it.id) || it.pos < sc.start || it.pos > sc.end) continue;
+        const deeper = secs.some((o) => o.depth > sc.depth && it.pos >= o.start && it.pos <= o.end);
+        if (deeper) continue;
+        placed.add(it.id);
+        lines.push(itemLine(d, it, fmt));
+      }
     }
-  }
-  const loose = items.filter((it) => !placed.has(it.id));
-  if (loose.length) {
-    lines.push(secs.length ? "## (outside any section)" : "");
-    for (const it of loose) lines.push(itemLine(d, it, fmt));
+    const loose = items.filter((it) => !placed.has(it.id));
+    if (loose.length) {
+      lines.push(secs.length ? `${"#".repeat(base)} (outside any section)` : "");
+      for (const it of loose) lines.push(itemLine(d, it, fmt));
+    }
+    if (!secs.length && !loose.length) lines.push("(empty)");
   }
   return lines.join("\n");
 }
@@ -23468,7 +23586,7 @@ async function cmdApply() {
       p_doc: doc
     });
     if (r.gone) fail("this link is not valid, or it is a suggest link (only an edit link can apply directly \u2014 use propose)");
-    if (r.conflict) fail(`the timeline changed since you read it (server is at version ${r.version}, base was ${base.version}). Re-read, redo the edit, or --force to overwrite.`, 2);
+    if (r.conflict) fail(`the project changed since you read it (server is at version ${r.version}, base was ${base.version}). Re-read, redo the edit, or --force to overwrite.`, 2);
     console.log(`saved (version ${r.version}) with ${plural(changes.length, "change")}`);
   }
   console.log(describeChanges(doc, changes).join("\n"));
@@ -23596,10 +23714,20 @@ async function cmdExport() {
   d.filters.tags = listOpt("tags");
   d.filters.text = opt("text") ?? "";
   const sections = listOpt("sections");
-  const sectionIds = sections.length ? resolve(sections, d.sections, "section").map((s) => s.id) : null;
-  const inScope = (pos) => !sectionIds || d.sections.some((sc) => sectionIds.includes(sc.id) && pos >= sc.start && pos <= sc.end);
-  const visible = d.items.filter((it) => itemMatchesFilters(d, it, d.filters) && inScope(it.pos)).length;
-  const { html: raw, title } = buildDocHTML(d, sectionIds);
+  const picked = sections.length ? resolve(sections, d.sections, "section") : [];
+  const sectionIds = picked.length ? picked.map((s) => s.id) : null;
+  const wantedTl = listOpt("timeline");
+  let timelineIds = wantedTl.length ? resolve(wantedTl, d.timelines, "timeline").map((t) => t.id) : null;
+  if (sectionIds) {
+    const secTl = [...new Set(picked.map((s) => s.timelineId))];
+    if (secTl.length > 1) fail(`the selected sections sit on ${secTl.length} timelines (${secTl.map((id) => d.timelines.find((t) => t.id === id)?.name ?? id).join(", ")}); pick sections of one timeline`);
+    if (timelineIds && (timelineIds.length !== 1 || timelineIds[0] !== secTl[0])) fail("--sections must belong to the single --timeline given");
+    timelineIds = secTl;
+  }
+  const tlSet = new Set(timelineIds ?? d.timelines.map((t) => t.id));
+  const inScope = (it) => tlSet.has(it.timelineId) && (!sectionIds || d.sections.some((sc) => sc.timelineId === it.timelineId && sectionIds.includes(sc.id) && it.pos >= sc.start && it.pos <= sc.end));
+  const visible = d.items.filter((it) => itemMatchesFilters(d, it, d.filters) && inScope(it)).length;
+  const { html: raw, title } = buildDocHTML(d, sectionIds, timelineIds);
   const html = raw.replace(/<script>[\s\S]*?<\/script>/, "").replace(/<div class="doc-bar">[\s\S]*?<\/div>/, "");
   if (opt("html")) {
     (0, import_node_fs.writeFileSync)(opt("html"), html);
@@ -23607,7 +23735,7 @@ async function cmdExport() {
   }
   const out = opt("out") ?? (opt("html") ? "" : "timeline.pdf");
   if (out) await printPdf(html, out);
-  console.log(`\u201C${title}\u201D: ${plural(visible, "visible item")}${sectionIds ? ` in ${plural(sectionIds.length, "section")}` : ""}`);
+  console.log(`\u201C${title}\u201D: ${plural(visible, "visible item")}${sectionIds ? ` in ${plural(sectionIds.length, "section")}` : ""}${tlSet.size < d.timelines.length ? ` on ${plural(tlSet.size, "timeline")}` : ""}`);
 }
 var commands = {
   read: cmdRead,
@@ -23618,12 +23746,12 @@ var commands = {
   withdraw: cmdWithdraw,
   export: cmdExport
 };
-var USAGE = `Timeline Planner agent CLI \u2014 work on a shared timeline through its edit link.
+var USAGE = `Timeline Planner agent CLI \u2014 work on a shared project through its edit link.
 
   <command> [options]        (edit link via --link <url-or-token> or $TIMELINE_LINK)
 
-  read     [--out doc.json]                     download the timeline ({version, timelineId, name, doc})
-  outline  [--in doc.json]                      sections \u2192 items with ids, for orientation
+  read     [--out doc.json]                     download the project ({version, timelineId, name, doc})
+  outline  [--in doc.json]                      timelines \u2192 sections \u2192 items with ids, for orientation
   propose  --base doc.json --edited edited.json --title "\u2026" [--summary "\u2026"] [--notes notes.json] [--author "\u2026"]
                                                 diff base \u2192 edited into a proposal for review in the app
   apply    --base doc.json --edited edited.json [--force]
@@ -23631,7 +23759,7 @@ var USAGE = `Timeline Planner agent CLI \u2014 work on a shared timeline through
   status   [--all]                              list open (or all) proposals
   withdraw <proposal-id>                        delete a proposal
   export   --out file.pdf [--html file.html] [--in doc.json]
-           [--sections a,b] [--types a,b] [--layers a,b] [--tags a,b] [--text q]
+           [--timeline a,b] [--sections a,b] [--types a,b] [--layers a,b] [--tags a,b] [--text q]
                                                 the app's document export printed to PDF (needs Chromium)`;
 if (!cmd || !commands[cmd]) {
   console.log(USAGE);

@@ -1,11 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, ArrowLeft, Check, ChevronDown, ChevronRight, RefreshCw, Trash2, X } from 'lucide-react'
 import {
-  changeLabel, changedFields, conflictOf, fmtValue, wordDiff,
+  changeLabel, changeTimelineId, changedFields, conflictOf, fmtValue, wordDiff,
   type Conflict, type Decision, type Proposal, type ProposalChange,
 } from '../model/proposal'
 import { coerceValue, formatValue } from '../model/fields'
-import { useActiveProject, useActiveShare, useStore } from '../model/store'
+import { useActiveShare, useActiveWhole, useStore } from '../model/store'
+import { timelineName } from '../model/timelines'
 import type { Project } from '../model/types'
 import { decideProposal, deleteProposal, refreshProposals } from '../sync/proposals'
 import { nav } from './nav'
@@ -69,8 +70,24 @@ const countDecisions = (p: Proposal) => {
   return { applied, rejected, pending: p.changes.length - applied - rejected }
 }
 
+/**
+ * Open a proposal for review. When none of its pending items or sections
+ * sit on the timeline on screen, the canvas switches to the timeline of the
+ * first one so the preview is visible.
+ */
+function openReview(proposal: Proposal) {
+  const st = useStore.getState()
+  const whole = st.active()
+  const active = whole.activeTimelineId ?? whole.timelines[0]?.id
+  const pending = proposal.changes.filter(c => !proposal.decisions[c.id] && (c.col === 'items' || c.col === 'sections'))
+  const tids = pending.map(c => changeTimelineId(whole, c)).filter((t): t is string => !!t)
+  if (tids.length && !tids.includes(active) && whole.timelines.some(t => t.id === tids[0])) st.setActiveTimeline(tids[0])
+  st.setUI({ reviewProposalId: proposal.id })
+}
+
 export function ProposalsPanel() {
-  const proj = useActiveProject()
+  // Conflicts and jumps look at every timeline of the project, not just the one on screen.
+  const proj = useActiveWhole()
   const activeId = useStore(s => s.activeId)
   const share = useActiveShare()
   const proposals = useStore(s => s.proposals[s.activeId]) ?? []
@@ -130,7 +147,7 @@ export function ProposalsPanel() {
         <div className="sb-hint">no suggestions waiting · agents with the edit link can propose changes here</div>
       )}
       {open.map(p => (
-        <div key={p.id} className="prop-row" onClick={() => setUI({ reviewProposalId: p.id })} title="Review this proposal">
+        <div key={p.id} className="prop-row" onClick={() => openReview(p)} title="Review this proposal">
           <div className="prop-title">{p.title}</div>
           <div className="prop-meta">
             {p.author} · {ago(p.createdAt)} · {p.changes.length} change{p.changes.length === 1 ? '' : 's'}
@@ -282,7 +299,7 @@ export const FIELD_LABEL: Record<string, string> = {
   refMultiple: 'multiple', refShowLinks: 'connectors', op: 'operation', fieldId: 'field', targets: 'include', processors: 'processors',
   start: 'start', end: 'end', depth: 'depth', parentId: 'parent', collapsed: 'collapsed',
   eye: 'hidden', pin: 'pinned', size: 'size', minZoom: 'min zoom', filters: 'filters', mode: 'mode',
-  createdBy: 'created by',
+  createdBy: 'created by', timelineId: 'timeline', settings: 'settings',
 }
 
 /** Resolve ids to names where the field is a reference, so diffs read naturally. */
@@ -293,6 +310,7 @@ function display(proj: Project, key: string, v: unknown): unknown {
   if (key === 'folderId' || key === 'parentId') {
     return [...proj.typeFolders, ...proj.fieldFolders, ...proj.processorFolders].find(f => f.id === v)?.name ?? v
   }
+  if (key === 'timelineId') return proj.timelines.find(t => t.id === v)?.name ?? v
   return v
 }
 
@@ -342,6 +360,8 @@ function addedSummary(proj: Project, c: ProposalChange): { k: string; v: unknown
   const out: { k: string; v: unknown }[] = []
   for (const [k, v] of Object.entries(e)) {
     if (k === 'id' || k === 'createdBy') continue
+    // The timeline is already on the row's badge; a lone timeline says nothing.
+    if (k === 'timelineId' && proj.timelines.length < 2) continue
     if (v === null || v === '' || (Array.isArray(v) && v.length === 0)) continue
     if (typeof v === 'object' && !Array.isArray(v) && Object.keys(v as object).length === 0) continue
     if (typeof v === 'boolean' && !v) continue
@@ -384,22 +404,36 @@ export function ChangeBody({ proj, change: c }: { proj: Project; change: Proposa
 /**
  * Select the entity a change targets and bring it into view. Items under
  * review are previewed on the canvas (added ones included), sections are
- * framed; other entities have no place on the timeline.
+ * framed; other entities have no place on the timeline. An entity on another
+ * timeline switches the canvas there first.
  */
 function jumpToChange(proj: Project, c: ProposalChange): boolean {
   const st = useStore.getState()
+  const tid = changeTimelineId(proj, c)
+  const active = proj.activeTimelineId ?? proj.timelines[0]?.id
+  const switchTo = tid && tid !== active && proj.timelines.some(t => t.id === tid) ? tid : null
   if (c.col === 'items') {
     const previewed = st.ui.reviewProposalId !== null && c.kind === 'add'
     if (!previewed && !proj.items.some(it => it.id === c.entityId)) return false
-    nav.current?.flyToItem(c.entityId)
+    if (switchTo) { st.setActiveTimeline(switchTo); st.setUI({ jumpTo: previewed ? null : c.entityId }) }
+    if (!switchTo) nav.current?.flyToItem(c.entityId)
     return true
   }
   if (c.col === 'sections' && proj.sections.some(sc => sc.id === c.entityId)) {
+    if (switchTo) { st.setActiveTimeline(switchTo); st.setUI({ jumpTo: c.entityId }); return true }
     st.select([`S:${c.entityId}`])
     nav.current?.flyToSection(c.entityId)
     return true
   }
   return false
+}
+
+/** "on Level 2" when the change's entity sits on another timeline than the one on screen. */
+function TimelineBadge({ proj, change }: { proj: Project; change: ProposalChange }) {
+  const tid = changeTimelineId(proj, change)
+  const active = proj.activeTimelineId ?? proj.timelines[0]?.id
+  if (!tid || tid === active || proj.timelines.length < 2) return null
+  return <span className="badge tl-badge" title="On another timeline">{timelineName(proj, tid)}</span>
 }
 
 const canJumpTo = (proj: Project, c: ProposalChange, reviewing: boolean): boolean => {
@@ -451,6 +485,7 @@ export function ChangeRow(props: {
           title={canJump ? 'Show it on the timeline' : undefined}
           onClick={e => { if (canJump) { e.preventDefault(); jumpToChange(proj, c) } }}
         >{label.name}</span>
+        <TimelineBadge proj={proj} change={c} />
         <span className="prop-tail">
           <span className={`prop-verb ${c.kind}`}>{label.verb}</span>
           {props.onDecide && <DecideButtons busy={props.busy} onDecide={props.onDecide} kind={c.kind} />}
@@ -471,7 +506,7 @@ export function ChangeRow(props: {
  * a change can be decided right where its effect is visible.
  */
 export function ProposalChangeCard({ proposal, change: c }: { proposal: Proposal; change: ProposalChange }) {
-  const proj = useActiveProject()
+  const proj = useActiveWhole()
   const projectId = useStore(s => s.activeId)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)

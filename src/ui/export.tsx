@@ -197,15 +197,17 @@ function ExportScene(props: { proj: Project; cam: Camera; w: number; h: number }
 /**
  * The items in scope in timeline order, one row per item. Each hierarchy
  * level gets its own column holding the name of the section containing the
- * item at that depth (e.g. a Chapter column and a Level column).
+ * item at that depth (e.g. a Chapter column and a Level column). With
+ * `allTimelines` the project's timelines are exported one after the other,
+ * with a leading Timeline column.
  */
-export function exportCSV(proj: Project, scope: ExportScope) {
+export function exportCSV(proj: Project, scope: ExportScope, allTimelines = false) {
   const esc = (v: string | number) => {
     const s = String(v)
     return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
   }
-  const sectionAt = (depth: number, pos: number) =>
-    proj.sections.find(sc => sc.depth === depth && sc.start <= pos && sc.end >= pos)?.name ?? ''
+  const sectionAt = (timelineId: string, depth: number, pos: number) =>
+    proj.sections.find(sc => sc.timelineId === timelineId && sc.depth === depth && sc.start <= pos && sc.end >= pos)?.name ?? ''
   const maxDepth = proj.sections.reduce((n, sc) => Math.max(n, sc.depth), -1)
   const levels = Array.from(
     { length: maxDepth + 1 },
@@ -230,12 +232,18 @@ export function exportCSV(proj: Project, scope: ExportScope) {
     if (!a) return ''
     return f.kind === 'group' ? groupText(proj, owner, f) : formatValue(proj, f, readValue(proj, owner, f, a.att))
   }
-  const header = [...levels, 'Title', 'Type', 'Position', 'Duration', 'Tags', 'Description', 'Link', 'Created by', ...columns.map(f => fieldDisplayName(proj, f))]
-  const rows = scope.items
+  const order = new Map(proj.timelines.map((t, i) => [t.id, i]))
+  const timelineCol = allTimelines ? ['Timeline'] : []
+  const header = [...timelineCol, ...levels, 'Title', 'Type', 'Position', 'Duration', 'Tags', 'Description', 'Link', 'Created by', ...columns.map(f => fieldDisplayName(proj, f))]
+  const items = allTimelines
+    ? [...scope.items].sort((a, b) => (order.get(a.timelineId) ?? 0) - (order.get(b.timelineId) ?? 0) || a.pos - b.pos)
+    : scope.items
+  const rows = items
     .map(it => {
       const owner: Owner = { kind: 'item', entity: it }
       return [
-        ...levels.map((_, d) => sectionAt(d, it.pos)),
+        ...(allTimelines ? [proj.timelines.find(t => t.id === it.timelineId)?.name ?? ''] : []),
+        ...levels.map((_, d) => sectionAt(it.timelineId, d, it.pos)),
         it.title,
         typeOf(proj, it)?.name ?? '',
         it.pos,

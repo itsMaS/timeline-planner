@@ -1,7 +1,11 @@
 /**
  * Timeline Planner agent CLI — lets an agent (or a script) work on a shared
- * timeline through its edit link, the same way a person does, but with the
+ * project through its edit link, the same way a person does, but with the
  * option to *propose* changes for review instead of applying them.
+ *
+ * A project holds one or more timelines (subtabs sharing the schema); items
+ * and sections carry `timelineId`. `outline` groups by timeline, `export`
+ * takes `--timeline` to pick some.
  *
  *   npx tsx agent/timeline.ts <command> [options]
  *
@@ -10,15 +14,15 @@
  * edit link can `apply` or `withdraw`.
  *
  * Commands
- *   read     [--out doc.json]                     download the timeline (wrapper: {version, timelineId, name, doc})
- *   outline  [--in doc.json]                      human-readable outline: sections → items, with ids
+ *   read     [--out doc.json]                     download the project (wrapper: {version, timelineId, name, doc})
+ *   outline  [--in doc.json]                      human-readable outline: timelines → sections → items, with ids
  *   propose  --base doc.json --edited edited.json --title "…" [--summary "…"] [--notes notes.json] [--author "…"]
  *                                                 diff base → edited into a proposal for review in the app
  *   apply    --base doc.json --edited edited.json [--force]
  *                                                 save the edited document directly (fails if someone saved since)
  *   status   [--all]                              list open (or all) proposals
  *   withdraw <proposal-id>                        delete a proposal
- *   export   --out file.pdf [--html file.html] [--sections a,b] [--types a,b] [--layers a,b] [--tags a,b] [--text q]
+ *   export   --out file.pdf [--html file.html] [--timeline a,b] [--sections a,b] [--types a,b] [--layers a,b] [--tags a,b] [--text q]
  *                                                 the app's document export (sections as headings, items with
  *                                                 descriptions/fields/tags) printed to PDF with headless Chromium
  *
@@ -33,6 +37,7 @@ import { join, resolve as resolvePath } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { diffToChanges, type Proposal, type ProposalChange } from '../src/model/proposal'
 import { itemMatchesFilters, typeOf } from '../src/model/layout'
+import { repairTimelines, timelineView } from '../src/model/timelines'
 import type { Project } from '../src/model/types'
 import { buildDocHTML } from '../src/ui/exportDoc'
 import { SUPABASE_KEY, SUPABASE_URL } from '../src/sync/client'
@@ -93,6 +98,7 @@ async function open(token: string): Promise<Wrapper> {
   const r = await rpc<OpenResult | null>('share_open', { p_token: token })
   if (!r) fail('this link is not valid (revoked or mistyped)')
   if (r.role === 'view') fail('this is a view-only link: it can read but not propose or apply. Ask for the suggest or edit link.')
+  repairTimelines(r.doc)
   return { version: r.version, timelineId: r.id, name: r.name, role: r.role, doc: r.doc }
 }
 
@@ -101,9 +107,11 @@ function loadDoc(path: string | undefined, what: string): Wrapper {
   if (!path) fail(`--${what} <file> is required`)
   if (!existsSync(path)) fail(`${path} does not exist`)
   const raw = JSON.parse(readFileSync(path, 'utf8')) as Wrapper | Project
-  if ('doc' in raw && raw.doc && typeof raw.doc === 'object') return raw as Wrapper
+  if ('doc' in raw && raw.doc && typeof raw.doc === 'object') { repairTimelines((raw as Wrapper).doc); return raw as Wrapper }
   const doc = raw as Project
-  if (!Array.isArray(doc.items)) fail(`${path} is not a timeline document`)
+  if (!Array.isArray(doc.items)) fail(`${path} is not a project document`)
+  // Entities written without a timeline land on the first one, like in the app.
+  repairTimelines(doc)
   return { version: 0, timelineId: '', name: doc.name, role: 'edit', doc }
 }
 
@@ -117,7 +125,7 @@ async function cmdRead() {
   writeFileSync(out, JSON.stringify(w, null, 2))
   const d = w.doc
   console.log(`${w.name} (${w.role} link, version ${w.version}) → ${out}`)
-  console.log(`${plural(d.items.length, 'item')}, ${plural(d.types.length, 'type')}, ${plural(d.sections.length, 'section')}, ${plural(d.layers.length, 'layer')}`)
+  console.log(`${plural(d.timelines.length, 'timeline')} (${d.timelines.map(t => t.name).join(', ')}), ${plural(d.items.length, 'item')}, ${plural(d.types.length, 'type')}, ${plural(d.sections.length, 'section')}, ${plural(d.layers.length, 'layer')}`)
   console.log(`edit the "doc" object in ${out}, then: propose --base ${out} --edited <edited.json> --title "…"`)
 }
 
@@ -130,26 +138,35 @@ function outlineOf(d: Project): string {
   if (d.processors.length) lines.push(`processors: ${d.processors.map(p => `${p.name} (${p.op}) [${p.id}]`).join(', ')}`)
   lines.push(`types: ${d.types.map(t => `${t.name} [${t.id}]`).join(', ') || '(none)'}`)
   lines.push(`layers: ${d.layers.map(l => `${l.name} [${l.id}]`).join(', ') || '(none)'}`)
-  lines.push('')
-  const secs = [...d.sections].sort((a, b) => a.start - b.start || a.depth - b.depth)
-  const items = [...d.items].sort((a, b) => a.pos - b.pos)
-  const placed = new Set<string>()
-  for (const sc of secs) {
-    lines.push(`${'#'.repeat(sc.depth + 2)} ${sc.name || 'Untitled'} [${sc.id}]  (${fmt(sc.start)} → ${fmt(sc.end)})`)
-    if (sc.description?.trim()) lines.push(`  ${sc.description.trim().replace(/\n/g, '\n  ')}`)
-    // Items directly in this section: inside its range and not inside a deeper section.
-    for (const it of items) {
-      if (placed.has(it.id) || it.pos < sc.start || it.pos > sc.end) continue
-      const deeper = secs.some(o => o.depth > sc.depth && it.pos >= o.start && it.pos <= o.end)
-      if (deeper) continue
-      placed.add(it.id)
-      lines.push(itemLine(d, it, fmt))
+  const multi = d.timelines.length > 1
+  if (multi) lines.push(`timelines: ${d.timelines.map(t => `${t.name} [${t.id}]`).join(', ')}`)
+  // One block per timeline; with a single timeline the headings start one level higher.
+  for (const tl of d.timelines) {
+    const v = timelineView(d, tl.id)
+    lines.push('')
+    if (multi) lines.push(`## Timeline: ${tl.name} [${tl.id}]  (unit: ${tl.settings.unit.preset}${tl.settings.unit.preset === 'custom' ? ` ${tl.settings.unit.custom}` : ''})`)
+    const base = multi ? 3 : 2
+    const secs = [...v.sections].sort((a, b) => a.start - b.start || a.depth - b.depth)
+    const items = [...v.items].sort((a, b) => a.pos - b.pos)
+    const placed = new Set<string>()
+    for (const sc of secs) {
+      lines.push(`${'#'.repeat(sc.depth + base)} ${sc.name || 'Untitled'} [${sc.id}]  (${fmt(sc.start)} → ${fmt(sc.end)})`)
+      if (sc.description?.trim()) lines.push(`  ${sc.description.trim().replace(/\n/g, '\n  ')}`)
+      // Items directly in this section: inside its range and not inside a deeper section.
+      for (const it of items) {
+        if (placed.has(it.id) || it.pos < sc.start || it.pos > sc.end) continue
+        const deeper = secs.some(o => o.depth > sc.depth && it.pos >= o.start && it.pos <= o.end)
+        if (deeper) continue
+        placed.add(it.id)
+        lines.push(itemLine(d, it, fmt))
+      }
     }
-  }
-  const loose = items.filter(it => !placed.has(it.id))
-  if (loose.length) {
-    lines.push(secs.length ? '## (outside any section)' : '')
-    for (const it of loose) lines.push(itemLine(d, it, fmt))
+    const loose = items.filter(it => !placed.has(it.id))
+    if (loose.length) {
+      lines.push(secs.length ? `${'#'.repeat(base)} (outside any section)` : '')
+      for (const it of loose) lines.push(itemLine(d, it, fmt))
+    }
+    if (!secs.length && !loose.length) lines.push('(empty)')
   }
   return lines.join('\n')
 }
@@ -217,7 +234,7 @@ async function cmdApply() {
       p_token: token, p_expected_version: base.version, p_name: doc.name, p_doc: doc,
     })
     if (r.gone) fail('this link is not valid, or it is a suggest link (only an edit link can apply directly — use propose)')
-    if (r.conflict) fail(`the timeline changed since you read it (server is at version ${r.version}, base was ${base.version}). Re-read, redo the edit, or --force to overwrite.`, 2)
+    if (r.conflict) fail(`the project changed since you read it (server is at version ${r.version}, base was ${base.version}). Re-read, redo the edit, or --force to overwrite.`, 2)
     console.log(`saved (version ${r.version}) with ${plural(changes.length, 'change')}`)
   }
   console.log(describeChanges(doc, changes).join('\n'))
@@ -340,17 +357,29 @@ async function cmdExport() {
   d.filters.tags = listOpt('tags')
   d.filters.text = opt('text') ?? ''
   const sections = listOpt('sections')
-  const sectionIds = sections.length ? resolve(sections, d.sections, 'section').map(s => s.id) : null
+  const picked = sections.length ? resolve(sections, d.sections, 'section') : []
+  const sectionIds = picked.length ? picked.map(s => s.id) : null
+  // --timeline picks timelines (names or ids); default: the sections' timeline, else every timeline.
+  const wantedTl = listOpt('timeline')
+  let timelineIds = wantedTl.length ? resolve(wantedTl, d.timelines, 'timeline').map(t => t.id) : null
+  if (sectionIds) {
+    const secTl = [...new Set(picked.map(s => s.timelineId))]
+    if (secTl.length > 1) fail(`the selected sections sit on ${secTl.length} timelines (${secTl.map(id => d.timelines.find(t => t.id === id)?.name ?? id).join(', ')}); pick sections of one timeline`)
+    if (timelineIds && (timelineIds.length !== 1 || timelineIds[0] !== secTl[0])) fail('--sections must belong to the single --timeline given')
+    timelineIds = secTl
+  }
+  const tlSet = new Set(timelineIds ?? d.timelines.map(t => t.id))
 
-  const inScope = (pos: number) => !sectionIds || d.sections.some(sc => sectionIds.includes(sc.id) && pos >= sc.start && pos <= sc.end)
-  const visible = d.items.filter(it => itemMatchesFilters(d, it, d.filters) && inScope(it.pos)).length
-  const { html: raw, title } = buildDocHTML(d, sectionIds)
+  const inScope = (it: Project['items'][number]) => tlSet.has(it.timelineId)
+    && (!sectionIds || d.sections.some(sc => sc.timelineId === it.timelineId && sectionIds.includes(sc.id) && it.pos >= sc.start && it.pos <= sc.end))
+  const visible = d.items.filter(it => itemMatchesFilters(d, it, d.filters) && inScope(it)).length
+  const { html: raw, title } = buildDocHTML(d, sectionIds, timelineIds)
   // The in-app page opens the print dialog itself; here Chromium prints it.
   const html = raw.replace(/<script>[\s\S]*?<\/script>/, '').replace(/<div class="doc-bar">[\s\S]*?<\/div>/, '')
   if (opt('html')) { writeFileSync(opt('html')!, html); console.log(`html → ${opt('html')}`) }
   const out = opt('out') ?? (opt('html') ? '' : 'timeline.pdf')
   if (out) await printPdf(html, out)
-  console.log(`“${title}”: ${plural(visible, 'visible item')}${sectionIds ? ` in ${plural(sectionIds.length, 'section')}` : ''}`)
+  console.log(`“${title}”: ${plural(visible, 'visible item')}${sectionIds ? ` in ${plural(sectionIds.length, 'section')}` : ''}${tlSet.size < d.timelines.length ? ` on ${plural(tlSet.size, 'timeline')}` : ''}`)
 }
 
 // ---------------------------------------------------------------- main
@@ -360,12 +389,12 @@ const commands: Record<string, () => Promise<void>> = {
   status: cmdStatus, withdraw: cmdWithdraw, export: cmdExport,
 }
 
-const USAGE = `Timeline Planner agent CLI — work on a shared timeline through its edit link.
+const USAGE = `Timeline Planner agent CLI — work on a shared project through its edit link.
 
   <command> [options]        (edit link via --link <url-or-token> or $TIMELINE_LINK)
 
-  read     [--out doc.json]                     download the timeline ({version, timelineId, name, doc})
-  outline  [--in doc.json]                      sections → items with ids, for orientation
+  read     [--out doc.json]                     download the project ({version, timelineId, name, doc})
+  outline  [--in doc.json]                      timelines → sections → items with ids, for orientation
   propose  --base doc.json --edited edited.json --title "…" [--summary "…"] [--notes notes.json] [--author "…"]
                                                 diff base → edited into a proposal for review in the app
   apply    --base doc.json --edited edited.json [--force]
@@ -373,7 +402,7 @@ const USAGE = `Timeline Planner agent CLI — work on a shared timeline through 
   status   [--all]                              list open (or all) proposals
   withdraw <proposal-id>                        delete a proposal
   export   --out file.pdf [--html file.html] [--in doc.json]
-           [--sections a,b] [--types a,b] [--layers a,b] [--tags a,b] [--text q]
+           [--timeline a,b] [--sections a,b] [--types a,b] [--layers a,b] [--tags a,b] [--text q]
                                                 the app's document export printed to PDF (needs Chromium)`
 
 if (!cmd || !commands[cmd]) {

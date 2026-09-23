@@ -6,7 +6,7 @@ import { childFolders, dissolveFolder, folderPath, folderTree, isSelfOrDescendan
 import { iconByName } from '../model/icons'
 import { itemMatchesFilters, typeOf } from '../model/layout'
 import { hideNewTypeInFilters } from '../model/views'
-import { newLevel, useActiveProject, useActiveShare, useCanEdit, useStore } from '../model/store'
+import { newLevel, useActiveProject, useActiveShare, useActiveWhole, useCanEdit, useStore } from '../model/store'
 import type { ItemType, TypeFolder } from '../model/types'
 import { PALETTE, uid } from '../model/util'
 import { IconPicker } from './IconPicker'
@@ -75,7 +75,10 @@ function SectionHeader(props: { title: string; open: boolean; toggle: () => void
 }
 
 export function Sidebar() {
+  // `proj` is scoped to the timeline on screen (counts, sections); `whole`
+  // covers every timeline (tags, field usage, level removal).
   const proj = useActiveProject()
+  const whole = useActiveWhole()
   const ui = useStore(s => s.ui)
   const setUI = useStore(s => s.setUI)
   const mutate = useStore(s => s.mutate)
@@ -165,9 +168,9 @@ export function Sidebar() {
 
   const allTags = useMemo(() => {
     const s = new Set<string>()
-    for (const it of proj.items) for (const t of it.tags) s.add(t)
+    for (const it of whole.items) for (const t of it.tags) s.add(t)
     return [...s].sort()
-  }, [proj.items])
+  }, [whole.items])
 
   // Sections as a containment tree: each section nests under the smallest
   // section that fully encloses it, children ordered by start.
@@ -705,7 +708,7 @@ export function Sidebar() {
                     const center = p0.camera.x + w / p0.camera.s
                     const span = (w * 0.6) / p0.camera.s
                     mutate(p => p.sections.push({
-                      id: uid(), name: `New ${level.name.toLowerCase()}`, depth: d,
+                      id: uid(), name: `New ${level.name.toLowerCase()}`, timelineId: p.activeTimelineId ?? p.timelines[0].id, depth: d,
                       start: center - span / 2, end: center + span / 2, fieldValues: {},
                     }))
                   }}
@@ -718,7 +721,7 @@ export function Sidebar() {
               )}
               {canEdit && d === proj.hierarchyLevels.length - 1 && d > 0 && (
                 <button
-                  className="ghost-btn" title="Remove level" disabled={proj.sections.some(s => s.depth === d)}
+                  className="ghost-btn" title="Remove level" disabled={whole.sections.some(s => s.depth === d)}
                   onClick={() => mutate(p => { p.hierarchyLevels.pop() })}
                 ><Trash2 width={13} height={13} /></button>
               )}
@@ -745,7 +748,7 @@ export function Sidebar() {
             </div>
           ))}
           {proj.sections.length === 0 && (
-            <div className="sb-hint">{canEdit ? 'no sections yet — use + next to a level name' : 'no sections'}</div>
+            <div className="sb-hint">{canEdit ? 'no sections on this timeline yet — use + next to a level name' : 'no sections on this timeline'}</div>
           )}
         </div>
       )}

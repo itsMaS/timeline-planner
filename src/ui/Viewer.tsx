@@ -3,8 +3,9 @@ import {
   Eye, EyeOff, ExternalLink, FileText, Maximize2, Minus, Moon, PanelLeft, Search, Sun, TableProperties, Type, X, ZoomIn,
 } from 'lucide-react'
 import { itemMatchesFilters } from '../model/layout'
-import { useActiveProject, useActiveShare, useActiveSync, useStore } from '../model/store'
+import { useActiveProject, useActiveShare, useActiveSync, useActiveWhole, useStore } from '../model/store'
 import { CanvasView } from './Canvas'
+import { TimelineSwitcher } from './Timelines'
 import { Inspector } from './Inspector'
 import { useIsMobile } from './mobile'
 import { nav } from './nav'
@@ -22,6 +23,7 @@ import { Sidebar } from './Sidebar'
  */
 export function Viewer() {
   const proj = useActiveProject()
+  const whole = useActiveWhole()
   const share = useActiveShare()
   const sync = useActiveSync()
   const ui = useStore(s => s.ui)
@@ -67,6 +69,7 @@ export function Viewer() {
           onClick={() => setUI({ sidebarOpen: !ui.sidebarOpen })}
         ><PanelLeft width={15} height={15} /></button>
         <strong className="viewer-title" title={proj.name}>{proj.name}</strong>
+        <TimelineSwitcher />
         <span className="badge"><Eye width={11} height={11} /> View only</span>
         <span className={`sync-line compact ${status}`} title={status === 'live' ? 'Live' : status}>
           <span className="status-dot" />
@@ -121,7 +124,7 @@ export function Viewer() {
           <button
             className="ghost-btn" title={`${scope.describe('Document PDF')} — sections as headings, items as sub-headings; only visible items are included`}
             onClick={() => {
-              if (!exportDocPDF(proj, scope.sectionIds)) showToast('Pop-up blocked — allow pop-ups for this site to export the document.')
+              if (!exportDocPDF(whole, scope.sectionIds, [proj.activeTimelineId ?? whole.timelines[0].id])) showToast('Pop-up blocked — allow pop-ups for this site to export the document.')
             }}
           ><FileText width={15} height={15} /></button>
           <a className="ghost-btn" title="Open Timeline Planner" href={appUrl} target="_blank" rel="noreferrer">

@@ -4,7 +4,8 @@ import { iconByName } from '../model/icons'
 import { displayEntries, groupAttachments, type DisplayEntry } from '../model/fields'
 import { typeOf } from '../model/layout'
 import { shownProcessorResults } from '../model/processors'
-import type { Item, Project, Section } from '../model/types'
+import { timelineView } from '../model/timelines'
+import type { Id, Item, Project, Section } from '../model/types'
 import { formatUnit, unitSuffix } from '../model/util'
 import { isItemVisible } from './exportScope'
 import { Markdown } from './Markdown'
@@ -22,6 +23,9 @@ import { Markdown } from './Markdown'
  * Only items currently visible on the canvas are included: items on a layer
  * hidden with the eye toggle and items filtered out (types, layers, tags,
  * text — i.e. ghosted or hidden) are skipped. Sections are always kept.
+ *
+ * A project with several timelines (subtabs) exports one of them, or all of
+ * them one after the other, each under its own top-level heading.
  *
  * The PDF itself comes from the browser: the document opens in a new tab with
  * the print dialog already up, where "Save as PDF" is the destination.
@@ -114,7 +118,7 @@ function FieldList({ proj, fields }: { proj: Project; fields: DisplayEntry[] }) 
   )
 }
 
-function DocBody({ proj, roots, loose }: { proj: Project; roots: SectionNode[]; loose: Item[] }) {
+function DocBody({ proj, roots, loose, base = 1 }: { proj: Project; roots: SectionNode[]; loose: Item[]; base?: number }) {
   const st = proj.settings
   const suffix = unitSuffix(st.unit.preset, st.unit.custom)
   const fmt = (v: number) => formatUnit(v, 0.05, suffix, st.unit.preset)
@@ -185,11 +189,11 @@ function DocBody({ proj, roots, loose }: { proj: Project; roots: SectionNode[]; 
 
   return (
     <>
-      {roots.map(r => renderSection(r, 1))}
+      {roots.map(r => renderSection(r, base))}
       {loose.length > 0 && (
-        <section className="sec l1">
-          {roots.length > 0 && <Heading level={1} className="sec-h"><span className="title">Outside any section</span></Heading>}
-          {loose.map(it => renderItem(it, roots.length > 0 ? 2 : 1))}
+        <section className={`sec l${base}`}>
+          {roots.length > 0 && <Heading level={base} className="sec-h"><span className="title">Outside any section</span></Heading>}
+          {loose.map(it => renderItem(it, roots.length > 0 ? base + 1 : base))}
         </section>
       )}
     </>
@@ -220,6 +224,8 @@ header.cover p { margin: 0; color: #5a6172; font-size: 10.5pt; }
 h1, h2, h3, h4, h5, h6 { line-height: 1.25; margin: 0; page-break-after: avoid; break-after: avoid; }
 .sec-h { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
 .sec.l1 > .sec-h { font-size: 21pt; margin-top: 30px; padding-bottom: 5px; border-bottom: 1.5px solid #c6cbd6; }
+.sec.timeline + .sec.timeline { page-break-before: always; break-before: page; }
+.sec.timeline > .sec-h { font-size: 24pt; border-bottom-width: 2.5px; border-bottom-color: #1c1f26; }
 .sec.l2 > .sec-h { font-size: 17pt; margin-top: 24px; }
 .sec.l3 > .sec-h { font-size: 14.5pt; margin-top: 18px; }
 .sec.l4 > .sec-h, .sec.l5 > .sec-h, .sec.l6 > .sec-h { font-size: 13pt; margin-top: 14px; }
@@ -258,13 +264,28 @@ h1.item-h { font-size: 19pt; } h2.item-h { font-size: 15.5pt; } h3.item-h { font
 }
 `
 
-/** Full standalone HTML for the outline document. */
-export function buildDocHTML(proj: Project, sectionIds: string[] | null): { html: string; title: string } {
-  const { roots, loose } = buildTree(proj, sectionIds)
-  const rootNames = roots.map(r => r.section.name || 'Untitled')
-  const title = sectionIds && rootNames.length ? `${proj.name} — ${rootNames.join(', ')}` : proj.name
-  const total = roots.reduce((s, r) => s + countItems(r), 0) + loose.length
-  const hidden = proj.items.filter(it => !isItemVisible(proj, it)).length
+/**
+ * Full standalone HTML for the outline document. `proj` is the whole project;
+ * `timelineIds` picks the timelines to export (default: every one, in tab
+ * order). One timeline renders as before; several render one after the
+ * other, each under a heading with its name. `sectionIds` limits a
+ * single-timeline export to those sections (and everything inside them).
+ */
+export function buildDocHTML(proj: Project, sectionIds: string[] | null, timelineIds: Id[] | null = null): { html: string; title: string } {
+  const wanted = timelineIds ?? proj.timelines.map(t => t.id)
+  const timelines = proj.timelines.filter(t => wanted.includes(t.id))
+  const single = timelines.length === 1
+  const parts = timelines.map(t => {
+    const view = timelineView(proj, t.id)
+    const { roots, loose } = buildTree(view, single ? sectionIds : null)
+    return { t, view, roots, loose, total: roots.reduce((s, r) => s + countItems(r), 0) + loose.length }
+  })
+  const first = parts[0]
+  const rootNames = single ? first.roots.map(r => r.section.name || 'Untitled') : []
+  const named = proj.timelines.length > 1 && single ? `${proj.name} — ${first.t.name}` : proj.name
+  const title = single && sectionIds && rootNames.length ? `${named} — ${rootNames.join(', ')}` : named
+  const total = parts.reduce((s, p) => s + p.total, 0)
+  const hidden = parts.reduce((s, p) => s + p.view.items.filter(it => !isItemVisible(p.view, it)).length, 0)
   const f = proj.filters
   const activeFilters = [
     f.offTypes.length && 'types', f.offLayers.length && 'layers', f.tags.length && 'tags',
@@ -274,9 +295,10 @@ export function buildDocHTML(proj: Project, sectionIds: string[] | null): { html
   const visibility = hidden > 0
     ? `${total} visible item${total === 1 ? '' : 's'} (${hidden} hidden by ${activeFilters.join(', ') || 'filters'})`
     : `${total} item${total === 1 ? '' : 's'}`
-  const scope = sectionIds
-    ? `${rootNames.length === 1 ? (proj.hierarchyLevels[roots[0].section.depth]?.name ?? 'Section') : 'Sections'}: ${rootNames.join(', ')}`
-    : 'Whole timeline'
+  const scope = single && sectionIds
+    ? `${rootNames.length === 1 ? (proj.hierarchyLevels[first.roots[0]?.section.depth]?.name ?? 'Section') : 'Sections'}: ${rootNames.join(', ')}`
+    : single ? 'Whole timeline' : `${parts.length} timelines`
+  const empty = parts.every(p => p.roots.length === 0 && p.loose.length === 0)
   const body = renderToStaticMarkup(
     <>
       <div className="doc-bar">
@@ -287,9 +309,22 @@ export function buildDocHTML(proj: Project, sectionIds: string[] | null): { html
         <h1>{title}</h1>
         <p>{scope} · {visibility} · Timeline Planner export, {new Date().toISOString().slice(0, 10)}</p>
       </header>
-      {roots.length === 0 && loose.length === 0
+      {empty
         ? <p className="empty">{hidden > 0 ? 'Nothing visible to export — every item is hidden by the current filters.' : 'Nothing to export.'}</p>
-        : <DocBody proj={proj} roots={roots} loose={loose} />}
+        : single
+          ? <DocBody proj={first.view} roots={first.roots} loose={first.loose} />
+          : parts.map(p => (
+            <section key={p.t.id} className="sec l1 timeline">
+              <Heading level={1} className="sec-h">
+                <span className="title">{p.t.name}</span>
+                <span className="type">Timeline</span>
+              </Heading>
+              <p className="meta">{p.total} item{p.total === 1 ? '' : 's'}</p>
+              {p.roots.length === 0 && p.loose.length === 0
+                ? <p className="empty">Nothing on this timeline.</p>
+                : <DocBody proj={p.view} roots={p.roots} loose={p.loose} base={2} />}
+            </section>
+          ))}
     </>,
   )
   const esc = (s: string) => s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]!))
@@ -315,10 +350,11 @@ window.addEventListener('load', function () { setTimeout(function () { window.pr
 /**
  * Open the outline document in a new tab with the print dialog up, so the user
  * can save it as a PDF. `sectionIds` limits the export to those sections (and
- * everything inside them); null exports the whole timeline.
+ * everything inside them); null exports the whole timeline. `timelineIds`
+ * picks the timelines (default: all of them).
  */
-export function exportDocPDF(proj: Project, sectionIds: string[] | null) {
-  const { html } = buildDocHTML(proj, sectionIds)
+export function exportDocPDF(proj: Project, sectionIds: string[] | null, timelineIds: Id[] | null = null) {
+  const { html } = buildDocHTML(proj, sectionIds, timelineIds)
   const win = window.open('', '_blank')
   if (!win) return false
   win.document.open()

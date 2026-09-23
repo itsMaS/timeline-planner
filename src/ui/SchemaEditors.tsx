@@ -7,7 +7,7 @@ import {
 import { folderPath, folderTree } from '../model/folders'
 import { iconByName } from '../model/icons'
 import { opLabel, PROCESSOR_OPS, processorUsage } from '../model/processors'
-import { useActiveProject, useStore } from '../model/store'
+import { useActiveProject, useActiveWhole, useStore } from '../model/store'
 import type { FieldAttachment, FieldDef, FieldKind, HierarchyLevel, Id, ProcessorAttachment, ProcessorDef, ProcessorOp } from '../model/types'
 import { uid } from '../model/util'
 import { FieldValueInput } from './FieldInputs'
@@ -621,7 +621,7 @@ function OptionsEditor({ field, onChange }: { field: FieldDef; onChange: (opts: 
     const opts = t.split('\n').map(o => o.trim()).filter(o => o && !seen.has(o) && seen.add(o))
     if (opts.join('\n') !== field.options.join('\n')) onChange(opts)
   }
-  const proj = useActiveProject()
+  const proj = useActiveWhole()
   const used = useMemo(() => {
     const count = new Map<string, number>()
     const bump = (rec: Record<string, unknown> | undefined) => {

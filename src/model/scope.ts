@@ -9,8 +9,8 @@ import type { FieldDef, FieldValue, Item, Project, Section } from './types'
  * type name; use [brackets] or the built-in's alias (`$type`) to disambiguate.
  */
 
-const ITEM_BUILTINS = ['title', 'type', 'tags', 'layer', 'pos', 'duration', 'end', 'description', 'link', 'id', 'section', 'sections', 'created by'] as const
-const SECTION_BUILTINS = ['name', 'title', 'level', 'start', 'end', 'length', 'description', 'id', 'parent', 'sections'] as const
+const ITEM_BUILTINS = ['title', 'type', 'tags', 'layer', 'pos', 'duration', 'end', 'description', 'link', 'id', 'section', 'sections', 'timeline', 'created by'] as const
+const SECTION_BUILTINS = ['name', 'title', 'level', 'start', 'end', 'length', 'description', 'id', 'parent', 'sections', 'timeline'] as const
 
 /** Names an expression may use on items / sections besides the fields, for pickers and docs. */
 export const builtinNames = (kind: 'item' | 'section'): readonly string[] => (kind === 'item' ? ITEM_BUILTINS : SECTION_BUILTINS)
@@ -27,9 +27,10 @@ function itemBuiltin(p: Project, it: Item, name: string): { found: boolean; valu
     case 'description': return { found: true, value: it.description }
     case 'link': return { found: true, value: it.link }
     case 'id': return { found: true, value: it.id }
-    case 'section': { const chain = sectionsAt(p, it.pos); return { found: true, value: chain.length ? chain[chain.length - 1].name : null } }
-    case 'sections': return { found: true, value: sectionsAt(p, it.pos).map(s => s.name) }
+    case 'section': { const chain = sectionsAt(p, it.pos, undefined, it.timelineId); return { found: true, value: chain.length ? chain[chain.length - 1].name : null } }
+    case 'sections': return { found: true, value: sectionsAt(p, it.pos, undefined, it.timelineId).map(s => s.name) }
     case 'created by': return { found: true, value: it.createdBy?.name ?? null }
+    case 'timeline': return { found: true, value: p.timelines?.find(t => t.id === it.timelineId)?.name ?? null }
   }
   return { found: false, value: null }
 }
@@ -45,13 +46,14 @@ function sectionBuiltin(p: Project, sc: Section, name: string): { found: boolean
     case 'description': return { found: true, value: sc.description ?? '' }
     case 'id': return { found: true, value: sc.id }
     case 'parent': {
-      const parents = p.sections.filter(t => t.id !== sc.id && t.depth < sc.depth && t.start <= sc.start + 1e-9 && t.end >= sc.end - 1e-9).sort((a, b) => b.depth - a.depth)
+      const parents = p.sections.filter(t => t.id !== sc.id && t.timelineId === sc.timelineId && t.depth < sc.depth && t.start <= sc.start + 1e-9 && t.end >= sc.end - 1e-9).sort((a, b) => b.depth - a.depth)
       return { found: true, value: parents[0]?.name ?? null }
     }
     case 'sections': {
-      const parents = p.sections.filter(t => t.id !== sc.id && t.depth < sc.depth && t.start <= sc.start + 1e-9 && t.end >= sc.end - 1e-9).sort((a, b) => a.depth - b.depth)
+      const parents = p.sections.filter(t => t.id !== sc.id && t.timelineId === sc.timelineId && t.depth < sc.depth && t.start <= sc.start + 1e-9 && t.end >= sc.end - 1e-9).sort((a, b) => a.depth - b.depth)
       return { found: true, value: parents.map(t => t.name) }
     }
+    case 'timeline': return { found: true, value: p.timelines?.find(t => t.id === sc.timelineId)?.name ?? null }
   }
   return { found: false, value: null }
 }

@@ -4,12 +4,13 @@ import type { Project } from './types'
  * Entity-level patches between two versions of a Project.
  *
  * Collections keyed by id are diffed per entity (upsert / remove / order),
- * scalar fields are replaced wholesale. Per-user state (camera, filters,
- * activeViewId) is deliberately excluded so it never syncs between people.
+ * scalar fields are replaced wholesale. Per-user state (camera, cameras,
+ * filters, activeViewId, activeTimelineId) is deliberately excluded so it
+ * never syncs between people.
  */
 
 export const SYNC_COLLECTIONS = [
-  'hierarchyLevels', 'fields', 'fieldFolders', 'processors', 'processorFolders', 'types', 'typeFolders', 'layers', 'sections', 'items', 'views',
+  'hierarchyLevels', 'fields', 'fieldFolders', 'processors', 'processorFolders', 'types', 'typeFolders', 'layers', 'timelines', 'sections', 'items', 'views',
 ] as const
 export const SYNC_SCALARS = ['name', 'settings'] as const
 
