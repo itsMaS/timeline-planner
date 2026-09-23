@@ -4877,6 +4877,7 @@ function evalProcessor(p, section, proc, att = null) {
     return { proc, att, text: "\u2014", matched: [], values: [], error: "needs a number field" };
   }
   const targets = new Set(proc.targets);
+  const exclude = new Set(targets.size ? [] : proc.exclude ?? []);
   const inside = entitiesInside(p, section);
   const matched = [];
   const values = [];
@@ -4886,7 +4887,8 @@ function evalProcessor(p, section, proc, att = null) {
     const key = o.kind === "item" ? o.entity.typeId : levelOf(p, o.entity)?.id;
     if (targets.size) {
       if (!key || !targets.has(key)) continue;
-    } else if (proc.op === "count" && o.kind === "section") continue;
+    } else if (key && exclude.has(key)) continue;
+    else if (proc.op === "count" && o.kind === "section") continue;
     if (where && !matchesRule(p, o, where)) continue;
     let v = null;
     if (field) {

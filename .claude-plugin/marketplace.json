@@ -7,7 +7,7 @@
       "name": "timeline-agent",
       "displayName": "Timeline Agent",
       "description": "Read and query a shared timeline through its edit link, propose changes for review in the app, apply edits when asked, and export filtered PDF documents.",
-      "version": "1.4.1",
+      "version": "1.4.2",
       "source": "./plugins/timeline-agent",
       "category": "productivity"
     }

@@ -55,6 +55,7 @@ export function evalProcessor(p: Project, section: Section, proc: ProcessorDef, 
   }
 
   const targets = new Set(proc.targets)
+  const exclude = new Set(targets.size ? [] : proc.exclude ?? [])
   const inside = entitiesInside(p, section)
   const matched: Owner[] = []
   const values: FieldValue[] = []
@@ -63,6 +64,7 @@ export function evalProcessor(p: Project, section: Section, proc: ProcessorDef, 
   for (const o of inside) {
     const key = o.kind === 'item' ? o.entity.typeId : levelOf(p, o.entity)?.id
     if (targets.size) { if (!key || !targets.has(key)) continue }
+    else if (key && exclude.has(key)) continue
     else if (proc.op === 'count' && o.kind === 'section') continue // bare count = items only
     if (where && !matchesRule(p, o, where)) continue
     let v: FieldValue | null = null

@@ -99,6 +99,8 @@ export interface ProcessorDef {
   where?: string
   /** Sidebar folder (Project.processorFolders); null/undefined = root. */
   folderId?: Id | null
+  /** With empty `targets`: ids left out of "everything". Types added later are still included. */
+  exclude?: Id[]
 }
 
 export interface ProcessorAttachment {

@@ -212,6 +212,10 @@
   start lies inside a section and satisfy the optional `where` rule. Results
   are computed on read, never stored; the document PDF and the CSV's second
   sections table include them.
+  Empty `targets` = "All" (every entity that has the field, minus
+  `ProcessorDef.exclude`), so types created later are included; a non-empty
+  `targets` is "Only selected". `TargetPicker` in `SchemaEditors.tsx` shows
+  All as every row ticked and is searchable.
 - Reference pick mode, hover highlight and the confirm dialog run through
   `ui.pickRef`, `ui.highlightId` and `ui.confirm`; deletes of items/sections
   go through `requestDelete` (`src/ui/deletion.ts`) so referenced entries warn.

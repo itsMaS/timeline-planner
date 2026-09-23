@@ -34,29 +34,83 @@ function NullableNumber(props: { value: number | null; onChange: (v: number | nu
 }
 
 /** Checkbox list of item types + hierarchy levels. */
-export function TargetPicker(props: { value: Id[]; onChange: (ids: Id[]) => void; emptyLabel: string }) {
+export function TargetPicker(props: {
+  value: Id[]
+  onChange: (ids: Id[], exclude: Id[]) => void
+  emptyLabel: string
+  /**
+   * Given → "All" mode: an empty `value` shows every row ticked and unticking
+   * one records it here, so types and levels created later stay included.
+   */
+  exclude?: Id[]
+  /** All mode leaves levels out (bare count counts items only). */
+  allSkipsLevels?: boolean
+}) {
   const proj = useActiveProject()
   const opts = targetOptions(proj)
+  const [q, setQ] = useState('')
+  const needle = q.trim().toLowerCase()
+  const shown = needle ? opts.filter(o => o.name.toLowerCase().includes(needle)) : opts
+  const allMode = !!props.exclude && !props.value.length
+  const excl = new Set(allMode ? props.exclude : [])
   const set = new Set(props.value)
+  const skipped = (o: { kind: string }) => allMode && !!props.allSkipsLevels && o.kind === 'level'
+  const checked = (o: { id: Id; kind: string }) => (allMode ? !excl.has(o.id) && !skipped(o) : set.has(o.id))
   const toggle = (id: Id) => {
-    if (set.has(id)) set.delete(id); else set.add(id)
-    props.onChange(opts.filter(o => set.has(o.id)).map(o => o.id))
+    if (allMode) {
+      if (excl.has(id)) excl.delete(id); else excl.add(id)
+      props.onChange([], opts.filter(o => excl.has(o.id)).map(o => o.id))
+    } else {
+      if (set.has(id)) set.delete(id); else set.add(id)
+      props.onChange(opts.filter(o => set.has(o.id)).map(o => o.id), [])
+    }
   }
+  // In "Only selected" the last tick stays: an empty list would mean everything.
+  const locked = (id: Id) => !!props.exclude && !allMode && set.size === 1 && set.has(id)
+  const hint = !props.exclude
+    ? (props.value.length ? `${props.value.length} selected` : props.emptyLabel)
+    : allMode
+      ? `${excl.size ? `all except ${excl.size}` : props.emptyLabel} · types added later are included`
+      : `${props.value.length} selected · types added later are not included`
   return (
     <div className="target-picker">
-      <div className="sb-hint">{props.value.length ? `${props.value.length} selected` : props.emptyLabel}</div>
+      {props.exclude && (
+        <div className="seg sm">
+          <button className={allMode ? 'on' : ''} onClick={() => { if (!allMode) props.onChange([], []) }}>All</button>
+          <button
+            className={allMode ? '' : 'on'}
+            onClick={() => {
+              if (!allMode) return
+              const ids = opts.filter(o => checked(o)).map(o => o.id)
+              if (ids.length) props.onChange(ids, [])
+            }}
+          >
+            Only selected
+          </button>
+        </div>
+      )}
+      <div className="sb-hint">{hint}</div>
+      {opts.length > 6 && (
+        <input className="input sm" value={q} placeholder="Search types and levels…" onChange={e => setQ(e.target.value)} />
+      )}
       <div className="target-grid">
-        {opts.map(o => {
+        {shown.map(o => {
           const Icon = iconByName(o.icon)
+          const on = checked(o)
           return (
-            <label key={o.id} className={`check-row ${set.has(o.id) ? 'on' : ''}`}>
-              <input type="checkbox" checked={set.has(o.id)} onChange={() => toggle(o.id)} />
+            <label
+              key={o.id}
+              className={`check-row ${on ? 'on' : ''}`}
+              title={skipped(o) ? 'Counting everything counts items only; use Only selected to count sections of a level' : undefined}
+            >
+              <input type="checkbox" checked={on} disabled={skipped(o) || locked(o.id)} onChange={() => toggle(o.id)} />
               <Icon width={12} height={12} color={o.color} strokeWidth={2} />
               <span className="grow">{o.name}</span>
               {o.kind === 'level' && <span className="muted">level</span>}
             </label>
           )
         })}
+        {!shown.length && <div className="sb-hint">nothing matches “{q.trim()}”</div>}
       </div>
     </div>
   )
@@ -736,8 +790,10 @@ export function ProcessorEditor() {
         <label>Include</label>
         <TargetPicker
           value={proc.targets}
-          onChange={ids => edit(f => { f.targets = ids })}
-          emptyLabel={spec.needsField === 'none' ? 'every item inside the section (pick types/levels to narrow)' : 'everything inside the section that has the field'}
+          exclude={proc.exclude ?? []}
+          allSkipsLevels={proc.op === 'count'}
+          onChange={(ids, exclude) => edit(f => { f.targets = ids; f.exclude = exclude })}
+          emptyLabel={spec.needsField === 'none' ? 'every item inside the section' : 'everything inside the section that has the field'}
         />
       </div>
       <div className="field">

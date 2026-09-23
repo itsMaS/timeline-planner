@@ -296,7 +296,7 @@ export const FIELD_LABEL: Record<string, string> = {
   name: 'name', icon: 'icon', color: 'color', defaultLayerId: 'default layer', fields: 'fields', folderId: 'folder',
   kind: 'kind', help: 'help text', required: 'required', showInTooltip: 'show in tooltip', defaultValue: 'default',
   maxLength: 'max length', min: 'min', max: 'max', decimals: 'decimals', unit: 'unit', refTargets: 'can reference',
-  refMultiple: 'multiple', refShowLinks: 'connectors', op: 'operation', fieldId: 'field', targets: 'include', processors: 'processors',
+  refMultiple: 'multiple', refShowLinks: 'connectors', op: 'operation', fieldId: 'field', targets: 'include', exclude: 'exclude', processors: 'processors',
   start: 'start', end: 'end', depth: 'depth', parentId: 'parent', collapsed: 'collapsed',
   eye: 'hidden', pin: 'pinned', size: 'size', minZoom: 'min zoom', filters: 'filters', mode: 'mode',
   createdBy: 'created by', timelineId: 'timeline', settings: 'settings',
