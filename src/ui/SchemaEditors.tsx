@@ -11,6 +11,7 @@ import { useActiveProject, useStore } from '../model/store'
 import type { FieldAttachment, FieldDef, FieldKind, HierarchyLevel, Id, ProcessorAttachment, ProcessorDef, ProcessorOp } from '../model/types'
 import { uid } from '../model/util'
 import { FieldValueInput } from './FieldInputs'
+import { RuleEditor } from './RuleFilter'
 import { Select } from './Select'
 
 // ------------------------------------------------------------------ small controls
@@ -217,8 +218,8 @@ export function ProcessorAttachList(props: { list: ProcessorAttachment[]; onChan
 export function describeProcessor(fields: FieldDef[], pr: ProcessorDef): string {
   const f = fields.find(x => x.id === pr.fieldId)
   const spec = PROCESSOR_OPS.find(o => o.op === pr.op)
-  if (spec?.needsField === 'none') return 'count'
-  return `${opLabel(pr.op).toLowerCase()} of ${f?.name ?? '?'}`
+  const base = spec?.needsField === 'none' ? 'count' : `${opLabel(pr.op).toLowerCase()} of ${f?.name ?? '?'}`
+  return pr.where?.trim() ? `${base} where ${pr.where.trim()}` : base
 }
 
 // ------------------------------------------------------------------ modal shell
@@ -583,6 +584,12 @@ export function ProcessorEditor() {
           onChange={ids => edit(f => { f.targets = ids })}
           emptyLabel={spec.needsField === 'none' ? 'every item inside the section (pick types/levels to narrow)' : 'everything inside the section that has the field'}
         />
+      </div>
+      <div className="field">
+        <label>
+          Only where <span className="muted">(optional condition on each entry, e.g. “Implemented = no”)</span>
+        </label>
+        <RuleEditor value={proc.where ?? ''} on="any" compact onChange={t => edit(f => { f.where = t })} />
       </div>
       {proj.processorFolders.length > 0 && (
         <div className="field">

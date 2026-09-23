@@ -1,4 +1,5 @@
 import { attachmentsFor, effectiveValue, entityTitle, fieldById, formatNumber, formatToggle, isNumberKind, levelOf, type Owner } from './fields'
+import { matchesRule } from './scope'
 import type { FieldValue, Id, ProcessorAttachment, ProcessorDef, ProcessorOp, Project, Section } from './types'
 
 /**
@@ -54,10 +55,12 @@ export function evalProcessor(p: Project, section: Section, proc: ProcessorDef, 
   const inside = entitiesInside(p, section)
   const matched: Owner[] = []
   const values: FieldValue[] = []
+  const where = proc.where?.trim() ?? ''
   for (const o of inside) {
     const key = o.kind === 'item' ? o.entity.typeId : levelOf(p, o.entity)?.id
     if (targets.size) { if (!key || !targets.has(key)) continue }
     else if (proc.op === 'count' && o.kind === 'section') continue // bare count = items only
+    if (where && !matchesRule(p, o, where)) continue
     if (field) {
       const a = attachmentsFor(p, o).find(x => x.field.id === field.id)
       if (!a) continue

@@ -65,6 +65,11 @@ export interface ProcessorDef {
   fieldId: Id | null
   /** Item type ids / hierarchy level ids to include; empty = everything. */
   targets: Id[]
+  /**
+   * Rule expression (src/model/expr.ts) an entity must satisfy to be counted,
+   * e.g. `Implemented = no` for a "Remaining VFX scope" sum. Empty = no rule.
+   */
+  where?: string
   /** Sidebar folder (Project.processorFolders); null/undefined = root. */
   folderId?: Id | null
 }

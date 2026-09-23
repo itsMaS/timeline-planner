@@ -44,7 +44,7 @@ export function normalizeProject(p: Project): Project {
   p.hierarchyLevels = normalizeLevels(p.hierarchyLevels)
   p.fields = Array.isArray(p.fields) ? p.fields.map(f => normalizeFieldDef(f)) : []
   p.processors = Array.isArray(p.processors) ? p.processors : []
-  for (const pr of p.processors) { pr.targets ??= []; pr.fieldId ??= null }
+  for (const pr of p.processors) { pr.targets ??= []; pr.fieldId ??= null; pr.where ??= '' }
   p.types ??= []
   p.layers ??= []
   p.sections ??= []
