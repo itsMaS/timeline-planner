@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
+    "build:api": "esbuild supabase/functions/api-query/src.ts --bundle --platform=neutral --format=esm --target=es2022 --minify --define:process.env.NODE_ENV='\"production\"' --outfile=supabase/functions/api-query/index.ts --log-level=warning",
     "build:skill": "esbuild agent/timeline.ts --bundle --platform=node --target=node20 --format=cjs --jsx=automatic --define:process.env.NODE_ENV='\"production\"' --external:playwright-core --outfile=plugins/timeline-agent/skills/timeline-agent/scripts/timeline.cjs --log-level=warning"
   },
   "dependencies": {

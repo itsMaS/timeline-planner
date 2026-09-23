@@ -40,6 +40,8 @@ interface Fn {
   what: string
   params: [string, string][]
   returns: string
+  /** Set for the one endpoint that is not a PostgREST function. */
+  url?: string
 }
 
 const FUNCTIONS: Fn[] = [
@@ -57,9 +59,19 @@ const FUNCTIONS: Fn[] = [
   },
   {
     name: 'api_schema', kind: 'read',
-    what: 'Only the schema: timelines, fields (with dropdown options), types, hierarchy levels, layers, folders, processors, and every tag in use. Build your tool’s settings from it.',
+    what: 'Only the schema: timelines, fields (with dropdown options, composites, formulas), field and processor folders, types, hierarchy levels, layers, processors, and every tag in use. Build your tool’s settings from it.',
     params: [],
-    returns: '{ id, name, version, timelines, fields, types, typeFolders, hierarchyLevels, layers, processors, tags }',
+    returns: '{ id, name, version, timelines, fields, fieldFolders, types, typeFolders, hierarchyLevels, layers, processors, processorFolders, tags }',
+  },
+  {
+    name: 'api-query', kind: 'read', url: 'functions/v1/api-query',
+    what: 'Find items with the same rule language as the funnel filter (“Implemented = no and [VFX Scope] >= 10”), and optionally compute what is never stored: derived field values and processor results per section.',
+    params: [
+      ['p_query', 'optional rule expression; empty matches every item'],
+      ['p_timeline', 'optional timeline id or name'],
+      ['p_compute', 'optional true to include derived values and processor results'],
+    ],
+    returns: '{ version, matches: [item ids], computed?: { items, sections } }',
   },
   {
     name: 'api_set_field', kind: 'write',
@@ -102,6 +114,25 @@ const FUNCTIONS: Fn[] = [
     ],
     returns: '{ version, changed, item }',
   },
+  {
+    name: 'api_create_field', kind: 'write',
+    what: 'Create a field, for example an “Asset GUID” text field the plugin writes into, attached to the types or levels you name, optionally in a folder or inside a composite. Same defaults as the app.',
+    params: [
+      ['p_field', '{ name, kind?, attach?: [type or level ids / names], folder?, group?, …any setting of api_update_field }'],
+      ['p_author', 'optional'],
+    ],
+    returns: '{ version, changed, field }',
+  },
+  {
+    name: 'api_update_field', kind: 'write',
+    what: 'Change a field’s settings: name, help, options, limits, default, formula, badge and the other flags. Its kind, children, parent and folder stay under the app’s control.',
+    params: [
+      ['p_field_id', 'field id'],
+      ['p_patch', '{ name?, help?, unit?, options?, min?, max?, decimals?, maxLength?, defaultValue?, formula?, template?, required?, badge?, … }'],
+      ['p_author', 'optional'],
+    ],
+    returns: '{ version, changed, field }',
+  },
 ]
 
 export function ApiHelpModal() {
@@ -137,6 +168,25 @@ export function ApiHelpModal() {
     "title": "Checkpoint_3",
     "tags": ["from-unity"],
     "fieldValues": { "<Progress field id>": "Planned" }
+  }
+}`
+
+  const query = `POST ${SUPABASE_URL}/functions/v1/api-query
+{
+  "p_api_token": "${tok}",
+  "p_query": "type = Checkpoint and Implemented = no",
+  "p_compute": true
+}`
+
+  const createField = `POST ${rpcUrl}api_create_field
+{
+  "p_api_token": "${tok}",
+  "p_author": "Unity",
+  "p_field": {
+    "name": "Asset GUID",
+    "kind": "text",
+    "help": "Set by the Unity plugin",
+    "attach": ["Checkpoint"]
   }
 }`
 
@@ -191,10 +241,12 @@ await Rpc("api_set_field", new {
                 <h4>It can</h4>
                 <ul>
                   <li>Read the whole project, or just its schema (timelines, types, fields with options, levels, layers, tags)</li>
+                  <li>Find items with the app’s rule language, and read derived field values and processor results</li>
                   <li>Set any field value on an item or section (dropdowns, numbers, text, references)</li>
                   <li>Add and remove tags on items</li>
                   <li>Edit an item’s title, description and link</li>
                   <li>Create items by type name, timeline name and section name</li>
+                  <li>Create fields and change their settings (options, limits, defaults, formulas)</li>
                   <li>Check cheaply whether anything changed</li>
                 </ul>
               </div>
@@ -203,7 +255,7 @@ await Rpc("api_set_field", new {
                 <ul>
                   <li>Delete anything</li>
                   <li>Move or resize items or sections</li>
-                  <li>Change the schema: types, fields, hierarchy levels, layers</li>
+                  <li>Change types, hierarchy levels or layers, or a field’s kind and place</li>
                   <li>Create, rename or delete timelines, or move items between them</li>
                   <li>Create, rotate or revoke share links</li>
                   <li>Act without a valid API token</li>
@@ -267,7 +319,10 @@ await Rpc("api_set_field", new {
               <tbody>
                 {FUNCTIONS.map(f => (
                   <tr key={f.name}>
-                    <td><code>{f.name}</code><span className={`api-kind ${f.kind}`}>{f.kind}</span></td>
+                    <td>
+                      <code>{f.name}</code><span className={`api-kind ${f.kind}`}>{f.kind}</span>
+                      {f.url && <div className="muted small">Edge Function: <code>{SUPABASE_URL}/{f.url}</code></div>}
+                    </td>
                     <td>{f.what}</td>
                     <td>
                       {f.params.length === 0
@@ -282,6 +337,25 @@ await Rpc("api_set_field", new {
             <p className="muted small">
               Writes return <code>changed: false</code> (and the unchanged version) when the value was already what
               you sent, so calling them repeatedly is safe.
+            </p>
+          </section>
+
+          <section>
+            <h3>Queries and computed values</h3>
+            <p>
+              <code>api-query</code> takes the same expressions as the funnel filter next to the search box, processor
+              conditions and derived field formulas. Names are the entity’s fields (case-insensitive, <code>[brackets]</code>
+              when they contain spaces) or built-ins such as <code>title</code>, <code>type</code>, <code>tags</code>,
+              <code>layer</code>, <code>pos</code>, <code>duration</code>, <code>section</code>, <code>timeline</code>.
+              Operators: <code>and or not</code>, <code>= != &lt; &lt;= &gt; &gt;=</code>, <code>contains</code>,
+              <code>has</code>, <code>one of (a, b)</code>, <code>is set</code> / <code>is empty</code>, and arithmetic.
+              A bare word that names nothing is text, so <code>Status = blocked</code> needs no quotes.
+            </p>
+            <Code>{query}</Code>
+            <p className="muted small">
+              With <code>p_compute: true</code> the answer also carries every derived field value and every processor
+              result (text, number and the ids it counted) per section, which <code>api_read</code> never contains
+              because they are computed, not stored.
             </p>
           </section>
 
@@ -330,6 +404,12 @@ await Rpc("api_set_field", new {
               <em>Progress</em> and <em>Done</em>). The button then calls:
             </p>
             <Code>{setField}</Code>
+            <h4>Keep the plugin’s own data on the timeline</h4>
+            <p>
+              On first run, look for a text field named <em>Asset GUID</em> in <code>api_schema</code>. When it is
+              missing, create it attached to the types you care about and remember its id in the tool’s settings:
+            </p>
+            <Code>{createField}</Code>
             <h4>Stay fresh</h4>
             <p>
               Call <code>api_version</code> when the tool window gets focus and re-read only when the version moved.

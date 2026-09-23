@@ -1,5 +1,5 @@
 import { newFieldDef } from './fields'
-import { blankProject, emptyFilters, newLevel } from './store'
+import { blankProject, emptyFilters, newLevel } from './normalize'
 import type { Item, Project, Section } from './types'
 import { uid } from './util'
 

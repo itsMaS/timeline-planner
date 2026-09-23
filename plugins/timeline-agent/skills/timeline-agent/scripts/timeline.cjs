@@ -3616,9 +3616,644 @@ var import_node_os = require("node:os");
 var import_node_path = require("node:path");
 var import_node_url = require("node:url");
 
-// src/model/patch.ts
-var SYNC_COLLECTIONS = ["hierarchyLevels", "fields", "processors", "types", "typeFolders", "layers", "timelines", "sections", "items", "views"];
-var SYNC_SCALARS = ["name", "settings"];
+// src/model/folders.ts
+var foldersOf = (p, kind) => kind === "types" ? p.typeFolders : kind === "fields" ? p.fieldFolders : p.processorFolders;
+var membersOf = (p, kind) => kind === "types" ? p.types : kind === "fields" ? p.fields : p.processors;
+var childFolders = (p, parentId, kind = "types") => foldersOf(p, kind).filter((f) => (f.parentId ?? null) === parentId);
+function membersInFolder(list2, folderId) {
+  return list2.filter((m) => (m.folderId ?? null) === folderId);
+}
+function folderTree(p, kind = "types") {
+  const out = [];
+  const walk = (parentId, depth) => {
+    for (const f of childFolders(p, parentId, kind)) {
+      out.push({ folder: f, depth });
+      walk(f.id, depth + 1);
+    }
+  };
+  walk(null, 0);
+  return out;
+}
+function folderChain(p, folderId, kind = "types") {
+  const out = [];
+  const folders = foldersOf(p, kind);
+  let cur = folderId;
+  const seen = /* @__PURE__ */ new Set();
+  while (cur && !seen.has(cur)) {
+    seen.add(cur);
+    const f = folders.find((x) => x.id === cur);
+    if (!f) break;
+    out.unshift(f);
+    cur = f.parentId ?? null;
+  }
+  return out;
+}
+function groupedMembers(p, kind, list2) {
+  const out = [];
+  const root = membersInFolder(list2, null);
+  const known = new Set(foldersOf(p, kind).map((f) => f.id));
+  const stray = list2.filter((m) => m.folderId && !known.has(m.folderId));
+  if (root.length || stray.length) out.push({ folder: null, members: [...root, ...stray] });
+  for (const { folder } of folderTree(p, kind)) {
+    const members = membersInFolder(list2, folder.id);
+    if (members.length) out.push({ folder, members });
+  }
+  return out;
+}
+function repairFolders(p) {
+  for (const kind of ["types", "fields", "processors"]) {
+    const folders = foldersOf(p, kind);
+    const byId = new Map(folders.map((f) => [f.id, f]));
+    for (const f of folders) {
+      if (f.parentId && (!byId.has(f.parentId) || f.parentId === f.id)) f.parentId = null;
+    }
+    for (const f of folders) {
+      const seen = /* @__PURE__ */ new Set([f.id]);
+      let cur = f;
+      while (cur.parentId) {
+        if (seen.has(cur.parentId)) {
+          cur.parentId = null;
+          break;
+        }
+        seen.add(cur.parentId);
+        cur = byId.get(cur.parentId);
+      }
+    }
+    for (const m of membersOf(p, kind)) {
+      if (m.folderId && !byId.has(m.folderId)) m.folderId = null;
+    }
+  }
+}
+
+// src/model/expr.ts
+var ExprError = class extends Error {
+  constructor(msg, pos) {
+    super(msg);
+    this.pos = pos;
+  }
+};
+var OPS = ["<=", ">=", "!=", "<>", "==", "&&", "||", "=", "<", ">", "+", "-", "*", "/", "%", "(", ")", ",", "!"];
+function tokenize(src) {
+  const out = [];
+  let i = 0;
+  while (i < src.length) {
+    const c = src[i];
+    if (/\s/.test(c)) {
+      i++;
+      continue;
+    }
+    if (c === "[") {
+      const j = src.indexOf("]", i + 1);
+      if (j < 0) throw new ExprError("Missing closing ]", i);
+      out.push({ k: "name", v: src.slice(i + 1, j).trim(), pos: i });
+      i = j + 1;
+      continue;
+    }
+    if (c === '"' || c === "'") {
+      let j = i + 1;
+      let s = "";
+      while (j < src.length && src[j] !== c) {
+        if (src[j] === "\\" && j + 1 < src.length) j++;
+        s += src[j];
+        j++;
+      }
+      if (j >= src.length) throw new ExprError("Missing closing quote", i);
+      out.push({ k: "str", v: s, pos: i });
+      i = j + 1;
+      continue;
+    }
+    const num2 = /^(\d+\.?\d*|\.\d+)(e[+-]?\d+)?/i.exec(src.slice(i));
+    if (num2 && !/[A-Za-z_]/.test(src[i + num2[0].length] ?? "")) {
+      out.push({ k: "num", v: Number(num2[0]), pos: i });
+      i += num2[0].length;
+      continue;
+    }
+    const op = OPS.find((o) => src.startsWith(o, i));
+    if (op) {
+      out.push({ k: "op", v: op, pos: i });
+      i += op.length;
+      continue;
+    }
+    const word = /^[^\s()[\],"'=<>!&|+\-*/%]+/.exec(src.slice(i));
+    if (word) {
+      out.push({ k: "word", v: word[0], pos: i });
+      i += word[0].length;
+      continue;
+    }
+    throw new ExprError(`Unexpected character "${c}"`, i);
+  }
+  out.push({ k: "end", pos: src.length });
+  return out;
+}
+var KEYWORDS = /* @__PURE__ */ new Set(["and", "or", "not", "is", "set", "empty", "contains", "has", "one", "of", "in", "yes", "no", "true", "false", "null", "unset"]);
+var FUNCTIONS = /* @__PURE__ */ new Set(["if", "min", "max", "abs", "round", "floor", "ceil", "len", "sum", "avg", "coalesce", "lower", "upper", "contains", "empty", "count"]);
+function parse(src) {
+  const toks = tokenize(src);
+  let i = 0;
+  const peek = () => toks[i];
+  const next = () => toks[i++];
+  const isWord = (w) => {
+    const t = peek();
+    return t.k === "word" && t.v.toLowerCase() === w;
+  };
+  const isOp = (o) => {
+    const t = peek();
+    return t.k === "op" && t.v === o;
+  };
+  const expect = (o) => {
+    if (!isOp(o)) throw new ExprError(`Expected "${o}"`, peek().pos);
+    next();
+  };
+  const or = () => {
+    let a = and();
+    while (isWord("or") || isOp("||")) {
+      next();
+      a = { t: "bin", op: "or", a, b: and() };
+    }
+    return a;
+  };
+  const and = () => {
+    let a = not();
+    while (isWord("and") || isOp("&&")) {
+      next();
+      a = { t: "bin", op: "and", a, b: not() };
+    }
+    return a;
+  };
+  const not = () => {
+    if (isWord("not") || isOp("!")) {
+      next();
+      return { t: "un", op: "not", a: not() };
+    }
+    return cmp();
+  };
+  const cmp = () => {
+    const a = add();
+    const t = peek();
+    if (t.k === "op") {
+      const map = { "=": "=", "==": "=", "!=": "!=", "<>": "!=", "<": "<", "<=": "<=", ">": ">", ">=": ">=" };
+      const op = map[t.v];
+      if (op) {
+        next();
+        return { t: "bin", op, a, b: add() };
+      }
+      return a;
+    }
+    if (t.k !== "word") return a;
+    const w = t.v.toLowerCase();
+    if (w === "is") {
+      next();
+      let neg = false;
+      if (isWord("not")) {
+        next();
+        neg = true;
+      }
+      if (isWord("set")) {
+        next();
+        return { t: "isset", a, set: !neg };
+      }
+      if (isWord("empty") || isWord("unset") || isWord("null")) {
+        next();
+        return { t: "isset", a, set: neg };
+      }
+      throw new ExprError('Expected "set" or "empty" after "is"', peek().pos);
+    }
+    if (w === "contains") {
+      next();
+      return { t: "bin", op: "contains", a, b: add() };
+    }
+    if (w === "has") {
+      next();
+      return { t: "bin", op: "has", a, b: add() };
+    }
+    if (w === "in") {
+      next();
+      return { t: "bin", op: "in", a, b: add() };
+    }
+    if (w === "one") {
+      next();
+      if (!isWord("of")) throw new ExprError('Expected "of" after "one"', peek().pos);
+      next();
+      return { t: "bin", op: "in", a, b: add() };
+    }
+    return a;
+  };
+  const add = () => {
+    let a = mul();
+    while (isOp("+") || isOp("-")) {
+      const op = next().v;
+      a = { t: "bin", op, a, b: mul() };
+    }
+    return a;
+  };
+  const mul = () => {
+    let a = unary();
+    while (isOp("*") || isOp("/") || isOp("%")) {
+      const op = next().v;
+      a = { t: "bin", op, a, b: unary() };
+    }
+    return a;
+  };
+  const unary = () => {
+    if (isOp("-")) {
+      next();
+      return { t: "un", op: "-", a: unary() };
+    }
+    return primary();
+  };
+  const primary = () => {
+    const t = next();
+    switch (t.k) {
+      case "num":
+        return { t: "num", v: t.v };
+      case "str":
+        return { t: "str", v: t.v };
+      case "name":
+        return { t: "name", name: t.v, bracketed: true };
+      case "op":
+        if (t.v === "(") {
+          const first = or();
+          if (isOp(",")) {
+            const items = [first];
+            while (isOp(",")) {
+              next();
+              items.push(or());
+            }
+            expect(")");
+            return { t: "list", items };
+          }
+          expect(")");
+          return first;
+        }
+        throw new ExprError(`Unexpected "${t.v}"`, t.pos);
+      case "word": {
+        const w = t.v.toLowerCase();
+        if (w === "yes" || w === "true") return { t: "bool", v: true };
+        if (w === "no" || w === "false") return { t: "bool", v: false };
+        if (w === "null" || w === "unset") return { t: "null" };
+        if (w === "empty" && !isOp("(")) return { t: "null" };
+        if (FUNCTIONS.has(w) && isOp("(")) {
+          next();
+          const args = [];
+          if (!isOp(")")) {
+            args.push(or());
+            while (isOp(",")) {
+              next();
+              args.push(or());
+            }
+          }
+          expect(")");
+          return { t: "call", fn: w, args };
+        }
+        if (KEYWORDS.has(w)) throw new ExprError(`Unexpected "${t.v}"`, t.pos);
+        return { t: "name", name: t.v, bracketed: false };
+      }
+      case "end":
+        throw new ExprError("Unexpected end of expression", t.pos);
+    }
+  };
+  const ast = or();
+  if (peek().k !== "end") throw new ExprError(`Unexpected "${peek().v ?? ""}"`, peek().pos);
+  return ast;
+}
+function tryParse(src) {
+  try {
+    return { ast: parse(src), error: null };
+  } catch (e) {
+    if (e instanceof ExprError) return { ast: null, error: e };
+    throw e;
+  }
+}
+var truthy = (v) => v !== null && v !== false && v !== 0 && v !== "" && !(Array.isArray(v) && v.length === 0);
+var num = (v) => {
+  if (v === null) return 0;
+  if (typeof v === "number") return v;
+  if (typeof v === "boolean") return v ? 1 : 0;
+  if (Array.isArray(v)) return v.length;
+  const n = Number(String(v).trim().replace(",", "."));
+  return Number.isFinite(n) ? n : NaN;
+};
+var str = (v) => v === null ? "" : Array.isArray(v) ? v.join(", ") : typeof v === "boolean" ? v ? "yes" : "no" : String(v);
+var isNumeric = (v) => typeof v === "number" || typeof v === "string" && v.trim() !== "" && Number.isFinite(Number(v.trim().replace(",", ".")));
+var norm = (s) => s.trim().toLowerCase();
+function looseEqual(a, b) {
+  if (a === null || b === null) {
+    const other = a === null ? b : a;
+    if (typeof other === "boolean") return other === false;
+    return (a === null || a === "" || Array.isArray(a) && !a.length) && (b === null || b === "" || Array.isArray(b) && !b.length);
+  }
+  if (Array.isArray(a) && Array.isArray(b)) return a.length === b.length && a.every((x) => b.some((y) => norm(x) === norm(y)));
+  if (Array.isArray(a)) return a.some((x) => looseEqual(x, b));
+  if (Array.isArray(b)) return b.some((y) => looseEqual(a, y));
+  if (typeof a === "boolean" || typeof b === "boolean") {
+    const toBool = (v) => typeof v === "boolean" ? v : isNumeric(v) ? num(v) !== 0 : ["yes", "true", "on", "y"].includes(norm(str(v))) ? true : ["no", "false", "off", "n"].includes(norm(str(v))) ? false : null;
+    const x = toBool(a);
+    const y = toBool(b);
+    return x !== null && y !== null && x === y;
+  }
+  if (isNumeric(a) && isNumeric(b)) return num(a) === num(b);
+  return norm(str(a)) === norm(str(b));
+}
+function compare(a, b) {
+  if (a === null || b === null) return null;
+  if (isNumeric(a) && isNumeric(b)) return num(a) - num(b);
+  if (typeof a === "boolean" || typeof b === "boolean") return num(a) - num(b);
+  const x = norm(str(a));
+  const y = norm(str(b));
+  return x < y ? -1 : x > y ? 1 : 0;
+}
+function contains(a, b) {
+  if (a === null || b === null) return false;
+  if (Array.isArray(a)) return Array.isArray(b) ? b.every((y) => a.some((x) => norm(x) === norm(y))) : a.some((x) => norm(x) === norm(str(b)));
+  return norm(str(a)).includes(norm(str(b)));
+}
+function evaluate(ast, scope) {
+  const ev = (n) => {
+    switch (n.t) {
+      case "num":
+        return n.v;
+      case "str":
+        return n.v;
+      case "bool":
+        return n.v;
+      case "null":
+        return null;
+      case "name": {
+        const r = scope.get(n.name);
+        if (r.found) return r.value;
+        return n.bracketed ? null : n.name;
+      }
+      case "list":
+        return n.items.map((x) => str(ev(x)));
+      case "un": {
+        const a = ev(n.a);
+        return n.op === "not" ? !truthy(a) : -num(a);
+      }
+      case "isset": {
+        const a = n.a.t === "name" && !scope.get(n.a.name).found ? null : ev(n.a);
+        const set = a !== null && a !== "" && !(Array.isArray(a) && !a.length);
+        return n.set ? set : !set;
+      }
+      case "bin": {
+        if (n.op === "and") {
+          const a2 = ev(n.a);
+          return truthy(a2) ? truthy(ev(n.b)) : false;
+        }
+        if (n.op === "or") {
+          const a2 = ev(n.a);
+          return truthy(a2) ? true : truthy(ev(n.b));
+        }
+        const a = ev(n.a);
+        const b = ev(n.b);
+        switch (n.op) {
+          case "=":
+            return looseEqual(a, b);
+          case "!=":
+            return !looseEqual(a, b);
+          case "<": {
+            const c = compare(a, b);
+            return c !== null && c < 0;
+          }
+          case "<=": {
+            const c = compare(a, b);
+            return c !== null && c <= 0;
+          }
+          case ">": {
+            const c = compare(a, b);
+            return c !== null && c > 0;
+          }
+          case ">=": {
+            const c = compare(a, b);
+            return c !== null && c >= 0;
+          }
+          case "contains":
+            return contains(a, b);
+          case "has":
+            return contains(a, b);
+          case "in": {
+            if (b === null) return false;
+            const list2 = Array.isArray(b) ? b : [str(b)];
+            if (Array.isArray(a)) return a.some((x) => list2.some((y) => norm(x) === norm(y)));
+            return a !== null && list2.some((y) => looseEqual(a, y));
+          }
+          case "+": {
+            if (typeof a === "string" && !isNumeric(a) || typeof b === "string" && !isNumeric(b)) return str(a) + str(b);
+            return num(a) + num(b);
+          }
+          case "-":
+            return num(a) - num(b);
+          case "*":
+            return num(a) * num(b);
+          case "/": {
+            const d = num(b);
+            return d === 0 ? null : num(a) / d;
+          }
+          case "%": {
+            const d = num(b);
+            return d === 0 ? null : num(a) % d;
+          }
+        }
+        return null;
+      }
+      case "call": {
+        const args = n.args;
+        const nums = () => args.map((x) => num(ev(x))).filter((x) => Number.isFinite(x));
+        switch (n.fn) {
+          case "if":
+            return truthy(ev(args[0])) ? args[1] ? ev(args[1]) : true : args[2] ? ev(args[2]) : null;
+          case "min": {
+            const l = nums();
+            return l.length ? Math.min(...l) : null;
+          }
+          case "max": {
+            const l = nums();
+            return l.length ? Math.max(...l) : null;
+          }
+          case "sum":
+            return nums().reduce((s, x) => s + x, 0);
+          case "avg": {
+            const l = nums();
+            return l.length ? l.reduce((s, x) => s + x, 0) / l.length : null;
+          }
+          case "abs":
+            return Math.abs(num(ev(args[0])));
+          case "round": {
+            const d = args[1] ? num(ev(args[1])) : 0;
+            const k = Math.pow(10, d);
+            return Math.round(num(ev(args[0])) * k) / k;
+          }
+          case "floor":
+            return Math.floor(num(ev(args[0])));
+          case "ceil":
+            return Math.ceil(num(ev(args[0])));
+          case "len":
+          case "count": {
+            const v = ev(args[0]);
+            return v === null ? 0 : Array.isArray(v) ? v.length : str(v).length;
+          }
+          case "coalesce": {
+            for (const x of args) {
+              const v = ev(x);
+              if (v !== null && v !== "" && !(Array.isArray(v) && !v.length)) return v;
+            }
+            return null;
+          }
+          case "lower":
+            return str(ev(args[0])).toLowerCase();
+          case "upper":
+            return str(ev(args[0])).toUpperCase();
+          case "contains":
+            return contains(ev(args[0]), ev(args[1]));
+          case "empty": {
+            const v = ev(args[0]);
+            return v === null || v === "" || Array.isArray(v) && !v.length;
+          }
+        }
+        return null;
+      }
+    }
+  };
+  return ev(ast);
+}
+var cache = /* @__PURE__ */ new Map();
+function compile(src) {
+  const key = src.trim();
+  if (!key) return { ast: null, error: null };
+  let c = cache.get(key);
+  if (!c) {
+    const r = tryParse(key);
+    c = r.ast ? { ast: r.ast, error: null } : { ast: null, error: r.error.message };
+    if (cache.size > 500) cache.clear();
+    cache.set(key, c);
+  }
+  return c;
+}
+
+// src/model/scope.ts
+function itemBuiltin(p, it, name) {
+  switch (name) {
+    case "title":
+      return { found: true, value: it.title };
+    case "type":
+      return { found: true, value: p.types.find((t) => t.id === it.typeId)?.name ?? null };
+    case "tags":
+      return { found: true, value: it.tags };
+    case "layer": {
+      const lid = it.layerId ?? p.types.find((t) => t.id === it.typeId)?.defaultLayerId;
+      return { found: true, value: p.layers.find((l) => l.id === lid)?.name ?? null };
+    }
+    case "pos":
+      return { found: true, value: it.pos };
+    case "duration":
+      return { found: true, value: it.duration };
+    case "end":
+      return { found: true, value: it.pos + it.duration };
+    case "description":
+      return { found: true, value: it.description };
+    case "link":
+      return { found: true, value: it.link };
+    case "id":
+      return { found: true, value: it.id };
+    case "section": {
+      const chain = sectionsAt(p, it.pos, void 0, it.timelineId);
+      return { found: true, value: chain.length ? chain[chain.length - 1].name : null };
+    }
+    case "sections":
+      return { found: true, value: sectionsAt(p, it.pos, void 0, it.timelineId).map((s) => s.name) };
+    case "created by":
+      return { found: true, value: it.createdBy?.name ?? null };
+    case "timeline":
+      return { found: true, value: p.timelines?.find((t) => t.id === it.timelineId)?.name ?? null };
+  }
+  return { found: false, value: null };
+}
+function sectionBuiltin(p, sc, name) {
+  switch (name) {
+    case "name":
+    case "title":
+      return { found: true, value: sc.name };
+    case "level":
+      return { found: true, value: levelOf(p, sc)?.name ?? null };
+    case "start":
+      return { found: true, value: sc.start };
+    case "end":
+      return { found: true, value: sc.end };
+    case "length":
+      return { found: true, value: sc.end - sc.start };
+    case "description":
+      return { found: true, value: sc.description ?? "" };
+    case "id":
+      return { found: true, value: sc.id };
+    case "parent": {
+      const parents = p.sections.filter((t) => t.id !== sc.id && t.timelineId === sc.timelineId && t.depth < sc.depth && t.start <= sc.start + 1e-9 && t.end >= sc.end - 1e-9).sort((a, b) => b.depth - a.depth);
+      return { found: true, value: parents[0]?.name ?? null };
+    }
+    case "sections": {
+      const parents = p.sections.filter((t) => t.id !== sc.id && t.timelineId === sc.timelineId && t.depth < sc.depth && t.start <= sc.start + 1e-9 && t.end >= sc.end - 1e-9).sort((a, b) => a.depth - b.depth);
+      return { found: true, value: parents.map((t) => t.name) };
+    }
+    case "timeline":
+      return { found: true, value: p.timelines?.find((t) => t.id === sc.timelineId)?.name ?? null };
+  }
+  return { found: false, value: null };
+}
+function fieldValueFor(p, field, v) {
+  if (field.kind === "ref" && Array.isArray(v)) return v.map((id) => entityTitle(p, id));
+  return v;
+}
+function entityScope(p, owner, read = (field) => valueOn(p, owner, field), prefer = []) {
+  const atts = attachmentsFor(p, owner);
+  const byName = /* @__PURE__ */ new Map();
+  const key = (s) => s.trim().toLowerCase();
+  for (const f of prefer) if (!byName.has(key(f.name))) byName.set(key(f.name), f);
+  for (const { field, group } of atts) {
+    if (!byName.has(key(field.name))) byName.set(key(field.name), field);
+    if (group) {
+      const dotted = `${key(group.name)}.${key(field.name)}`;
+      if (!byName.has(dotted)) byName.set(dotted, field);
+      byName.set(`${key(group.name)} \xB7 ${key(field.name)}`, field);
+    }
+  }
+  const valueOf = (f) => {
+    if (f.kind === "group") {
+      const t = groupText(p, owner, f, (c) => read(c));
+      return t || null;
+    }
+    return fieldValueFor(p, f, read(f));
+  };
+  return {
+    get: (raw) => {
+      const name = key(raw);
+      const alias = name.startsWith("$") ? name.slice(1) : null;
+      if (!alias) {
+        const f = byName.get(name);
+        if (f) return { found: true, value: valueOf(f) };
+        if (p.fields.some((x) => key(x.name) === name)) return { found: true, value: null };
+      }
+      const k = alias ?? name;
+      return owner.kind === "item" ? itemBuiltin(p, owner.entity, k) : sectionBuiltin(p, owner.entity, k);
+    }
+  };
+}
+function matchesRule(p, owner, rules) {
+  if (!rules?.trim()) return true;
+  const { ast } = compile(rules);
+  if (!ast) return true;
+  try {
+    return truthy(evaluate(ast, entityScope(p, owner)));
+  } catch {
+    return true;
+  }
+}
+function evalOn(p, owner, src, read, prefer) {
+  const { ast } = compile(src);
+  if (!ast) return null;
+  try {
+    return evaluate(ast, entityScope(p, owner, read, prefer));
+  } catch {
+    return null;
+  }
+}
 
 // src/model/util.ts
 var uid = () => Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 6);
@@ -3742,6 +4377,9 @@ function normalizeSettings(raw) {
 function newTimeline(name, settings, id = uid()) {
   return { id, name, settings: settings ? structuredClone(settings) : defaultSettings() };
 }
+function normalizeTimeline(raw) {
+  return { id: raw.id, name: typeof raw.name === "string" ? raw.name : "Timeline", settings: normalizeSettings(raw.settings) };
+}
 function repairTimelines(p, fallback) {
   if (!Array.isArray(p.timelines)) p.timelines = [];
   if (!p.timelines.length) {
@@ -3797,51 +4435,89 @@ function timelineView(p, timelineId) {
   return view;
 }
 
-// src/model/proposal.ts
-var same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
-var list = (p, col) => p[col] ?? [];
-function diffToChanges(base, edited, notes = {}) {
-  const out = [];
-  const push = (c) => {
-    const note = notes[c.entityId];
-    out.push({ id: uid(), ...c, ...note ? { note } : {} });
-  };
-  for (const col of SYNC_COLLECTIONS) {
-    const am = new Map(list(base, col).map((e) => [e.id, e]));
-    const bm = new Map(list(edited, col).map((e) => [e.id, e]));
-    for (const e of list(edited, col)) {
-      const prev = am.get(e.id);
-      if (!prev) push({ col, kind: "add", entityId: e.id, before: null, after: structuredClone(e) });
-      else if (!same(prev, e)) push({ col, kind: "update", entityId: e.id, before: structuredClone(prev), after: structuredClone(e) });
-    }
-    for (const e of list(base, col)) {
-      if (!bm.has(e.id)) push({ col, kind: "remove", entityId: e.id, before: structuredClone(e), after: null });
-    }
-  }
-  for (const k of SYNC_SCALARS) {
-    if (!same(base[k], edited[k])) {
-      push({ col: "project", kind: "set", entityId: k, before: structuredClone(base[k]), after: structuredClone(edited[k]) });
-    }
-  }
-  return out;
-}
-
-// src/model/folders.ts
-function folderChain(p, folderId) {
-  const out = [];
-  let cur = folderId;
-  const seen = /* @__PURE__ */ new Set();
-  while (cur && !seen.has(cur)) {
-    seen.add(cur);
-    const f = p.typeFolders.find((x) => x.id === cur);
-    if (!f) break;
-    out.unshift(f);
-    cur = f.parentId ?? null;
-  }
-  return out;
-}
-
 // src/model/fields.ts
+var FIELD_KINDS = [
+  { kind: "text", label: "Text", glyph: "Aa" },
+  { kind: "int", label: "Whole number", glyph: "#" },
+  { kind: "float", label: "Decimal number", glyph: "0.0" },
+  { kind: "toggle", label: "Toggle", glyph: "\u2713" },
+  { kind: "select", label: "Dropdown", glyph: "\u25BE" },
+  { kind: "ref", label: "Reference", glyph: "\u2192" },
+  { kind: "group", label: "Composite", glyph: "{}" }
+];
+var isNumberKind = (k) => k === "int" || k === "float";
+var isDerived = (f) => !!f.formula?.trim() && f.kind !== "group";
+function newFieldDef(id, name, kind = "text") {
+  return {
+    id,
+    name,
+    kind,
+    help: "",
+    required: false,
+    showInTooltip: false,
+    showName: true,
+    defaultValue: null,
+    maxLength: null,
+    min: null,
+    max: null,
+    decimals: null,
+    unit: "",
+    options: [],
+    selectMultiple: false,
+    refTargets: [],
+    refMultiple: false,
+    refShowLinks: false,
+    folderId: null,
+    badge: false,
+    children: [],
+    template: "",
+    parentId: null,
+    formula: ""
+  };
+}
+function normalizeFieldDef(raw) {
+  const base = newFieldDef(raw.id, raw.name ?? "Field", FIELD_KINDS.map((k) => k.kind).includes(raw.kind) ? raw.kind : "text");
+  const f = { ...base, ...raw, kind: base.kind };
+  f.refTargets = Array.isArray(f.refTargets) ? f.refTargets : [];
+  f.options = Array.isArray(f.options) ? f.options.filter((o) => typeof o === "string") : [];
+  f.children = Array.isArray(f.children) ? f.children.filter((c) => typeof c === "string") : [];
+  f.template = typeof f.template === "string" ? f.template : "";
+  f.formula = typeof f.formula === "string" ? f.formula : "";
+  f.parentId ??= null;
+  f.defaultValue = coerceValue(f, f.defaultValue);
+  return f;
+}
+var fieldLabel = (f) => f.showName ? f.name : "";
+var parentOf = (p, f) => f.parentId ? p.fields.find((x) => x.id === f.parentId && x.kind === "group") : void 0;
+function childrenOf(p, group) {
+  if (group.kind !== "group") return [];
+  return (group.children ?? []).map((id) => p.fields.find((f) => f.id === id)).filter((f) => !!f && f.parentId === group.id);
+}
+function rootOf(p, f) {
+  let cur = f;
+  const seen = /* @__PURE__ */ new Set();
+  while (cur.parentId && !seen.has(cur.id)) {
+    seen.add(cur.id);
+    const par = parentOf(p, cur);
+    if (!par) break;
+    cur = par;
+  }
+  return cur;
+}
+var rootFields = (p) => p.fields.filter((f) => !parentOf(p, f));
+function expandAttachments(p, list2) {
+  const out = [];
+  const push = (entry, group, depth) => {
+    out.push({ ...entry, group });
+    if (entry.field.kind !== "group" || depth > 16) return;
+    for (const child of childrenOf(p, entry.field)) {
+      const childAtt = { fieldId: child.id, defaultValue: entry.att.childDefaults?.[child.id] ?? null };
+      push({ ...entry, att: childAtt, field: child }, entry.field, depth + 1);
+    }
+  };
+  for (const e of list2) push(e, null, 0);
+  return out;
+}
 var fieldById = (p, id) => id ? p.fields.find((f) => f.id === id) : void 0;
 var levelOf = (p, s) => p.hierarchyLevels[s.depth];
 function ownerOf(p, id) {
@@ -3859,7 +4535,7 @@ function typeAttachments(p, type) {
   const add = (list2, from) => {
     for (const att of list2 ?? []) {
       const field = fieldById(p, att.fieldId);
-      if (!field) continue;
+      if (!field || parentOf(p, field)) continue;
       const i = index.get(att.fieldId);
       if (i === void 0) {
         index.set(att.fieldId, out.length);
@@ -3869,14 +4545,66 @@ function typeAttachments(p, type) {
   };
   for (const f of folderChain(p, type.folderId ?? null)) add(f.fields, f);
   add(type.fields, null);
-  return out;
+  return expandAttachments(p, out);
+}
+function levelAttachments(p, level) {
+  const out = [];
+  for (const att of level?.fields ?? []) {
+    const field = fieldById(p, att.fieldId);
+    if (field && !parentOf(p, field)) out.push({ att, field });
+  }
+  return expandAttachments(p, out);
 }
 function attachmentsFor(p, owner) {
   if (owner.kind === "item") return typeAttachments(p, p.types.find((t) => t.id === owner.entity.typeId));
+  return levelAttachments(p, levelOf(p, owner.entity));
+}
+function groupText(p, owner, group, read = (f) => valueOn(p, owner, f)) {
+  const kids = childrenOf(p, group);
+  const texts = kids.map((c) => ({ c, text: c.kind === "group" ? groupText(p, owner, c, read) : formatValue(p, c, read(c)) }));
+  if (texts.every((x) => !x.text.trim())) return "";
+  const tpl = group.template?.trim() ?? "";
+  if (tpl) {
+    return tpl.replace(/\{([^}]+)\}/g, (_, raw) => {
+      const key = raw.trim().toLowerCase();
+      const hit = texts.find((x) => x.c.name.trim().toLowerCase() === key || x.c.id === raw.trim());
+      return hit ? hit.text : "";
+    });
+  }
+  return texts.filter((x) => x.text.trim()).map((x) => x.c.showName ? `${x.c.name} ${x.text}` : x.text).join(" \xB7 ");
+}
+function groupAttachments(p, list2) {
+  const byId = new Map(list2.map((x) => [x.field.id, x]));
+  const members = list2.map((x) => ({ id: x.field.id, name: x.field.name, folderId: rootOf(p, x.field).folderId ?? null }));
+  return groupedMembers(p, "fields", members).map((g) => ({ folder: g.folder, entries: g.members.map((f) => byId.get(f.id)) }));
+}
+function displayEntries(p, owner, opts2 = {}) {
   const out = [];
-  for (const att of levelOf(p, owner.entity)?.fields ?? []) {
-    const field = fieldById(p, att.fieldId);
-    if (field) out.push({ att, field });
+  const read = opts2.read ?? ((field, att) => readValue(p, owner, field, att));
+  const hiddenGroups = /* @__PURE__ */ new Set();
+  for (const e of attachmentsFor(p, owner)) {
+    if (e.group && hiddenGroups.has(e.group.id)) {
+      if (e.field.kind === "group") hiddenGroups.add(e.field.id);
+      continue;
+    }
+    if (opts2.skip?.(e.field)) {
+      if (e.field.kind === "group") hiddenGroups.add(e.field.id);
+      continue;
+    }
+    if (e.field.kind === "group") {
+      if (!e.field.template?.trim()) continue;
+      hiddenGroups.add(e.field.id);
+      const text2 = groupText(p, owner, e.field, (f) => {
+        const att = attachmentsFor(p, owner).find((a) => a.field.id === f.id)?.att ?? null;
+        return att ? read(f, att) : null;
+      });
+      if (text2.trim()) out.push({ field: e.field, group: e.group, label: fieldLabel(e.field), text: text2 });
+      continue;
+    }
+    const text = formatValue(p, e.field, read(e.field, e.att));
+    if (!text.trim()) continue;
+    const label = e.field.showName ? e.group ? `${e.group.name} \xB7 ${e.field.name}` : e.field.name : "";
+    out.push({ field: e.field, group: e.group, label, text });
   }
   return out;
 }
@@ -3887,6 +4615,38 @@ function defaultFor(field, att) {
 function effectiveValue(field, att, raw) {
   const v = coerceValue(field, raw);
   return v ?? defaultFor(field, att);
+}
+function readValue(p, owner, field, att) {
+  if (isDerived(field)) return derivedValue(p, owner, field);
+  return effectiveValue(field, att, owner.entity.fieldValues?.[field.id]);
+}
+function valueOn(p, owner, field) {
+  const att = attachmentsFor(p, owner).find((a) => a.field.id === field.id)?.att ?? null;
+  return readValue(p, owner, field, att);
+}
+var evaluating = /* @__PURE__ */ new Set();
+function derivedValue(p, owner, field) {
+  const key = `${owner.entity.id}:${field.id}`;
+  if (evaluating.has(key)) return null;
+  evaluating.add(key);
+  try {
+    const parent = parentOf(p, field);
+    const siblings = parent ? childrenOf(p, parent).filter((c) => c.id !== field.id) : [];
+    const raw = evalOn(p, owner, field.formula ?? "", (f) => valueOn(p, owner, f), siblings);
+    if (raw === null || raw === void 0) return null;
+    if (field.kind === "toggle") return parseToggle(raw);
+    if (isNumberKind(field.kind)) {
+      const n = typeof raw === "number" ? raw : typeof raw === "boolean" ? raw ? 1 : 0 : Number(String(raw).trim().replace(",", "."));
+      return Number.isFinite(n) ? clampValue(field, n) : null;
+    }
+    if (field.kind === "text") {
+      const s = Array.isArray(raw) ? raw.join(", ") : typeof raw === "boolean" ? formatToggle(raw) : typeof raw === "number" ? String(Number(raw.toFixed(6))) : String(raw);
+      return s === "" ? null : clampValue(field, s);
+    }
+    return clampValue(field, coerceValue(field, Array.isArray(raw) ? raw : String(raw)));
+  } finally {
+    evaluating.delete(key);
+  }
 }
 function coerceValue(field, v) {
   if (v === null || v === void 0) return null;
@@ -3910,6 +4670,43 @@ function coerceValue(field, v) {
       }
       return typeof v === "string" && v ? [v] : null;
     }
+    case "group":
+      return null;
+  }
+}
+function clampValue(field, v) {
+  if (v === null) return null;
+  switch (field.kind) {
+    case "text": {
+      const s = String(v);
+      return field.maxLength !== null && s.length > field.maxLength ? s.slice(0, field.maxLength) : s;
+    }
+    case "int":
+    case "float": {
+      let n = Number(v);
+      if (!Number.isFinite(n)) return null;
+      if (field.kind === "int") n = Math.round(n);
+      else if (field.decimals !== null) n = Number(n.toFixed(Math.max(0, Math.min(10, field.decimals))));
+      if (field.min !== null) n = Math.max(field.min, n);
+      if (field.max !== null) n = Math.min(field.max, n);
+      if (field.kind === "int") n = Math.round(n);
+      return n;
+    }
+    case "toggle":
+      return parseToggle(v);
+    case "select": {
+      const chosen = new Set(Array.isArray(v) ? v : [String(v)]);
+      const out = field.options.filter((o) => chosen.has(o));
+      const kept = field.selectMultiple ? out : out.slice(0, 1);
+      return kept.length ? kept : null;
+    }
+    case "ref": {
+      const ids = Array.isArray(v) ? v : [String(v)];
+      const out = field.refMultiple ? [...new Set(ids)] : ids.slice(0, 1);
+      return out.length ? out : null;
+    }
+    case "group":
+      return null;
   }
 }
 var TOGGLE_ON = /* @__PURE__ */ new Set(["true", "yes", "y", "on", "1", "x", "\u2713"]);
@@ -3942,6 +4739,8 @@ function formatValue(p, field, v) {
       return (Array.isArray(v) ? v : [String(v)]).join(", ");
     case "ref":
       return (Array.isArray(v) ? v : [String(v)]).map((id) => entityTitle(p, id)).join(", ");
+    case "group":
+      return "";
   }
 }
 function entityTitle(p, id) {
@@ -3949,8 +4748,219 @@ function entityTitle(p, id) {
   if (!o) return "(missing)";
   return o.kind === "item" ? o.entity.title || "Untitled" : o.entity.name || "Untitled section";
 }
+function sectionsAt(p, pos, exclude, timelineId) {
+  const eps = 1e-9;
+  return p.sections.filter((s) => s.id !== exclude && (!timelineId || s.timelineId === timelineId) && s.start <= pos + eps && s.end >= pos - eps).sort((a, b) => a.depth - b.depth);
+}
+function stripRefs(p, ids) {
+  const refIds = new Set(p.fields.filter((f) => f.kind === "ref").map((f) => f.id));
+  if (!refIds.size) return;
+  const clean = (rec) => {
+    for (const fid of refIds) {
+      const v = rec[fid];
+      if (!Array.isArray(v)) continue;
+      const next = v.filter((id) => !ids.has(id));
+      if (next.length === v.length) continue;
+      if (next.length) rec[fid] = next;
+      else delete rec[fid];
+    }
+  };
+  for (const it of p.items) clean(it.fieldValues);
+  for (const sc of p.sections) clean(sc.fieldValues);
+  const cleanDefault = (v) => {
+    if (!Array.isArray(v)) return v;
+    const next = v.filter((id) => !ids.has(id));
+    return next.length ? next : null;
+  };
+  for (const f of p.fields) if (f.kind === "ref") f.defaultValue = cleanDefault(f.defaultValue);
+  for (const t of p.types) for (const a of t.fields) if (refIds.has(a.fieldId)) a.defaultValue = cleanDefault(a.defaultValue);
+  for (const fo of p.typeFolders) for (const a of fo.fields ?? []) if (refIds.has(a.fieldId)) a.defaultValue = cleanDefault(a.defaultValue);
+  for (const l of p.hierarchyLevels) for (const a of l.fields) if (refIds.has(a.fieldId)) a.defaultValue = cleanDefault(a.defaultValue);
+}
+function repairSchema(p) {
+  const fieldIds = new Set(p.fields.map((f) => f.id));
+  const procIds = new Set(p.processors.map((f) => f.id));
+  const byId = new Map(p.fields.map((f) => [f.id, f]));
+  const owned = /* @__PURE__ */ new Set();
+  for (const g of p.fields) {
+    if (g.kind !== "group") {
+      if (g.children?.length) g.children = [];
+      continue;
+    }
+    const kids = [];
+    for (const id of g.children ?? []) {
+      const c = byId.get(id);
+      if (!c || c.id === g.id || owned.has(id) || kids.includes(id)) continue;
+      let cur = g;
+      let cyc = false;
+      const seen = /* @__PURE__ */ new Set();
+      while (cur?.parentId && !seen.has(cur.id)) {
+        seen.add(cur.id);
+        if (cur.parentId === c.id) {
+          cyc = true;
+          break;
+        }
+        cur = byId.get(cur.parentId);
+      }
+      if (cyc) continue;
+      kids.push(id);
+      owned.add(id);
+    }
+    if (kids.join("\n") !== (g.children ?? []).join("\n")) g.children = kids;
+  }
+  for (const f of p.fields) {
+    const want = [...p.fields].find((g) => g.kind === "group" && g.children?.includes(f.id))?.id ?? null;
+    if ((f.parentId ?? null) !== want) f.parentId = want;
+  }
+  const dedupeFields = (list2) => {
+    const seen = /* @__PURE__ */ new Set();
+    return list2.filter((a) => fieldIds.has(a.fieldId) && !seen.has(a.fieldId) && seen.add(a.fieldId));
+  };
+  for (const t of p.types) t.fields = dedupeFields(t.fields);
+  for (const f of p.typeFolders) f.fields = dedupeFields(f.fields ?? []);
+  for (const l of p.hierarchyLevels) {
+    l.fields = dedupeFields(l.fields);
+    const seen = /* @__PURE__ */ new Set();
+    l.processors = l.processors.filter((a) => procIds.has(a.processorId) && !seen.has(a.processorId) && seen.add(a.processorId));
+  }
+  const refFields = p.fields.filter((f) => f.kind === "ref");
+  if (!refFields.length) return;
+  const live = /* @__PURE__ */ new Set();
+  for (const it of p.items) live.add(it.id);
+  for (const sc of p.sections) live.add(sc.id);
+  const dead = /* @__PURE__ */ new Set();
+  const collect = (rec) => {
+    if (!rec) return;
+    for (const f of refFields) {
+      const v = rec[f.id];
+      if (Array.isArray(v)) {
+        for (const id of v) if (!live.has(id)) dead.add(id);
+      }
+    }
+  };
+  for (const it of p.items) collect(it.fieldValues);
+  for (const sc of p.sections) collect(sc.fieldValues);
+  for (const f of refFields) if (Array.isArray(f.defaultValue)) {
+    for (const id of f.defaultValue) if (!live.has(id)) dead.add(id);
+  }
+  if (dead.size) stripRefs(p, dead);
+}
+
+// src/model/processors.ts
+var PROCESSOR_OPS = [
+  { op: "sum", label: "Sum", needsField: "number" },
+  // toggles sum too: the number switched on
+  { op: "count", label: "Count", needsField: "none" },
+  { op: "avg", label: "Average", needsField: "number" },
+  { op: "min", label: "Minimum", needsField: "number" },
+  { op: "max", label: "Maximum", needsField: "number" },
+  { op: "distinct", label: "Distinct values", needsField: "any" }
+];
+function entitiesInside(p, section) {
+  const eps = 1e-9;
+  const out = [];
+  for (const it of p.items) {
+    if (it.timelineId !== section.timelineId) continue;
+    if (it.pos >= section.start - eps && it.pos <= section.end + eps) out.push({ kind: "item", entity: it });
+  }
+  for (const sc of p.sections) {
+    if (sc.id === section.id || sc.timelineId !== section.timelineId) continue;
+    if (sc.depth > section.depth && sc.start >= section.start - eps && sc.end <= section.end + eps) out.push({ kind: "section", entity: sc });
+  }
+  return out;
+}
+function evalProcessor(p, section, proc, att = null) {
+  const field = fieldById(p, proc.fieldId);
+  const spec = PROCESSOR_OPS.find((o) => o.op === proc.op);
+  if (spec.needsField !== "none" && !field) return { proc, att, text: "\u2014", matched: [], error: "needs a field" };
+  if (spec.needsField === "number" && field && !isNumberKind(field.kind) && !(proc.op === "sum" && field.kind === "toggle")) {
+    return { proc, att, text: "\u2014", matched: [], error: "needs a number field" };
+  }
+  const targets = new Set(proc.targets);
+  const inside = entitiesInside(p, section);
+  const matched = [];
+  const values = [];
+  const where = proc.where?.trim() ?? "";
+  for (const o of inside) {
+    const key = o.kind === "item" ? o.entity.typeId : levelOf(p, o.entity)?.id;
+    if (targets.size) {
+      if (!key || !targets.has(key)) continue;
+    } else if (proc.op === "count" && o.kind === "section") continue;
+    if (where && !matchesRule(p, o, where)) continue;
+    if (field) {
+      const a = attachmentsFor(p, o).find((x) => x.field.id === field.id);
+      if (!a) continue;
+      const v = readValue(p, o, field, a.att);
+      if (v === null) continue;
+      values.push(v);
+    }
+    matched.push(o);
+  }
+  let text;
+  switch (proc.op) {
+    case "count":
+      text = String(matched.length);
+      break;
+    case "distinct": {
+      const set = /* @__PURE__ */ new Set();
+      for (const v of values) {
+        if (Array.isArray(v)) for (const x of v) set.add(field?.kind === "ref" ? entityTitle(p, x) : x);
+        else if (field?.kind === "toggle") set.add(formatToggle(v === true));
+        else set.add(field && isNumberKind(field.kind) ? formatNumber(field, Number(v)) : String(v));
+      }
+      const list2 = [...set];
+      text = list2.length ? `${list2.length}: ${list2.join(", ")}` : "0";
+      break;
+    }
+    default: {
+      if (field?.kind === "toggle") {
+        text = String(values.filter((v) => v === true).length);
+        break;
+      }
+      const nums = values.map(Number).filter(Number.isFinite);
+      if (!nums.length) {
+        text = field ? formatNumber(field, 0) : "0";
+        break;
+      }
+      let n;
+      if (proc.op === "sum") n = nums.reduce((a, b) => a + b, 0);
+      else if (proc.op === "avg") n = nums.reduce((a, b) => a + b, 0) / nums.length;
+      else if (proc.op === "min") n = Math.min(...nums);
+      else n = Math.max(...nums);
+      const f = field;
+      text = proc.op === "avg" && f.kind === "int" ? `${Number(n.toFixed(2))}${f.unit ? " " + f.unit : ""}` : formatNumber(f, n);
+    }
+  }
+  return { proc, att, text, matched };
+}
+function processorResults(p, section) {
+  const level = levelOf(p, section);
+  if (!level) return [];
+  const out = [];
+  for (const att of level.processors) {
+    const proc = p.processors.find((x) => x.id === att.processorId);
+    if (proc) out.push(evalProcessor(p, section, proc, att));
+  }
+  return out;
+}
+function shownProcessorResults(p, section) {
+  const off = p.filters?.offProcessors ?? [];
+  return processorResults(p, section).filter((r) => !r.error && !off.includes(r.proc.id));
+}
 
 // src/model/layout.ts
+function refreshSectionDepths(p) {
+  const eps = 1e-9;
+  for (const s of p.sections) {
+    let depth = 0;
+    for (const t of p.sections) {
+      if (t === s || t.timelineId !== s.timelineId) continue;
+      const larger = t.end - t.start > s.end - s.start + eps;
+      if (larger && t.start <= s.start + eps && t.end >= s.end - eps) depth++;
+    }
+    s.depth = depth;
+  }
+}
 function typeOf(p, it) {
   return p.types.find((t) => t.id === it.typeId) ?? p.types[0];
 }
@@ -3965,7 +4975,224 @@ function itemMatchesFilters(p, it, f) {
     const hay = `${it.title} ${it.description} ${it.tags.join(" ")} ${extra}`.toLowerCase();
     if (!hay.includes(q)) return false;
   }
+  if (f.rules?.trim() && !matchesRule(p, { kind: "item", entity: it }, f.rules)) return false;
   return true;
+}
+
+// src/model/normalize.ts
+function normalizeFilters(f) {
+  return {
+    offTypes: Array.isArray(f?.offTypes) ? f.offTypes : [],
+    offLayers: Array.isArray(f?.offLayers) ? f.offLayers : [],
+    tags: Array.isArray(f?.tags) ? f.tags : [],
+    text: typeof f?.text === "string" ? f.text : "",
+    rules: typeof f?.rules === "string" ? f.rules : "",
+    offFields: Array.isArray(f?.offFields) ? f.offFields : [],
+    offProcessors: Array.isArray(f?.offProcessors) ? f.offProcessors : []
+  };
+}
+function normalizeProject(p) {
+  p.settings = normalizeSettings(p.settings);
+  p.timelines = Array.isArray(p.timelines) ? p.timelines.filter((t) => t && typeof t.id === "string").map((t) => normalizeTimeline(t)) : [];
+  if (!p.timelines.length) p.timelines = [newTimeline(FIRST_TIMELINE_NAME, p.settings, FIRST_TIMELINE_ID)];
+  p.cameras = p.cameras && typeof p.cameras === "object" ? p.cameras : {};
+  p.activeTimelineId ??= null;
+  p.hierarchyLevels = normalizeLevels(p.hierarchyLevels);
+  p.fields = Array.isArray(p.fields) ? p.fields.map((f) => normalizeFieldDef(f)) : [];
+  p.processors = Array.isArray(p.processors) ? p.processors : [];
+  for (const pr of p.processors) {
+    pr.targets ??= [];
+    pr.fieldId ??= null;
+    pr.where ??= "";
+  }
+  p.types ??= [];
+  p.layers ??= [];
+  p.sections ??= [];
+  p.items ??= [];
+  p.views ??= [];
+  for (const v of p.views) v.filters = normalizeFilters(v.filters);
+  p.camera ??= { x: -8, s: 14 };
+  p.filters = normalizeFilters(p.filters);
+  p.activeViewId ??= null;
+  for (const l of p.layers) {
+    l.size ??= 1;
+    l.minZoom ??= 0;
+  }
+  for (const sc of p.sections) {
+    sc.description ??= "";
+    sc.fieldValues ??= {};
+  }
+  for (const it of p.items) it.fieldValues ??= {};
+  p.typeFolders ??= [];
+  for (const f of p.typeFolders) {
+    f.parentId ??= null;
+    f.fields = Array.isArray(f.fields) ? f.fields.map((a) => normalizeAttachment(a)) : [];
+  }
+  for (const t of p.types) t.folderId ??= null;
+  p.fieldFolders = Array.isArray(p.fieldFolders) ? p.fieldFolders : [];
+  p.processorFolders = Array.isArray(p.processorFolders) ? p.processorFolders : [];
+  for (const f of [...p.fieldFolders, ...p.processorFolders]) {
+    f.parentId ??= null;
+    f.collapsed = !!f.collapsed;
+  }
+  for (const f of p.fields) f.folderId ??= null;
+  for (const pr of p.processors) pr.folderId ??= null;
+  migrateLegacyFields(p);
+  delete p.branches;
+  for (const it of p.items) delete it.pathId;
+  repairTimelines(p);
+  repairFolders(p);
+  refreshSectionDepths(p);
+  repairSchema(p);
+  return p;
+}
+function normalizeAttachment(a) {
+  const out = { fieldId: a.fieldId, defaultValue: a.defaultValue ?? null };
+  if (a.childDefaults && typeof a.childDefaults === "object" && Object.keys(a.childDefaults).length) out.childDefaults = a.childDefaults;
+  return out;
+}
+var DEFAULT_LEVEL_NAMES = ["Chapter", "Level", "Section"];
+var newLevel = (name, id = uid()) => ({ id, name, fields: [], processors: [] });
+function normalizeLevels(raw) {
+  const list2 = Array.isArray(raw) && raw.length ? raw : DEFAULT_LEVEL_NAMES;
+  return list2.map((l, i) => {
+    if (typeof l === "string") return newLevel(l, `level-${i}`);
+    const o = l ?? {};
+    return {
+      id: o.id ?? `level-${i}`,
+      name: o.name ?? `Level ${i + 1}`,
+      fields: Array.isArray(o.fields) ? o.fields.map((a) => normalizeAttachment(a)) : [],
+      processors: Array.isArray(o.processors) ? o.processors.map((a) => ({ processorId: a.processorId, showOnBand: !!a.showOnBand })) : []
+    };
+  });
+}
+function migrateLegacyFields(p) {
+  const remap = /* @__PURE__ */ new Map();
+  for (const t of p.types) {
+    t.fields ??= [];
+    const next = [];
+    for (const raw of t.fields) {
+      if ("fieldId" in raw) {
+        next.push(normalizeAttachment(raw));
+        continue;
+      }
+      const key = (raw.name ?? "").trim().toLowerCase();
+      let def = p.fields.find((f) => f.kind === "text" && f.name.trim().toLowerCase() === key);
+      if (!def) {
+        def = newFieldDef(raw.id, raw.name || "Field", "text");
+        p.fields.push(def);
+      }
+      if (def.id !== raw.id) remap.set(raw.id, def.id);
+      next.push({ fieldId: def.id, defaultValue: null });
+    }
+    t.fields = next;
+  }
+  if (!remap.size) return;
+  for (const it of p.items) {
+    for (const [from, to] of remap) {
+      const v = it.fieldValues[from];
+      if (v === void 0) continue;
+      delete it.fieldValues[from];
+      if (it.fieldValues[to] === void 0) it.fieldValues[to] = v;
+    }
+  }
+}
+
+// src/api/compute.ts
+function prepare(raw) {
+  return normalizeProject(structuredClone(raw));
+}
+function queryItems(p, rules, timelineIds) {
+  const src = rules.trim();
+  const { ast, error } = compile(src);
+  if (error) throw new Error(`Bad query: ${error}`);
+  const tl = timelineIds?.length ? new Set(timelineIds) : null;
+  const out = [];
+  for (const it of p.items) {
+    if (tl && !tl.has(it.timelineId)) continue;
+    if (!ast) {
+      out.push(it.id);
+      continue;
+    }
+    const view = timelineView(p, it.timelineId);
+    if (truthy(evaluate(ast, entityScope(view, { kind: "item", entity: it })))) out.push(it.id);
+  }
+  return out;
+}
+function computeDoc(p) {
+  const out = { items: {}, sections: {} };
+  const derivedOn = (view, owner) => {
+    const vals = {};
+    for (const { att, field } of attachmentsFor(view, owner)) {
+      if (!isDerived(field)) continue;
+      const v = readValue(view, owner, field, att);
+      if (v !== null) vals[field.id] = v;
+    }
+    return vals;
+  };
+  for (const it of p.items) {
+    const view = timelineView(p, it.timelineId);
+    const vals = derivedOn(view, { kind: "item", entity: it });
+    if (Object.keys(vals).length) out.items[it.id] = vals;
+  }
+  for (const sc of p.sections) {
+    const view = timelineView(p, sc.timelineId);
+    const fields = derivedOn(view, { kind: "section", entity: sc });
+    const processors = {};
+    for (const r of processorResults(view, sc)) {
+      if (r.error) continue;
+      const n = Number(String(r.text).replace(/[^\d.,-].*$/, "").replace(",", "."));
+      processors[r.proc.id] = { text: r.text, value: Number.isFinite(n) ? n : null, matched: r.matched.map((o) => o.entity.id) };
+    }
+    if (Object.keys(fields).length || Object.keys(processors).length) out.sections[sc.id] = { fields, processors };
+  }
+  return out;
+}
+
+// src/model/patch.ts
+var SYNC_COLLECTIONS = [
+  "hierarchyLevels",
+  "fields",
+  "fieldFolders",
+  "processors",
+  "processorFolders",
+  "types",
+  "typeFolders",
+  "layers",
+  "timelines",
+  "sections",
+  "items",
+  "views"
+];
+var SYNC_SCALARS = ["name", "settings"];
+
+// src/model/proposal.ts
+var same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+var list = (p, col) => p[col] ?? [];
+function diffToChanges(base, edited, notes = {}) {
+  const out = [];
+  const push = (c) => {
+    const note = notes[c.entityId];
+    out.push({ id: uid(), ...c, ...note ? { note } : {} });
+  };
+  for (const col of SYNC_COLLECTIONS) {
+    const am = new Map(list(base, col).map((e) => [e.id, e]));
+    const bm = new Map(list(edited, col).map((e) => [e.id, e]));
+    for (const e of list(edited, col)) {
+      const prev = am.get(e.id);
+      if (!prev) push({ col, kind: "add", entityId: e.id, before: null, after: structuredClone(e) });
+      else if (!same(prev, e)) push({ col, kind: "update", entityId: e.id, before: structuredClone(prev), after: structuredClone(e) });
+    }
+    for (const e of list(base, col)) {
+      if (!bm.has(e.id)) push({ col, kind: "remove", entityId: e.id, before: structuredClone(e), after: null });
+    }
+  }
+  for (const k of SYNC_SCALARS) {
+    if (!same(base[k], edited[k])) {
+      push({ col: "project", kind: "set", entityId: k, before: structuredClone(base[k]), after: structuredClone(edited[k]) });
+    }
+  }
+  return out;
 }
 
 // src/ui/exportDoc.tsx
@@ -23152,19 +24379,19 @@ function Markdown({ text }) {
 // src/ui/exportDoc.tsx
 var import_jsx_runtime2 = __toESM(require_jsx_runtime(), 1);
 var EPS = 1e-9;
-var contains = (sc, pos) => pos >= sc.start - EPS && pos <= sc.end + EPS;
+var contains2 = (sc, pos) => pos >= sc.start - EPS && pos <= sc.end + EPS;
 var encloses = (outer, inner) => outer.depth < inner.depth && inner.start >= outer.start - EPS && inner.end <= outer.end + EPS;
 function buildTree(proj, rootIds) {
   const nodes = /* @__PURE__ */ new Map();
   for (const sc of proj.sections) nodes.set(sc.id, { section: sc, children: [], items: [] });
-  const parentOf = /* @__PURE__ */ new Map();
+  const parentOf2 = /* @__PURE__ */ new Map();
   for (const sc of proj.sections) {
     let best = null;
     for (const other of proj.sections) {
       if (other.id === sc.id || !encloses(other, sc)) continue;
       if (!best || other.depth > best.depth || other.depth === best.depth && other.end - other.start < best.end - best.start) best = other;
     }
-    parentOf.set(sc.id, best?.id ?? null);
+    parentOf2.set(sc.id, best?.id ?? null);
     if (best) nodes.get(best.id).children.push(nodes.get(sc.id));
   }
   const loose = [];
@@ -23172,7 +24399,7 @@ function buildTree(proj, rootIds) {
     if (!isItemVisible(proj, it)) continue;
     let best = null;
     for (const sc of proj.sections) {
-      if (!contains(sc, it.pos)) continue;
+      if (!contains2(sc, it.pos)) continue;
       if (!best || sc.depth > best.depth || sc.depth === best.depth && sc.end - sc.start < best.end - best.start) best = sc;
     }
     if (best) nodes.get(best.id).items.push(it);
@@ -23184,7 +24411,7 @@ function buildTree(proj, rootIds) {
     n.children.sort((a, b) => a.section.start - b.section.start || a.section.depth - b.section.depth);
   }
   loose.sort(byPos);
-  const roots = rootIds ? rootIds.map((id) => nodes.get(id)).filter((n) => !!n) : proj.sections.filter((sc) => parentOf.get(sc.id) === null).sort((a, b) => a.start - b.start || a.depth - b.depth).map((sc) => nodes.get(sc.id));
+  const roots = rootIds ? rootIds.map((id) => nodes.get(id)).filter((n) => !!n) : proj.sections.filter((sc) => parentOf2.get(sc.id) === null).sort((a, b) => a.start - b.start || a.depth - b.depth).map((sc) => nodes.get(sc.id));
   return { roots, loose: rootIds ? [] : loose };
 }
 function countItems(n) {
@@ -23194,6 +24421,19 @@ function Heading7({ level, className, children }) {
   const Tag2 = `h${Math.min(6, Math.max(1, level))}`;
   return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Tag2, { className, children });
 }
+function FieldList({ proj, fields }) {
+  if (!fields.length) return null;
+  return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("dl", { className: "fields", children: groupAttachments(proj, fields).map((g) => /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(import_react3.default.Fragment, { children: [
+    g.folder && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "group", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("dt", { style: { color: g.folder.color }, children: g.folder.name }),
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("dd", {})
+    ] }),
+    g.entries.map((f) => /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: f.label ? "" : "noname", children: [
+      f.label && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("dt", { children: f.label }),
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("dd", { title: f.label ? void 0 : f.field.name, children: f.field.kind === "text" ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Markdown, { text: f.text }) : f.text })
+    ] }, f.field.id))
+  ] }, g.folder?.id ?? "root")) });
+}
 function DocBody({ proj, roots, loose, base = 1 }) {
   const st = proj.settings;
   const suffix = unitSuffix(st.unit.preset, st.unit.custom);
@@ -23202,7 +24442,7 @@ function DocBody({ proj, roots, loose, base = 1 }) {
     const t = typeOf(proj, it);
     const Icon2 = iconByName(t?.icon ?? "Circle");
     const layer = proj.layers.find((l) => l.id === (it.layerId ?? t?.defaultLayerId));
-    const fields = attachmentsFor(proj, { kind: "item", entity: it }).map(({ att, field }) => ({ field, text: formatValue(proj, field, effectiveValue(field, att, it.fieldValues[field.id])) })).filter((f) => f.text.trim());
+    const fields = displayEntries(proj, { kind: "item", entity: it }, { skip: (f) => (proj.filters.offFields ?? []).includes(f.id) });
     const meta = [
       it.duration > 0 ? `${fmt(it.pos)} \u2192 ${fmt(it.pos + it.duration)} (${fmt(it.duration)})` : fmt(it.pos)
     ];
@@ -23217,10 +24457,7 @@ function DocBody({ proj, roots, loose, base = 1 }) {
       ] }),
       /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { className: "meta", children: meta.join(" \xB7 ") }),
       it.description.trim() && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Markdown, { text: it.description }),
-      fields.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("dl", { className: "fields", children: fields.map((f) => /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: f.field.showName ? "" : "noname", children: [
-        f.field.showName && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("dt", { children: f.field.name }),
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("dd", { title: f.field.showName ? void 0 : f.field.name, children: f.field.kind === "text" ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Markdown, { text: f.text }) : f.text })
-      ] }, f.field.id)) }),
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(FieldList, { proj, fields }),
       it.link && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("p", { className: "link", children: [
         "Link: ",
         /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("a", { href: it.link, children: it.link })
@@ -23234,6 +24471,8 @@ function DocBody({ proj, roots, loose, base = 1 }) {
       ...n.items.map((it) => ({ pos: it.pos, node: renderItem(it, level + 1) })),
       ...n.children.map((c) => ({ pos: c.section.start, node: renderSection(c, level + 1) }))
     ].sort((a, b) => a.pos - b.pos);
+    const secFields = displayEntries(proj, { kind: "section", entity: sc }, { skip: (f) => (proj.filters.offFields ?? []).includes(f.id) });
+    const procs = shownProcessorResults(proj, sc);
     return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("section", { className: `sec l${level}`, children: [
       /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(Heading7, { level, className: "sec-h", children: [
         /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "title", children: sc.name || "Untitled" }),
@@ -23250,6 +24489,13 @@ function DocBody({ proj, roots, loose, base = 1 }) {
         " item",
         countItems(n) === 1 ? "" : "s"
       ] }),
+      procs.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { className: "procs", children: procs.map((r, i) => /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { className: "proc", children: [
+        i > 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "sep", children: " \xB7 " }),
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "proc-name", children: r.proc.name }),
+        " ",
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "proc-value", children: r.text })
+      ] }, r.proc.id)) }),
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(FieldList, { proj, fields: secFields }),
       sc.description?.trim() && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Markdown, { text: sc.description }),
       entries.map((e, i) => /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(import_react3.default.Fragment, { children: e.node }, i))
     ] }, sc.id);
@@ -23300,6 +24546,10 @@ h1.item-h { font-size: 19pt; } h2.item-h { font-size: 15.5pt; } h3.item-h { font
 .item-h .icon svg { width: 1em; height: 1em; }
 .item-h .type { color: var(--c); border-color: color-mix(in srgb, var(--c) 45%, #fff); }
 .meta { margin: 1px 0 6px; font-size: 9.5pt; color: #6b7180; }
+.procs { margin: 0 0 6px; font-size: 10.5pt; color: #4b5162; }
+.procs .proc-name { font-weight: 600; }
+.procs .proc-value { font-variant-numeric: tabular-nums; color: #1c1f26; }
+.procs .sep { color: #b0b5c2; }
 .md p { margin: 0 0 6px; } .md ul { margin: 0 0 6px; padding-left: 20px; }
 .md code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.9em; background: #eef0f4; border-radius: 4px; padding: 0 4px; }
 .md a, .link a { color: #2563eb; text-decoration: none; }
@@ -23308,6 +24558,8 @@ h1.item-h { font-size: 19pt; } h2.item-h { font-size: 15.5pt; } h3.item-h { font
 .fields dt { font-weight: 600; color: #4b5162; }
 .fields dd { margin: 0; }
 .fields > div.noname dd { grid-column: 1 / -1; }
+.fields > div.group dt { grid-column: 1 / -1; font-size: 9pt; text-transform: uppercase; letter-spacing: .04em; margin-top: 3px; }
+.fields > div.group dd { display: none; }
 .link { margin: 0 0 6px; font-size: 10.5pt; word-break: break-all; }
 .images { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0 8px; }
 .images img { max-width: 240px; max-height: 180px; border-radius: 6px; border: 1px solid #d8dce6; }
@@ -23340,7 +24592,10 @@ function buildDocHTML(proj, sectionIds, timelineIds = null) {
     f.offLayers.length && "layers",
     f.tags.length && "tags",
     f.text.trim() && `text \u201C${f.text.trim()}\u201D`,
-    proj.layers.some((l) => l.eye) && "hidden layers"
+    (f.rules ?? "").trim() && `rules \u201C${f.rules.trim()}\u201D`,
+    proj.layers.some((l) => l.eye) && "hidden layers",
+    (f.offFields ?? []).length && "hidden fields",
+    (f.offProcessors ?? []).length && "hidden processors"
   ].filter(Boolean);
   const visibility = hidden > 0 ? `${total} visible item${total === 1 ? "" : "s"} (${hidden} hidden by ${activeFilters.join(", ") || "filters"})` : `${total} item${total === 1 ? "" : "s"}`;
   const scope = single && sectionIds ? `${rootNames.length === 1 ? proj.hierarchyLevels[first.roots[0]?.section.depth]?.name ?? "Section" : "Sections"}: ${rootNames.join(", ")}` : single ? "Whole timeline" : `${parts.length} timelines`;
@@ -23486,8 +24741,26 @@ function outlineOf(d) {
   const fmt = (n) => Number.isInteger(n) ? String(n) : n.toFixed(2);
   lines.push(`# ${d.name}`);
   lines.push(`hierarchy: ${d.hierarchyLevels.map((l) => `${l.name} [${l.id}]`).join(" > ")}`);
-  if (d.fields.length) lines.push(`fields: ${d.fields.map((f) => `${f.name} (${f.kind}) [${f.id}]`).join(", ")}`);
-  if (d.processors.length) lines.push(`processors: ${d.processors.map((p) => `${p.name} (${p.op}) [${p.id}]`).join(", ")}`);
+  const folderName = (kind, id) => id ? foldersOf(d, kind).find((f) => f.id === id)?.name : void 0;
+  const fieldLine = (f) => {
+    const kind = isDerived(f) ? `derived ${f.kind} = ${f.formula}` : f.kind === "group" ? "composite" : f.kind;
+    const folder = folderName("fields", f.folderId);
+    const extra = f.kind === "group" && f.template ? `, template "${f.template}"` : f.badge ? ", badge" : "";
+    return `${f.name} (${kind}${extra}) [${f.id}]${folder ? ` in ${folder}` : ""}`;
+  };
+  if (d.fields.length) {
+    lines.push("fields:");
+    for (const f of rootFields(d)) {
+      lines.push(`  ${fieldLine(f)}`);
+      if (f.kind === "group") for (const c of childrenOf(d, f)) lines.push(`    \xB7 ${fieldLine(c)}`);
+    }
+  }
+  if (d.processors.length) {
+    lines.push(`processors: ${d.processors.map((p) => {
+      const folder = folderName("processors", p.folderId);
+      return `${p.name} (${p.op}${p.where?.trim() ? ` where ${p.where.trim()}` : ""}) [${p.id}]${folder ? ` in ${folder}` : ""}`;
+    }).join(", ")}`);
+  }
   lines.push(`types: ${d.types.map((t) => `${t.name} [${t.id}]`).join(", ") || "(none)"}`);
   lines.push(`layers: ${d.layers.map((l) => `${l.name} [${l.id}]`).join(", ") || "(none)"}`);
   const multi = d.timelines.length > 1;
@@ -23530,6 +24803,44 @@ function itemLine(d, it, fmt) {
 async function cmdOutline() {
   const w = opt("in") ? loadDoc(opt("in"), "in") : await open(TOKEN());
   console.log(outlineOf(w.doc));
+}
+async function cmdQuery() {
+  const where = opt("where") ?? "";
+  const { error } = compile(where);
+  if (error) fail(`bad --where expression: ${error}`);
+  const w = opt("in") ? loadDoc(opt("in"), "in") : await open(TOKEN());
+  const d = prepare(w.doc);
+  const wantedTl = listOpt("timeline");
+  const timelineIds = wantedTl.length ? resolve(wantedTl, d.timelines, "timeline").map((t) => t.id) : void 0;
+  const matches = queryItems(d, where, timelineIds);
+  const computed = flag("compute") ? computeDoc(d) : null;
+  if (flag("json")) {
+    console.log(JSON.stringify({ version: w.version, matches, ...computed ? { computed } : {} }, null, 2));
+    return;
+  }
+  const fmt = (n) => Number.isInteger(n) ? String(n) : n.toFixed(2);
+  const byId = new Map(d.items.map((it) => [it.id, it]));
+  const fieldName = (id) => d.fields.find((f) => f.id === id)?.name ?? id;
+  console.log(`${plural(matches.length, "item")}${where.trim() ? ` where ${where.trim()}` : ""}${timelineIds ? ` on ${plural(timelineIds.length, "timeline")}` : ""}`);
+  for (const id of matches) {
+    const it = byId.get(id);
+    let line = itemLine(d, it, fmt);
+    const derived2 = computed?.items[id];
+    if (derived2) line += `  {${Object.entries(derived2).map(([k, v]) => `${fieldName(k)}: ${Array.isArray(v) ? v.join(", ") : String(v)}`).join("; ")}}`;
+    console.log(line);
+  }
+  if (computed) {
+    const secs = Object.entries(computed.sections);
+    if (secs.length) console.log("\nsections:");
+    for (const [id, c] of secs) {
+      const sc = d.sections.find((s) => s.id === id);
+      const parts = [
+        ...Object.entries(c.fields).map(([k, v]) => `${fieldName(k)}: ${Array.isArray(v) ? v.join(", ") : String(v)}`),
+        ...Object.entries(c.processors).map(([k, r]) => `${d.processors.find((p) => p.id === k)?.name ?? k}: ${r.text}`)
+      ];
+      console.log(`- ${sc?.name || "Untitled"} [${id}]  ${parts.join("; ")}`);
+    }
+  }
 }
 function describeChanges(d, changes) {
   return changes.map((c) => {
@@ -23700,7 +25011,7 @@ function resolve(wanted, pool, what) {
 async function cmdExport() {
   const w = opt("in") ? loadDoc(opt("in"), "in") : await open(TOKEN());
   const d = structuredClone(w.doc);
-  d.filters = { offTypes: [], offLayers: [], tags: [], text: "" };
+  d.filters = { offTypes: [], offLayers: [], tags: [], text: "", rules: "", offFields: [], offProcessors: [] };
   const types = listOpt("types");
   if (types.length) {
     const keep = new Set(resolve(types, d.types, "type").map((t) => t.id));
@@ -23713,6 +25024,11 @@ async function cmdExport() {
   }
   d.filters.tags = listOpt("tags");
   d.filters.text = opt("text") ?? "";
+  if (opt("where")) {
+    const { error } = compile(opt("where"));
+    if (error) fail(`bad --where expression: ${error}`);
+    d.filters.rules = opt("where");
+  }
   const sections = listOpt("sections");
   const picked = sections.length ? resolve(sections, d.sections, "section") : [];
   const sectionIds = picked.length ? picked.map((s) => s.id) : null;
@@ -23740,6 +25056,7 @@ async function cmdExport() {
 var commands = {
   read: cmdRead,
   outline: cmdOutline,
+  query: cmdQuery,
   propose: cmdPropose,
   apply: cmdApply,
   status: cmdStatus,
@@ -23752,6 +25069,9 @@ var USAGE = `Timeline Planner agent CLI \u2014 work on a shared project through 
 
   read     [--out doc.json]                     download the project ({version, timelineId, name, doc})
   outline  [--in doc.json]                      timelines \u2192 sections \u2192 items with ids, for orientation
+  query    --where "<expr>" [--in doc.json] [--timeline a,b] [--compute] [--json]
+                                                items matching a rule (e.g. "Implemented = no and [VFX Scope] >= 10");
+                                                --compute adds derived values and processor results
   propose  --base doc.json --edited edited.json --title "\u2026" [--summary "\u2026"] [--notes notes.json] [--author "\u2026"]
                                                 diff base \u2192 edited into a proposal for review in the app
   apply    --base doc.json --edited edited.json [--force]
@@ -23759,7 +25079,7 @@ var USAGE = `Timeline Planner agent CLI \u2014 work on a shared project through 
   status   [--all]                              list open (or all) proposals
   withdraw <proposal-id>                        delete a proposal
   export   --out file.pdf [--html file.html] [--in doc.json]
-           [--timeline a,b] [--sections a,b] [--types a,b] [--layers a,b] [--tags a,b] [--text q]
+           [--timeline a,b] [--sections a,b] [--types a,b] [--layers a,b] [--tags a,b] [--text q] [--where "<expr>"]
                                                 the app's document export printed to PDF (needs Chromium)`;
 if (!cmd || !commands[cmd]) {
   console.log(USAGE);

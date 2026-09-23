@@ -263,7 +263,12 @@ const norm = (s: string) => s.trim().toLowerCase()
 
 /** Loose equality: numbers numerically, strings case-insensitively, lists as sets (or membership against a scalar). */
 export function looseEqual(a: Value, b: Value): boolean {
-  if (a === null || b === null) return (a === null || a === '' || (Array.isArray(a) && !a.length)) && (b === null || b === '' || (Array.isArray(b) && !b.length))
+  if (a === null || b === null) {
+    // An unset toggle reads as "no": `Implemented = no` matches items that never set it.
+    const other = a === null ? b : a
+    if (typeof other === 'boolean') return other === false
+    return (a === null || a === '' || (Array.isArray(a) && !a.length)) && (b === null || b === '' || (Array.isArray(b) && !b.length))
+  }
   if (Array.isArray(a) && Array.isArray(b)) return a.length === b.length && a.every(x => b.some(y => norm(x) === norm(y)))
   if (Array.isArray(a)) return a.some(x => looseEqual(x, b))
   if (Array.isArray(b)) return b.some(y => looseEqual(a, y))

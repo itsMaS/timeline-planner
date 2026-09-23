@@ -16,13 +16,16 @@
  * Commands
  *   read     [--out doc.json]                     download the project (wrapper: {version, timelineId, name, doc})
  *   outline  [--in doc.json]                      human-readable outline: timelines → sections → items, with ids
+ *   query    --where "<expr>" [--in doc.json] [--timeline a,b] [--compute] [--json]
+ *                                                 items matching a rule expression (the app's filter language);
+ *                                                 --compute also prints derived values and processor results
  *   propose  --base doc.json --edited edited.json --title "…" [--summary "…"] [--notes notes.json] [--author "…"]
  *                                                 diff base → edited into a proposal for review in the app
  *   apply    --base doc.json --edited edited.json [--force]
  *                                                 save the edited document directly (fails if someone saved since)
  *   status   [--all]                              list open (or all) proposals
  *   withdraw <proposal-id>                        delete a proposal
- *   export   --out file.pdf [--html file.html] [--timeline a,b] [--sections a,b] [--types a,b] [--layers a,b] [--tags a,b] [--text q]
+ *   export   --out file.pdf [--html file.html] [--timeline a,b] [--sections a,b] [--types a,b] [--layers a,b] [--tags a,b] [--text q] [--where "<expr>"]
  *                                                 the app's document export (sections as headings, items with
  *                                                 descriptions/fields/tags) printed to PDF with headless Chromium
  *
@@ -35,10 +38,14 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os'
 import { join, resolve as resolvePath } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { computeDoc, prepare, queryItems } from '../src/api/compute'
+import { compile } from '../src/model/expr'
+import { childrenOf, isDerived, rootFields } from '../src/model/fields'
+import { foldersOf } from '../src/model/folders'
 import { diffToChanges, type Proposal, type ProposalChange } from '../src/model/proposal'
 import { itemMatchesFilters, typeOf } from '../src/model/layout'
 import { repairTimelines, timelineView } from '../src/model/timelines'
-import type { Project } from '../src/model/types'
+import type { FieldDef, Project } from '../src/model/types'
 import { buildDocHTML } from '../src/ui/exportDoc'
 import { SUPABASE_KEY, SUPABASE_URL } from '../src/sync/client'
 
@@ -134,8 +141,27 @@ function outlineOf(d: Project): string {
   const fmt = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(2))
   lines.push(`# ${d.name}`)
   lines.push(`hierarchy: ${d.hierarchyLevels.map(l => `${l.name} [${l.id}]`).join(' > ')}`)
-  if (d.fields.length) lines.push(`fields: ${d.fields.map(f => `${f.name} (${f.kind}) [${f.id}]`).join(', ')}`)
-  if (d.processors.length) lines.push(`processors: ${d.processors.map(p => `${p.name} (${p.op}) [${p.id}]`).join(', ')}`)
+  // Fields: top-level ones with their folder, composites with their children indented, derived ones with the formula.
+  const folderName = (kind: 'fields' | 'processors', id: string | null | undefined) => (id ? foldersOf(d, kind).find(f => f.id === id)?.name : undefined)
+  const fieldLine = (f: FieldDef): string => {
+    const kind = isDerived(f) ? `derived ${f.kind} = ${f.formula}` : f.kind === 'group' ? 'composite' : f.kind
+    const folder = folderName('fields', f.folderId)
+    const extra = f.kind === 'group' && f.template ? `, template "${f.template}"` : f.badge ? ', badge' : ''
+    return `${f.name} (${kind}${extra}) [${f.id}]${folder ? ` in ${folder}` : ''}`
+  }
+  if (d.fields.length) {
+    lines.push('fields:')
+    for (const f of rootFields(d)) {
+      lines.push(`  ${fieldLine(f)}`)
+      if (f.kind === 'group') for (const c of childrenOf(d, f)) lines.push(`    · ${fieldLine(c)}`)
+    }
+  }
+  if (d.processors.length) {
+    lines.push(`processors: ${d.processors.map(p => {
+      const folder = folderName('processors', p.folderId)
+      return `${p.name} (${p.op}${p.where?.trim() ? ` where ${p.where.trim()}` : ''}) [${p.id}]${folder ? ` in ${folder}` : ''}`
+    }).join(', ')}`)
+  }
   lines.push(`types: ${d.types.map(t => `${t.name} [${t.id}]`).join(', ') || '(none)'}`)
   lines.push(`layers: ${d.layers.map(l => `${l.name} [${l.id}]`).join(', ') || '(none)'}`)
   const multi = d.timelines.length > 1
@@ -182,6 +208,50 @@ function itemLine(d: Project, it: Project['items'][number], fmt: (n: number) => 
 async function cmdOutline() {
   const w = opt('in') ? loadDoc(opt('in'), 'in') : await open(TOKEN())
   console.log(outlineOf(w.doc))
+}
+
+/**
+ * Items matching a rule expression, evaluated locally with the app's own
+ * evaluator (the same one api-query runs). --compute adds derived field
+ * values and processor results, which are never stored in the document.
+ */
+async function cmdQuery() {
+  const where = opt('where') ?? ''
+  const { error } = compile(where)
+  if (error) fail(`bad --where expression: ${error}`)
+  const w = opt('in') ? loadDoc(opt('in'), 'in') : await open(TOKEN())
+  const d = prepare(w.doc)
+  const wantedTl = listOpt('timeline')
+  const timelineIds = wantedTl.length ? resolve(wantedTl, d.timelines, 'timeline').map(t => t.id) : undefined
+  const matches = queryItems(d, where, timelineIds)
+  const computed = flag('compute') ? computeDoc(d) : null
+  if (flag('json')) {
+    console.log(JSON.stringify({ version: w.version, matches, ...(computed ? { computed } : {}) }, null, 2))
+    return
+  }
+  const fmt = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(2))
+  const byId = new Map(d.items.map(it => [it.id, it]))
+  const fieldName = (id: string) => d.fields.find(f => f.id === id)?.name ?? id
+  console.log(`${plural(matches.length, 'item')}${where.trim() ? ` where ${where.trim()}` : ''}${timelineIds ? ` on ${plural(timelineIds.length, 'timeline')}` : ''}`)
+  for (const id of matches) {
+    const it = byId.get(id)!
+    let line = itemLine(d, it, fmt)
+    const derived = computed?.items[id]
+    if (derived) line += `  {${Object.entries(derived).map(([k, v]) => `${fieldName(k)}: ${Array.isArray(v) ? v.join(', ') : String(v)}`).join('; ')}}`
+    console.log(line)
+  }
+  if (computed) {
+    const secs = Object.entries(computed.sections)
+    if (secs.length) console.log('\nsections:')
+    for (const [id, c] of secs) {
+      const sc = d.sections.find(s => s.id === id)
+      const parts = [
+        ...Object.entries(c.fields).map(([k, v]) => `${fieldName(k)}: ${Array.isArray(v) ? v.join(', ') : String(v)}`),
+        ...Object.entries(c.processors).map(([k, r]) => `${d.processors.find(p => p.id === k)?.name ?? k}: ${r.text}`),
+      ]
+      console.log(`- ${sc?.name || 'Untitled'} [${id}]  ${parts.join('; ')}`)
+    }
+  }
 }
 
 function describeChanges(d: Project, changes: ProposalChange[]): string[] {
@@ -356,6 +426,11 @@ async function cmdExport() {
   }
   d.filters.tags = listOpt('tags')
   d.filters.text = opt('text') ?? ''
+  if (opt('where')) {
+    const { error } = compile(opt('where')!)
+    if (error) fail(`bad --where expression: ${error}`)
+    d.filters.rules = opt('where')!
+  }
   const sections = listOpt('sections')
   const picked = sections.length ? resolve(sections, d.sections, 'section') : []
   const sectionIds = picked.length ? picked.map(s => s.id) : null
@@ -385,7 +460,7 @@ async function cmdExport() {
 // ---------------------------------------------------------------- main
 
 const commands: Record<string, () => Promise<void>> = {
-  read: cmdRead, outline: cmdOutline, propose: cmdPropose, apply: cmdApply,
+  read: cmdRead, outline: cmdOutline, query: cmdQuery, propose: cmdPropose, apply: cmdApply,
   status: cmdStatus, withdraw: cmdWithdraw, export: cmdExport,
 }
 
@@ -395,6 +470,9 @@ const USAGE = `Timeline Planner agent CLI — work on a shared project through i
 
   read     [--out doc.json]                     download the project ({version, timelineId, name, doc})
   outline  [--in doc.json]                      timelines → sections → items with ids, for orientation
+  query    --where "<expr>" [--in doc.json] [--timeline a,b] [--compute] [--json]
+                                                items matching a rule (e.g. "Implemented = no and [VFX Scope] >= 10");
+                                                --compute adds derived values and processor results
   propose  --base doc.json --edited edited.json --title "…" [--summary "…"] [--notes notes.json] [--author "…"]
                                                 diff base → edited into a proposal for review in the app
   apply    --base doc.json --edited edited.json [--force]
@@ -402,7 +480,7 @@ const USAGE = `Timeline Planner agent CLI — work on a shared project through i
   status   [--all]                              list open (or all) proposals
   withdraw <proposal-id>                        delete a proposal
   export   --out file.pdf [--html file.html] [--in doc.json]
-           [--timeline a,b] [--sections a,b] [--types a,b] [--layers a,b] [--tags a,b] [--text q]
+           [--timeline a,b] [--sections a,b] [--types a,b] [--layers a,b] [--tags a,b] [--text q] [--where "<expr>"]
                                                 the app's document export printed to PDF (needs Chromium)`
 
 if (!cmd || !commands[cmd]) {
