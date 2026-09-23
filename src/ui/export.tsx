@@ -1,9 +1,11 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { iconByName } from '../model/icons'
 import { contentExtent, isFieldShown, layoutTimeline, rowY, spineYFor, splitLabel, toggleBadges, typeOf } from '../model/layout'
-import type { Camera, Project } from '../model/types'
+import type { Camera, FieldDef, Project } from '../model/types'
 import { clamp, download, formatUnit, rulerStepFor, sectionHue, unitSuffix } from '../model/util'
-import { attachmentsFor, effectiveValue, formatValue, levelOf, orderedFields } from '../model/fields'
+import {
+  attachmentsFor, childrenOf, effectiveValue, fieldDisplayName, formatValue, groupText, levelOf, orderedFields, parentOf, type Owner,
+} from '../model/fields'
 import { bandBadge, shownProcessorResults } from '../model/processors'
 import { ToggleBadges } from './Canvas'
 import { scopedProject, type ExportScope } from './exportScope'
@@ -209,13 +211,29 @@ export function exportCSV(proj: Project, scope: ExportScope) {
     { length: maxDepth + 1 },
     (_, d) => proj.hierarchyLevels[d]?.name ?? `Level ${d + 1}`,
   )
-  // Field columns follow the sidebar order (root fields, then folder by folder); hidden fields and processors stay out.
-  const fields = orderedFields(proj).filter(f => !(proj.filters.offFields ?? []).includes(f.id))
+  // Field columns follow the sidebar order (root fields, then folder by folder);
+  // a composite gets a column for its template (when it has one) followed by
+  // one per child ("Scope · done"); hidden fields and processors stay out.
+  const off = new Set(proj.filters.offFields ?? [])
+  const columns: FieldDef[] = []
+  const addCol = (f: FieldDef) => {
+    if (off.has(f.id)) return
+    if (f.kind === 'group') {
+      if (f.template?.trim()) columns.push(f)
+      for (const c of childrenOf(proj, f)) addCol(c)
+    } else columns.push(f)
+  }
+  for (const f of orderedFields(proj)) if (!parentOf(proj, f)) addCol(f)
   const processors = proj.processors.filter(pr => !(proj.filters.offProcessors ?? []).includes(pr.id))
-  const header = [...levels, 'Title', 'Type', 'Position', 'Duration', 'Tags', 'Description', 'Link', 'Created by', ...fields.map(f => f.name)]
+  const cell = (owner: Owner, f: FieldDef) => {
+    const a = attachmentsFor(proj, owner).find(x => x.field.id === f.id)
+    if (!a) return ''
+    return f.kind === 'group' ? groupText(proj, owner, f) : formatValue(proj, f, effectiveValue(f, a.att, owner.entity.fieldValues?.[f.id]))
+  }
+  const header = [...levels, 'Title', 'Type', 'Position', 'Duration', 'Tags', 'Description', 'Link', 'Created by', ...columns.map(f => fieldDisplayName(proj, f))]
   const rows = scope.items
     .map(it => {
-      const atts = attachmentsFor(proj, { kind: 'item', entity: it })
+      const owner: Owner = { kind: 'item', entity: it }
       return [
         ...levels.map((_, d) => sectionAt(d, it.pos)),
         it.title,
@@ -226,10 +244,7 @@ export function exportCSV(proj: Project, scope: ExportScope) {
         it.description,
         it.link,
         it.createdBy?.name ?? '',
-        ...fields.map(f => {
-          const a = atts.find(x => x.field.id === f.id)
-          return a ? formatValue(proj, f, effectiveValue(f, a.att, it.fieldValues[f.id])) : ''
-        }),
+        ...columns.map(f => cell(owner, f)),
       ].map(esc).join(',')
     })
   // Second table: the sections in scope with their own field values and every
@@ -237,9 +252,9 @@ export function exportCSV(proj: Project, scope: ExportScope) {
   const inScope = (sc: { start: number; end: number }) =>
     !scope.sections.length || scope.sections.some(s => sc.start >= s.start - 1e-9 && sc.end <= s.end + 1e-9)
   const sections = [...proj.sections].filter(inScope).sort((a, b) => a.start - b.start || a.depth - b.depth)
-  const secHeader = ['Level', 'Section', 'Start', 'End', 'Length', 'Description', ...fields.map(f => f.name), ...processors.map(p => p.name)]
+  const secHeader = ['Level', 'Section', 'Start', 'End', 'Length', 'Description', ...columns.map(f => fieldDisplayName(proj, f)), ...processors.map(p => p.name)]
   const secRows = sections.map(sc => {
-    const atts = attachmentsFor(proj, { kind: 'section', entity: sc })
+    const owner: Owner = { kind: 'section', entity: sc }
     const results = new Map(shownProcessorResults(proj, sc).map(r => [r.proc.id, r]))
     return [
       levelOf(proj, sc)?.name ?? `Level ${sc.depth + 1}`,
@@ -248,10 +263,7 @@ export function exportCSV(proj: Project, scope: ExportScope) {
       sc.end,
       sc.end - sc.start,
       sc.description ?? '',
-      ...fields.map(f => {
-        const a = atts.find(x => x.field.id === f.id)
-        return a ? formatValue(proj, f, effectiveValue(f, a.att, sc.fieldValues?.[f.id])) : ''
-      }),
+      ...columns.map(f => cell(owner, f)),
       ...processors.map(p => { const r = results.get(p.id); return r && !r.error ? r.text : '' }),
     ].map(esc).join(',')
   })

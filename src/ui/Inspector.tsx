@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react'
 import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Copy, FileText, Trash2, X } from 'lucide-react'
-import { attachmentsFor, effectiveValue, fieldLabel, groupAttachments, levelOf, type Owner } from '../model/fields'
+import { attachmentsFor, effectiveValue, fieldLabel, groupAttachments, groupText, kindGlyph, levelOf, type Owner } from '../model/fields'
 import { iconByName } from '../model/icons'
 import { typeOf } from '../model/layout'
 import { processorResults, type ProcessorResult } from '../model/processors'
@@ -73,21 +73,45 @@ function ProposalSlot({ col, id }: { col: 'items' | 'sections'; id: string }) {
 }
 
 /**
- * Field rows grouped under their sidebar folder: root fields plain, folder
- * fields under a small coloured heading, in sidebar order.
+ * Field rows grouped under their sidebar folder (root fields plain, folder
+ * fields under a small coloured heading, in sidebar order), with composites
+ * boxed: the group's name and its template preview as a header, the children
+ * inside, nesting as deep as the schema goes.
  */
-function FieldGroups<T extends { field: FieldDef }>({ list, render }: { list: T[]; render: (entry: T) => React.ReactNode }) {
+function FieldGroups<T extends { field: FieldDef; group: FieldDef | null }>({ list, owner, render }: {
+  list: T[]
+  owner: Owner
+  render: (entry: T) => React.ReactNode
+}) {
   const proj = useActiveProject()
-  const groups = groupAttachments(proj, list)
+  const groups = groupAttachments(proj, list.filter(e => !e.group))
+  const byGroup = new Map<string, T[]>()
+  for (const e of list) if (e.group) (byGroup.get(e.group.id) ?? byGroup.set(e.group.id, []).get(e.group.id)!).push(e)
+  const renderEntry = (e: T): React.ReactNode => {
+    if (e.field.kind !== 'group') return render(e)
+    const kids = byGroup.get(e.field.id) ?? []
+    const preview = groupText(proj, owner, e.field)
+    return (
+      <div key={e.field.id} className="field-box" title={e.field.help || undefined}>
+        <div className="field-box-h">
+          <span className="kind-glyph">{kindGlyph('group')}</span>
+          <span className="field-box-name">{e.field.name}</span>
+          {preview && <span className="field-box-preview">{preview}</span>}
+        </div>
+        {kids.map(renderEntry)}
+        {kids.length === 0 && <div className="sb-hint">no fields inside yet</div>}
+      </div>
+    )
+  }
   return (
     <>
       {groups.map(g => {
-        if (!g.folder) return <React.Fragment key="root">{g.entries.map(render)}</React.Fragment>
+        if (!g.folder) return <React.Fragment key="root">{g.entries.map(renderEntry)}</React.Fragment>
         const Icon = iconByName(g.folder.icon)
         return (
           <div key={g.folder.id} className="field-group" style={{ '--c': g.folder.color } as React.CSSProperties}>
             <div className="field-group-h"><Icon width={12} height={12} /> {g.folder.name}</div>
-            {g.entries.map(render)}
+            {g.entries.map(renderEntry)}
           </div>
         )
       })}
@@ -190,7 +214,7 @@ function ReadItemPanel({ id }: { id: string }) {
   const owner: Owner = { kind: 'item', entity: item }
   const fields = attachmentsFor(proj, owner)
     .map(a => ({ ...a, value: effectiveValue(a.field, a.att, item.fieldValues[a.field.id]) }))
-    .filter(a => a.value !== null)
+    .filter(a => a.value !== null || a.field.kind === 'group')
   return (
     <>
       <Head title={type?.name ?? 'Item'} />
@@ -217,7 +241,7 @@ function ReadItemPanel({ id }: { id: string }) {
             <a className="link-btn" href={item.link} target="_blank" rel="noreferrer noopener">{item.link} ↗</a>
           </ReadField>
         )}
-        <FieldGroups list={fields} render={f => (
+        <FieldGroups list={fields} owner={owner} render={f => (
           <ReadField key={f.field.id} label={fieldLabel(f.field)} title={f.field.showName ? undefined : f.field.name}><ReadFieldValue field={f.field} value={f.value} /></ReadField>
         )} />
         {item.createdBy && (
@@ -275,7 +299,7 @@ function ReadSectionPanel({ section }: { section: Section }) {
   const owner: Owner = { kind: 'section', entity: section }
   const fields = attachmentsFor(proj, owner)
     .map(a => ({ ...a, value: effectiveValue(a.field, a.att, section.fieldValues?.[a.field.id]) }))
-    .filter(a => a.value !== null)
+    .filter(a => a.value !== null || a.field.kind === 'group')
   return (
     <>
       <Head title={levelOf(proj, section)?.name ?? 'Section'}>
@@ -288,7 +312,7 @@ function ReadSectionPanel({ section }: { section: Section }) {
           <ReadField label="Ends">{fmt(section.end)}</ReadField>
           <ReadField label="Length">{fmt(section.end - section.start)}</ReadField>
         </div>
-        <FieldGroups list={fields} render={f => (
+        <FieldGroups list={fields} owner={owner} render={f => (
           <ReadField key={f.field.id} label={fieldLabel(f.field)} title={f.field.showName ? undefined : f.field.name}><ReadFieldValue field={f.field} value={f.value} /></ReadField>
         )} />
         <ProcessorPanel section={section} />
@@ -414,7 +438,7 @@ function ItemPanel({ id }: { id: string }) {
             <Creator who={item.createdBy} />
           </div>
         )}
-        <FieldGroups list={attachmentsFor(proj, { kind: 'item', entity: item })} render={({ att, field }) => (
+        <FieldGroups list={attachmentsFor(proj, { kind: 'item', entity: item })} owner={{ kind: 'item', entity: item }} render={({ att, field }) => (
           <FieldRow
             key={`${item.id}:${field.id}`} field={field} att={att} ownerId={item.id}
             raw={item.fieldValues[field.id]}
@@ -581,7 +605,7 @@ function SectionPanel({ section }: { section: Section }) {
           />
           <div className="sb-hint">nesting is geometric — a section inside another sits one level deeper</div>
         </div>
-        <FieldGroups list={attachmentsFor(proj, { kind: 'section', entity: section })} render={({ att, field }) => (
+        <FieldGroups list={attachmentsFor(proj, { kind: 'section', entity: section })} owner={{ kind: 'section', entity: section }} render={({ att, field }) => (
           <FieldRow
             key={`${section.id}:${field.id}`} field={field} att={att} ownerId={section.id}
             raw={section.fieldValues?.[field.id]}

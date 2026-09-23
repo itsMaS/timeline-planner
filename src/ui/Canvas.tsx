@@ -3,10 +3,10 @@ import {
   ClipboardCopy, ClipboardPaste, CopyPlus, Maximize2, Plus, RectangleHorizontal,
   Scissors, Settings2, Trash2,
 } from 'lucide-react'
-import { allowsTarget, attachmentsFor, backlinks, effectiveValue, formatValue, ownerOf } from '../model/fields'
+import { allowsTarget, attachmentsFor, backlinks, displayEntries, effectiveValue, ownerOf } from '../model/fields'
 import { iconByName } from '../model/icons'
 import {
-  PlacedItem, ROW_H, contentExtent, fitCamera, isFieldShown, itemMatchesFilters, splitLabel, toggleBadges,
+  PlacedItem, ROW_H, contentExtent, fitCamera, itemMatchesFilters, splitLabel, toggleBadges,
   layoutTimeline, minZoomFor, refreshSectionDepths, rowY, spineYFor, typeOf,
 } from '../model/layout'
 import { bandBadge } from '../model/processors'
@@ -1347,10 +1347,10 @@ export function CanvasView() {
   const hoverItem = hover ? view.items.find(i => i.id === hover.id) : null
   const hoverType = hoverItem ? typeOf(view, hoverItem) : null
   const hoverFields = hoverItem
-    ? attachmentsFor(view, { kind: 'item', entity: hoverItem })
-      .filter(a => a.field.showInTooltip && isFieldShown(view, a.field))
-      .map(a => ({ field: a.field, text: formatValue(view, a.field, effectiveValue(a.field, a.att, hoverItem.fieldValues[a.field.id])) }))
-      .filter(a => a.text)
+    ? displayEntries(view, { kind: 'item', entity: hoverItem }, {
+      skip: f => (view.filters.offFields ?? []).includes(f.id)
+        || (f.kind === 'group' ? !!f.template?.trim() && !f.showInTooltip : !f.showInTooltip),
+    })
     : []
 
   // Processor results flagged "show on band", per section. Recomputed only
@@ -1812,7 +1812,7 @@ export function CanvasView() {
           )}
           {hoverFields.length > 0 && (
             <div className="tt-fields">
-              {hoverFields.map(f => <div key={f.field.id}>{f.field.showName && <span className="muted">{f.field.name}</span>} {f.text}</div>)}
+              {hoverFields.map(f => <div key={f.field.id}>{f.label && <span className="muted">{f.label}</span>} {f.text}</div>)}
             </div>
           )}
           {hoverItem.images[0] && <img src={hoverItem.images[0]} alt="" className="tt-img" />}

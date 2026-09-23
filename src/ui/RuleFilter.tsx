@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Filter, Plus, X } from 'lucide-react'
 import { compile, namesIn, quoteName, quoteValue, toText, tryParse, type Ast } from '../model/expr'
-import { kindGlyph } from '../model/fields'
+import { fieldDisplayName, kindGlyph, parentOf } from '../model/fields'
 import { builtinNames } from '../model/scope'
 import { useActiveProject, useStore } from '../model/store'
 import type { FieldDef, Project } from '../model/types'
@@ -87,11 +87,17 @@ function textFrom(r: Rows): string {
 function nameOptions(proj: Project, on: 'item' | 'section' | 'any'): { value: string; label: string; hint?: string; field?: FieldDef }[] {
   const seen = new Set<string>()
   const out: { value: string; label: string; hint?: string; field?: FieldDef }[] = []
+  const counts = new Map<string, number>()
+  for (const f of proj.fields) counts.set(f.name.trim().toLowerCase(), (counts.get(f.name.trim().toLowerCase()) ?? 0) + 1)
   for (const f of proj.fields) {
-    const key = f.name.trim().toLowerCase()
+    if (f.kind === 'group' && !f.template?.trim()) continue
+    const parent = parentOf(proj, f)
+    // A child whose bare name is unique goes by it; otherwise "Group.child".
+    const value = parent && (counts.get(f.name.trim().toLowerCase()) ?? 0) > 1 ? `${parent.name}.${f.name}` : f.name
+    const key = value.trim().toLowerCase()
     if (!key || seen.has(key)) continue
     seen.add(key)
-    out.push({ value: f.name, label: f.name, hint: kindGlyph(f.kind), field: f })
+    out.push({ value, label: fieldDisplayName(proj, f), hint: kindGlyph(f.kind), field: f })
   }
   const builtins = on === 'any' ? [...new Set([...builtinNames('item'), ...builtinNames('section')])] : builtinNames(on)
   for (const b of builtins) if (!seen.has(b)) out.push({ value: b, label: b, hint: 'built-in' })

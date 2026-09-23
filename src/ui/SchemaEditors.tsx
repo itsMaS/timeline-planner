@@ -1,8 +1,8 @@
 import React, { useMemo, useState } from 'react'
-import { Settings2, Trash2, X } from 'lucide-react'
+import { ChevronDown, ChevronUp, Settings2, Trash2, X } from 'lucide-react'
 import {
-  attachedToNames, changeFieldKind, conversionLoss, FIELD_KINDS, fieldUsage, isNumberKind, kindGlyph, kindLabel,
-  newFieldDef, removeField, removeProcessor, targetOptions,
+  attachedToNames, changeFieldKind, childrenOf, conversionLoss, descendantsOf, FIELD_KINDS, fieldDisplayName, fieldUsage, isDerived,
+  isNumberKind, kindGlyph, kindLabel, moveIntoGroup, newFieldDef, parentOf, removeField, removeProcessor, rootFields, targetOptions,
 } from '../model/fields'
 import { folderPath, folderTree } from '../model/folders'
 import { iconByName } from '../model/icons'
@@ -122,7 +122,9 @@ export function FieldAttachList(props: { list: FieldAttachment[]; onChange: (lis
   const mutate = useStore(s => s.mutate)
   const setUI = useStore(s => s.setUI)
   const { list } = props
-  const available = proj.fields.filter(f => !list.some(a => a.fieldId === f.id))
+  // Children of a composite are attached through their group, never on their own.
+  const available = rootFields(proj).filter(f => !list.some(a => a.fieldId === f.id))
+  const [openGroups, setOpenGroups] = useState<Set<Id>>(() => new Set())
   const setAtt = (fieldId: Id, recipe: (a: FieldAttachment) => void) =>
     props.onChange(list.map(a => { if (a.fieldId !== fieldId) return a; const c = { ...a }; recipe(c); return c }))
   return (
@@ -130,21 +132,51 @@ export function FieldAttachList(props: { list: FieldAttachment[]; onChange: (lis
       {list.map(att => {
         const f = proj.fields.find(x => x.id === att.fieldId)
         if (!f) return null
+        const kids = f.kind === 'group' ? descendantsOf(proj, f).filter(c => c.kind !== 'group' && !isDerived(c)) : []
+        const open = openGroups.has(f.id)
+        const overrides = Object.values(att.childDefaults ?? {}).filter(v => v !== null && v !== undefined).length
         return (
-          <div key={att.fieldId} className="attach-row">
-            <span className="kind-glyph" title={kindLabel(f.kind)}>{kindGlyph(f.kind)}</span>
-            <span className="attach-name" title={f.name}>{f.name}</span>
-            <div className="attach-default">
-              <FieldValueInput
-                field={f} att={att} value={att.defaultValue} asDefault compact
-                onChange={v => setAtt(att.fieldId, a => { a.defaultValue = v })}
-              />
+          <React.Fragment key={att.fieldId}>
+            <div className="attach-row">
+              <span className="kind-glyph" title={kindLabel(f.kind)}>{kindGlyph(f.kind)}</span>
+              <span className="attach-name" title={f.name}>{f.name}</span>
+              <div className="attach-default">
+                {f.kind === 'group' ? (
+                  <button
+                    className="ghost-btn add" disabled={!kids.length}
+                    title={kids.length ? 'Defaults for the fields inside, for this type / level' : 'No fields inside yet'}
+                    onClick={() => setOpenGroups(s => { const n = new Set(s); if (n.has(f.id)) n.delete(f.id); else n.add(f.id); return n })}
+                  >{open ? 'hide' : 'child'} defaults{overrides ? ` (${overrides})` : ''}</button>
+                ) : (
+                  <FieldValueInput
+                    field={f} att={att} value={att.defaultValue} asDefault compact
+                    onChange={v => setAtt(att.fieldId, a => { a.defaultValue = v })}
+                  />
+                )}
+              </div>
+              <button className="ghost-btn" title="Field settings" onClick={() => setUI({ editFieldId: f.id })}><Settings2 width={13} height={13} /></button>
+              <button className="ghost-btn danger" title="Detach (values stay on the field)" onClick={() => props.onChange(list.filter(a => a.fieldId !== att.fieldId))}>
+                <X width={13} height={13} />
+              </button>
             </div>
-            <button className="ghost-btn" title="Field settings" onClick={() => setUI({ editFieldId: f.id })}><Settings2 width={13} height={13} /></button>
-            <button className="ghost-btn danger" title="Detach (values stay on the field)" onClick={() => props.onChange(list.filter(a => a.fieldId !== att.fieldId))}>
-              <X width={13} height={13} />
-            </button>
-          </div>
+            {f.kind === 'group' && open && kids.map(c => (
+              <div key={c.id} className="attach-row child">
+                <span className="kind-glyph" title={kindLabel(c.kind)}>{kindGlyph(c.kind)}</span>
+                <span className="attach-name" title={fieldDisplayName(proj, c)}>{c.name}</span>
+                <div className="attach-default">
+                  <FieldValueInput
+                    field={c} att={{ fieldId: c.id, defaultValue: att.childDefaults?.[c.id] ?? null }} value={att.childDefaults?.[c.id] ?? null} asDefault compact
+                    onChange={v => setAtt(att.fieldId, a => {
+                      const next = { ...(a.childDefaults ?? {}) }
+                      if (v === null) delete next[c.id]; else next[c.id] = v
+                      a.childDefaults = Object.keys(next).length ? next : undefined
+                    })}
+                  />
+                </div>
+                <button className="ghost-btn" title="Field settings" onClick={() => setUI({ editFieldId: c.id })}><Settings2 width={13} height={13} /></button>
+              </div>
+            ))}
+          </React.Fragment>
         )
       })}
       {list.length === 0 && <div className="sb-hint">no fields yet</div>}
@@ -218,7 +250,9 @@ export function ProcessorAttachList(props: { list: ProcessorAttachment[]; onChan
 export function describeProcessor(fields: FieldDef[], pr: ProcessorDef): string {
   const f = fields.find(x => x.id === pr.fieldId)
   const spec = PROCESSOR_OPS.find(o => o.op === pr.op)
-  const base = spec?.needsField === 'none' ? 'count' : `${opLabel(pr.op).toLowerCase()} of ${f?.name ?? '?'}`
+  const parent = f?.parentId ? fields.find(x => x.id === f.parentId) : undefined
+  const fname = f ? (parent ? `${parent.name} · ${f.name}` : f.name) : '?'
+  const base = spec?.needsField === 'none' ? 'count' : `${opLabel(pr.op).toLowerCase()} of ${fname}`
   return pr.where?.trim() ? `${base} where ${pr.where.trim()}` : base
 }
 
@@ -268,6 +302,7 @@ export function FieldEditor() {
     })
   }
 
+  const parent = parentOf(proj, field)
   const attachedTo = [
     ...proj.types.map(t => ({ id: t.id, name: t.name, kind: 'type' as const, on: t.fields.some(a => a.fieldId === field.id), icon: t.icon, color: t.color })),
     ...proj.typeFolders.map(f => ({ id: f.id, name: folderPath(proj, f.id), kind: 'folder' as const, on: (f.fields ?? []).some(a => a.fieldId === field.id), icon: f.icon, color: f.color })),
@@ -289,9 +324,11 @@ export function FieldEditor() {
       ...usage.items.map(it => `${it.title || 'Untitled'} (item)`),
       ...usage.sections.map(sc => `${sc.name || 'Untitled'} (section)`),
     ]
+    const kids = field.kind === 'group' ? descendantsOf(proj, field) : []
     const run = () => { mutate(p => removeField(p, field.id)); close(); showToast(`Field “${field.name}” deleted.`, true) }
-    if (!usage.types.length && !usage.folders.length && !usage.levels.length && !affected.length && !usage.processors.length) { run(); return }
+    if (!usage.types.length && !usage.folders.length && !usage.levels.length && !affected.length && !usage.processors.length && !kids.length) { run(); return }
     const parts = [
+      kids.length ? `deletes the ${kids.length} field${kids.length === 1 ? '' : 's'} inside it (${kids.map(k => k.name).join(', ')})` : '',
       usage.types.length ? `${usage.types.length} type${usage.types.length === 1 ? '' : 's'}` : '',
       usage.folders.length ? `${usage.folders.length} folder${usage.folders.length === 1 ? '' : 's'}` : '',
       usage.levels.length ? `${usage.levels.length} level${usage.levels.length === 1 ? '' : 's'}` : '',
@@ -322,6 +359,12 @@ export function FieldEditor() {
         <button className="danger-btn" onClick={del}><Trash2 width={14} height={14} /> Delete field</button>
       )}
     >
+      {parent && (
+        <div className="sb-hint">
+          part of the composite <button className="link-btn" onClick={() => setUI({ editFieldId: parent.id })}>{fieldDisplayName(proj, parent)}</button>
+          {' '}· attached wherever it is · <button className="link-btn" onClick={() => mutate(p => moveIntoGroup(p, field.id, null))}>move out to the top level</button>
+        </div>
+      )}
       <div className="field">
         <label>Kind</label>
         <div className="seg">
@@ -330,6 +373,8 @@ export function FieldEditor() {
           ))}
         </div>
       </div>
+
+      {field.kind === 'group' && <GroupEditor field={field} />}
 
       {field.kind === 'text' && (
         <div className="row gap">
@@ -392,11 +437,13 @@ export function FieldEditor() {
         </>
       )}
 
-      <div className="field">
-        <label>Default value <span className="muted">(types and levels can override it)</span></label>
-        <FieldValueInput field={field} value={field.defaultValue} asDefault onChange={v => edit(f => { f.defaultValue = v })} />
-      </div>
-      {proj.fieldFolders.length > 0 && (
+      {field.kind !== 'group' && (
+        <div className="field">
+          <label>Default value <span className="muted">(types and levels can override it)</span></label>
+          <FieldValueInput field={field} value={field.defaultValue} asDefault onChange={v => edit(f => { f.defaultValue = v })} />
+        </div>
+      )}
+      {proj.fieldFolders.length > 0 && !parent && (
         <div className="field">
           <label>Folder <span className="muted">(groups it in the sidebar, inspector and exports)</span></label>
           <Select
@@ -411,10 +458,12 @@ export function FieldEditor() {
         <label>Help text</label>
         <input className="input" value={field.help} placeholder="shown under the input" onChange={e => edit(f => { f.help = e.target.value })} />
       </div>
-      <label className="check-row">
-        <input type="checkbox" checked={field.required} onChange={e => edit(f => { f.required = e.target.checked })} />
-        Required — warn when left empty
-      </label>
+      {field.kind !== 'group' && (
+        <label className="check-row">
+          <input type="checkbox" checked={field.required} onChange={e => edit(f => { f.required = e.target.checked })} />
+          Required — warn when left empty
+        </label>
+      )}
       <label className="check-row">
         <input type="checkbox" checked={field.showInTooltip} onChange={e => edit(f => { f.showInTooltip = e.target.checked })} />
         Show in the hover tooltip on the timeline
@@ -433,6 +482,12 @@ export function FieldEditor() {
         Off when the value speaks for itself (e.g. “12 {field.unit || 'coins'}”) — the name then only identifies the field here and in the sidebar.
       </div>
 
+      {parent ? (
+        <div className="field">
+          <label>Attached to <span className="muted">(through “{parent.name}” · {usage.items.length + usage.sections.length} stored value{usage.items.length + usage.sections.length === 1 ? '' : 's'})</span></label>
+          <div className="sb-hint">{attachedToNames(proj, field.id).join(', ') || 'nothing yet'}</div>
+        </div>
+      ) : (
       <div className="field">
         <label>Attached to <span className="muted">({usage.items.length + usage.sections.length} stored value{usage.items.length + usage.sections.length === 1 ? '' : 's'})</span></label>
         <div className="target-grid">
@@ -453,7 +508,80 @@ export function FieldEditor() {
           <div className="sb-hint">used by processor{usage.processors.length === 1 ? '' : 's'}: {usage.processors.map(p => p.name).join(', ')}</div>
         )}
       </div>
+      )}
     </Modal>
+  )
+}
+
+/**
+ * The composite's own section of the field editor: the fields inside (add an
+ * existing top-level field, create a new one, reorder, move out) and the
+ * display template.
+ */
+function GroupEditor({ field }: { field: FieldDef }) {
+  const proj = useActiveProject()
+  const mutate = useStore(s => s.mutate)
+  const setUI = useStore(s => s.setUI)
+  const kids = childrenOf(proj, field)
+  const edit = (recipe: (f: FieldDef) => void) => mutate(p => { const f = p.fields.find(x => x.id === field.id); if (f) recipe(f) })
+  // Top-level fields that could move in: not this group, not one of its ancestors.
+  const ancestors = new Set<Id>()
+  for (let cur = parentOf(proj, field); cur; cur = parentOf(proj, cur)) ancestors.add(cur.id)
+  const available = rootFields(proj).filter(f => f.id !== field.id && !ancestors.has(f.id))
+  const move = (id: Id, dir: -1 | 1) => edit(f => {
+    const list = f.children ?? []
+    const i = list.indexOf(id)
+    const j = i + dir
+    if (i < 0 || j < 0 || j >= list.length) return
+    ;[list[i], list[j]] = [list[j], list[i]]
+  })
+  const [tpl, setTpl] = useState(field.template ?? '')
+  React.useEffect(() => { setTpl(field.template ?? '') }, [field.template])
+  const sample = kids.map(k => `{${k.name}}`).join(' / ')
+  return (
+    <>
+      <div className="field">
+        <label>Fields inside <span className="muted">(attaching the composite attaches them all · values stay per field)</span></label>
+        <div className="attach-list">
+          {kids.map((c, i) => (
+            <div key={c.id} className="attach-row">
+              <span className="kind-glyph" title={kindLabel(c.kind)}>{kindGlyph(c.kind)}</span>
+              <span className="attach-name" title={c.name}>{c.name}</span>
+              <span className="attach-sub muted">{isDerived(c) ? `= ${c.formula}` : kindLabel(c.kind).toLowerCase()}</span>
+              <button className="ghost-btn" title="Move up" disabled={i === 0} onClick={() => move(c.id, -1)}><ChevronUp width={13} height={13} /></button>
+              <button className="ghost-btn" title="Move down" disabled={i === kids.length - 1} onClick={() => move(c.id, 1)}><ChevronDown width={13} height={13} /></button>
+              <button className="ghost-btn" title="Field settings" onClick={() => setUI({ editFieldId: c.id })}><Settings2 width={13} height={13} /></button>
+              <button className="ghost-btn danger" title="Move out (becomes a top-level field again)" onClick={() => mutate(p => moveIntoGroup(p, c.id, null))}>
+                <X width={13} height={13} />
+              </button>
+            </div>
+          ))}
+          {kids.length === 0 && <div className="sb-hint">nothing inside yet — add fields below</div>}
+          <AddCombo
+            placeholder={available.length ? 'Add field — search or type a new name…' : 'Type a name to create a field inside…'}
+            options={available}
+            render={f => (<><span className="kind-glyph">{kindGlyph(f.kind)}</span><span className="grow">{f.name}</span><span className="muted">{kindLabel(f.kind).toLowerCase()}</span></>)}
+            onPick={f => mutate(p => moveIntoGroup(p, f.id, field.id))}
+            createLabel="Create field"
+            onCreate={name => {
+              const id = uid()
+              mutate(p => { p.fields.push(newFieldDef(id, name, 'int')); moveIntoGroup(p, id, field.id) })
+              setUI({ editFieldId: id })
+            }}
+          />
+        </div>
+      </div>
+      <div className="field">
+        <label>Shown as <span className="muted">(template · child names in braces · empty lists the children one by one)</span></label>
+        <input
+          className="input" value={tpl} placeholder={sample ? `e.g. ${sample}` : 'e.g. {done}/{total}'} spellCheck={false}
+          onChange={e => setTpl(e.target.value)}
+          onBlur={() => { if (tpl !== (field.template ?? '')) edit(f => { f.template = tpl }) }}
+          onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+        />
+        {kids.length > 0 && <div className="sb-hint">available: {kids.map(k => `{${k.name}}`).join(' ')}</div>}
+      </div>
+    </>
   )
 }
 
@@ -522,7 +650,7 @@ export function ProcessorEditor() {
   const spec = PROCESSOR_OPS.find(o => o.op === proc.op)!
   // Sum also takes toggles (it counts the ones switched on).
   const numeric = (k: FieldKind, op: ProcessorOp = proc.op) => isNumberKind(k) || (op === 'sum' && k === 'toggle')
-  const fieldChoices = proj.fields.filter(f => (spec.needsField === 'number' ? numeric(f.kind) : true))
+  const fieldChoices = proj.fields.filter(f => f.kind !== 'group' && (spec.needsField === 'number' ? numeric(f.kind) : true))
   const levels = processorUsage(proj, proc.id)
 
   const del = () => {
@@ -575,7 +703,7 @@ export function ProcessorEditor() {
             value={proc.fieldId ?? ''}
             options={[
               { value: '', label: '— pick a field —' },
-              ...fieldChoices.map(f => ({ value: f.id, label: f.name, hint: kindLabel(f.kind).toLowerCase() })),
+              ...fieldChoices.map(f => ({ value: f.id, label: fieldDisplayName(proj, f), hint: kindLabel(f.kind).toLowerCase() })),
             ]}
             searchPlaceholder="Search fields…"
             onChange={v => edit(f => { f.fieldId = v || null })}

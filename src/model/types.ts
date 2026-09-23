@@ -1,6 +1,7 @@
 export type Id = string
 
-export type FieldKind = 'text' | 'int' | 'float' | 'toggle' | 'select' | 'ref'
+/** `group` is a composite: it holds other fields (`children`) and has no value of its own. */
+export type FieldKind = 'text' | 'int' | 'float' | 'toggle' | 'select' | 'ref' | 'group'
 
 /** Stored value: text → string, int/float → number, toggle → boolean, select → chosen options, ref → target ids. */
 export type FieldValue = string | number | boolean | Id[]
@@ -50,6 +51,25 @@ export interface FieldDef {
    * name) so the state reads at a glance. Off by default.
    */
   badge?: boolean
+  /**
+   * group: the fields inside, in display order. Children are ordinary
+   * project fields owned by exactly one group (`parentId`); attaching the
+   * group attaches them all, and their values stay flat in `fieldValues`.
+   */
+  children?: Id[]
+  /**
+   * group: how the composite reads as one value, e.g. `{done}/{total}`
+   * (child names in braces). Empty = the children are shown one by one.
+   */
+  template?: string
+  /** The group this field belongs to; null/undefined = a top-level field. */
+  parentId?: Id | null
+  /**
+   * Derived field: an expression (src/model/expr.ts) computed on read from
+   * the entity's other fields, e.g. `total - done`; the result is coerced to
+   * the field's kind. Empty = a normal, stored field.
+   */
+  formula?: string
 }
 
 /** A field attached to a type or a hierarchy level. */
@@ -57,6 +77,8 @@ export interface FieldAttachment {
   fieldId: Id
   /** Overrides the field's own default for this type/level; null = inherit. */
   defaultValue: FieldValue | null
+  /** group attachments: per-child default overrides keyed by child field id. */
+  childDefaults?: Record<Id, FieldValue | null>
 }
 
 export type ProcessorOp = 'sum' | 'count' | 'avg' | 'min' | 'max' | 'distinct'

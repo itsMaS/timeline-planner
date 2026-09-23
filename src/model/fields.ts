@@ -17,11 +17,14 @@ export const FIELD_KINDS: { kind: FieldKind; label: string; glyph: string }[] = 
   { kind: 'toggle', label: 'Toggle', glyph: '✓' },
   { kind: 'select', label: 'Dropdown', glyph: '▾' },
   { kind: 'ref', label: 'Reference', glyph: '→' },
+  { kind: 'group', label: 'Composite', glyph: '{}' },
 ]
 
 export const kindLabel = (k: FieldKind) => FIELD_KINDS.find(x => x.kind === k)?.label ?? k
 export const kindGlyph = (k: FieldKind) => FIELD_KINDS.find(x => x.kind === k)?.glyph ?? '?'
 export const isNumberKind = (k: FieldKind) => k === 'int' || k === 'float'
+/** A derived field computes its value from a formula instead of storing one. */
+export const isDerived = (f: FieldDef) => !!f.formula?.trim() && f.kind !== 'group'
 
 export function newFieldDef(id: Id, name: string, kind: FieldKind = 'text'): FieldDef {
   return {
@@ -29,11 +32,11 @@ export function newFieldDef(id: Id, name: string, kind: FieldKind = 'text'): Fie
     maxLength: null, min: null, max: null, decimals: null, unit: '',
     options: [], selectMultiple: false,
     refTargets: [], refMultiple: false, refShowLinks: false,
-    folderId: null, badge: false,
+    folderId: null, badge: false, children: [], template: '', parentId: null, formula: '',
   }
 }
 
-/** Types whose items carry `fieldId` (own attachment or inherited from a folder). */
+/** Types whose items carry `fieldId` (own attachment or inherited from a folder, or through its group). */
 export function typesWithField(p: Project, fieldId: Id): ItemType[] {
   return p.types.filter(t => typeAttachments(p, t).some(a => a.field.id === fieldId))
 }
@@ -44,12 +47,89 @@ export function normalizeFieldDef(raw: Partial<FieldDef> & { id: Id }): FieldDef
   const f: FieldDef = { ...base, ...raw, kind: base.kind }
   f.refTargets = Array.isArray(f.refTargets) ? f.refTargets : []
   f.options = Array.isArray(f.options) ? f.options.filter(o => typeof o === 'string') : []
+  f.children = Array.isArray(f.children) ? f.children.filter(c => typeof c === 'string') : []
+  f.template = typeof f.template === 'string' ? f.template : ''
+  f.formula = typeof f.formula === 'string' ? f.formula : ''
+  f.parentId ??= null
   f.defaultValue = coerceValue(f, f.defaultValue)
   return f
 }
 
 /** Name to show next to a value; '' when the field hides it. */
 export const fieldLabel = (f: FieldDef) => (f.showName ? f.name : '')
+
+// ---------------------------------------------------------------- composites
+
+/** The group a field sits in, if any. */
+export const parentOf = (p: Project, f: FieldDef): FieldDef | undefined => (f.parentId ? p.fields.find(x => x.id === f.parentId && x.kind === 'group') : undefined)
+
+/** Direct children of a group, in its declared order (only fields that still exist and point back). */
+export function childrenOf(p: Project, group: FieldDef): FieldDef[] {
+  if (group.kind !== 'group') return []
+  return (group.children ?? []).map(id => p.fields.find(f => f.id === id)).filter((f): f is FieldDef => !!f && f.parentId === group.id)
+}
+
+/** Every field below a group, depth-first. */
+export function descendantsOf(p: Project, group: FieldDef): FieldDef[] {
+  const out: FieldDef[] = []
+  const walk = (g: FieldDef, depth: number) => {
+    if (depth > 16) return
+    for (const c of childrenOf(p, g)) { out.push(c); if (c.kind === 'group') walk(c, depth + 1) }
+  }
+  walk(group, 0)
+  return out
+}
+
+/** The top-level field a child ultimately belongs to (itself when top-level). */
+export function rootOf(p: Project, f: FieldDef): FieldDef {
+  let cur = f
+  const seen = new Set<Id>()
+  while (cur.parentId && !seen.has(cur.id)) {
+    seen.add(cur.id)
+    const par = parentOf(p, cur)
+    if (!par) break
+    cur = par
+  }
+  return cur
+}
+
+/** "Scope · done" for a child field, the plain name otherwise. */
+export function fieldDisplayName(p: Project, f: FieldDef): string {
+  const chain: string[] = [f.name]
+  let cur = f
+  const seen = new Set<Id>()
+  while (cur.parentId && !seen.has(cur.id)) {
+    seen.add(cur.id)
+    const par = parentOf(p, cur)
+    if (!par) break
+    chain.unshift(par.name)
+    cur = par
+  }
+  return chain.join(' · ')
+}
+
+/** Top-level fields only (children are reached through their group). */
+export const rootFields = (p: Project): FieldDef[] => p.fields.filter(f => !parentOf(p, f))
+
+/**
+ * Attachments with every group expanded in place: the group entry, then one
+ * entry per child (recursively) whose attachment carries the child default
+ * from the group attachment's `childDefaults`. `group` names the child's
+ * parent so display code can box children under it.
+ */
+export function expandAttachments<T extends { att: FieldAttachment; field: FieldDef }>(p: Project, list: T[]): (T & { group: FieldDef | null })[] {
+  const out: (T & { group: FieldDef | null })[] = []
+  const push = (entry: T, group: FieldDef | null, depth: number) => {
+    out.push({ ...entry, group })
+    if (entry.field.kind !== 'group' || depth > 16) return
+    for (const child of childrenOf(p, entry.field)) {
+      const childAtt: FieldAttachment = { fieldId: child.id, defaultValue: entry.att.childDefaults?.[child.id] ?? null }
+      push({ ...entry, att: childAtt, field: child }, entry.field, depth + 1)
+    }
+  }
+  for (const e of list) push(e, null, 0)
+  return out
+}
 
 export const fieldById = (p: Project, id: Id | null | undefined) => (id ? p.fields.find(f => f.id === id) : undefined)
 export const processorById = (p: Project, id: Id | null | undefined) => (id ? p.processors.find(f => f.id === id) : undefined)
@@ -80,14 +160,14 @@ export interface TypeAttachment {
  * type or sub-folder can override an inherited default) but the field keeps
  * the position where it first appeared.
  */
-export function typeAttachments(p: Project, type: ItemType | undefined): TypeAttachment[] {
+export function typeAttachments(p: Project, type: ItemType | undefined): (TypeAttachment & { group: FieldDef | null })[] {
   if (!type) return []
   const out: TypeAttachment[] = []
   const index = new Map<Id, number>()
   const add = (list: FieldAttachment[] | undefined, from: TypeFolder | null) => {
     for (const att of list ?? []) {
       const field = fieldById(p, att.fieldId)
-      if (!field) continue
+      if (!field || parentOf(p, field)) continue
       const i = index.get(att.fieldId)
       if (i === undefined) { index.set(att.fieldId, out.length); out.push({ att, field, from }) }
       else out[i] = { att, field, from }
@@ -95,18 +175,48 @@ export function typeAttachments(p: Project, type: ItemType | undefined): TypeAtt
   }
   for (const f of folderChain(p, type.folderId ?? null)) add(f.fields, f)
   add(type.fields, null)
-  return out
+  return expandAttachments(p, out)
 }
 
-/** Fields attached to an item's type (including its folders) or a section's level, with their definitions. */
-export function attachmentsFor(p: Project, owner: Owner): { att: FieldAttachment; field: FieldDef }[] {
-  if (owner.kind === 'item') return typeAttachments(p, p.types.find(t => t.id === owner.entity.typeId))
+/** Fields attached to a section's level, with their definitions (groups expanded). */
+export function levelAttachments(p: Project, level: HierarchyLevel | undefined): { att: FieldAttachment; field: FieldDef; group: FieldDef | null }[] {
   const out: { att: FieldAttachment; field: FieldDef }[] = []
-  for (const att of levelOf(p, owner.entity)?.fields ?? []) {
+  for (const att of level?.fields ?? []) {
     const field = fieldById(p, att.fieldId)
-    if (field) out.push({ att, field })
+    if (field && !parentOf(p, field)) out.push({ att, field })
   }
-  return out
+  return expandAttachments(p, out)
+}
+
+/**
+ * Fields attached to an item's type (including its folders) or a section's
+ * level, with their definitions. Groups come expanded: the group entry is
+ * followed by its children (`group` = the parent), so a plain walk sees every
+ * field that can hold a value.
+ */
+export function attachmentsFor(p: Project, owner: Owner): { att: FieldAttachment; field: FieldDef; group: FieldDef | null }[] {
+  if (owner.kind === 'item') return typeAttachments(p, p.types.find(t => t.id === owner.entity.typeId))
+  return levelAttachments(p, levelOf(p, owner.entity))
+}
+
+/**
+ * A composite's one-line text for an entity: its template with `{child}`
+ * placeholders filled from the children's values, or, without a template,
+ * "done 3 · total 10". Empty when no child has a value.
+ */
+export function groupText(p: Project, owner: Owner, group: FieldDef, read: (field: FieldDef) => FieldValue | null = f => valueOn(p, owner, f)): string {
+  const kids = childrenOf(p, group)
+  const texts = kids.map(c => ({ c, text: c.kind === 'group' ? groupText(p, owner, c, read) : formatValue(p, c, read(c)) }))
+  if (texts.every(x => !x.text.trim())) return ''
+  const tpl = group.template?.trim() ?? ''
+  if (tpl) {
+    return tpl.replace(/\{([^}]+)\}/g, (_, raw: string) => {
+      const key = raw.trim().toLowerCase()
+      const hit = texts.find(x => x.c.name.trim().toLowerCase() === key || x.c.id === raw.trim())
+      return hit ? hit.text : ''
+    })
+  }
+  return texts.filter(x => x.text.trim()).map(x => (x.c.showName ? `${x.c.name} ${x.text}` : x.text)).join(' · ')
 }
 
 /** Project fields in sidebar order: root fields, then each field folder's fields depth-first. */
@@ -119,8 +229,55 @@ export const orderedFields = (p: Project): FieldDef[] => orderedMembers(p, 'fiel
  */
 export function groupAttachments<T extends { field: FieldDef }>(p: Project, list: T[]): { folder: Folder | null; entries: T[] }[] {
   const byId = new Map(list.map(x => [x.field.id, x]))
-  return groupedMembers(p, 'fields', list.map(x => x.field))
+  // Children sit in their root field's folder.
+  const members = list.map(x => ({ id: x.field.id, name: x.field.name, folderId: rootOf(p, x.field).folderId ?? null }))
+  return groupedMembers(p, 'fields', members)
     .map(g => ({ folder: g.folder, entries: g.members.map(f => byId.get(f.id)!) }))
+}
+
+/** One line of display text per field for labels, tooltips and documents. */
+export interface DisplayEntry {
+  field: FieldDef
+  /** The composite this entry belongs to, when it is a child shown on its own. */
+  group: FieldDef | null
+  /** Name to print (empty when the field hides its name). */
+  label: string
+  text: string
+}
+
+/**
+ * What an entity's fields read as, in attachment order: a composite with a
+ * template becomes one entry, one without lists its children individually
+ * (labelled "Group · child"); hidden fields (`skip`) are left out along with
+ * their children.
+ */
+export function displayEntries(
+  p: Project,
+  owner: Owner,
+  opts: { skip?: (field: FieldDef) => boolean; read?: (field: FieldDef, att: FieldAttachment) => FieldValue | null } = {},
+): DisplayEntry[] {
+  const out: DisplayEntry[] = []
+  const read = opts.read ?? ((field, att) => effectiveValue(field, att, owner.entity.fieldValues?.[field.id]))
+  const hiddenGroups = new Set<Id>()
+  for (const e of attachmentsFor(p, owner)) {
+    if (e.group && hiddenGroups.has(e.group.id)) { if (e.field.kind === 'group') hiddenGroups.add(e.field.id); continue }
+    if (opts.skip?.(e.field)) { if (e.field.kind === 'group') hiddenGroups.add(e.field.id); continue }
+    if (e.field.kind === 'group') {
+      if (!e.field.template?.trim()) continue
+      hiddenGroups.add(e.field.id)
+      const text = groupText(p, owner, e.field, f => {
+        const att = attachmentsFor(p, owner).find(a => a.field.id === f.id)?.att ?? null
+        return att ? read(f, att) : null
+      })
+      if (text.trim()) out.push({ field: e.field, group: e.group, label: fieldLabel(e.field), text })
+      continue
+    }
+    const text = formatValue(p, e.field, read(e.field, e.att))
+    if (!text.trim()) continue
+    const label = e.field.showName ? (e.group ? `${e.group.name} · ${e.field.name}` : e.field.name) : ''
+    out.push({ field: e.field, group: e.group, label, text })
+  }
+  return out
 }
 
 /** Default that applies to an attachment: its own override, else the field's. */
@@ -160,6 +317,7 @@ export function coerceValue(field: FieldDef, v: unknown): FieldValue | null {
       if (Array.isArray(v)) { const ids = v.filter(x => typeof x === 'string'); return ids.length ? ids : null }
       return typeof v === 'string' && v ? [v] : null
     }
+    case 'group': return null
   }
 }
 
@@ -195,6 +353,7 @@ export function clampValue(field: FieldDef, v: FieldValue | null): FieldValue | 
       const out = field.refMultiple ? [...new Set(ids)] : ids.slice(0, 1)
       return out.length ? out : null
     }
+    case 'group': return null
   }
 }
 
@@ -205,6 +364,7 @@ export function parseInput(field: FieldDef, text: string): FieldValue | null {
   if (field.kind === 'text') return text
   if (isNumberKind(field.kind)) { const n = Number(t.replace(',', '.')); return Number.isFinite(n) ? n : null }
   if (field.kind === 'toggle') return parseToggle(t)
+  if (field.kind === 'group') return null
   return [t]
 }
 
@@ -241,6 +401,7 @@ export function formatValue(p: Project, field: FieldDef, v: FieldValue | null): 
     case 'toggle': return formatToggle(v === true)
     case 'select': return (Array.isArray(v) ? v : [String(v)]).join(', ')
     case 'ref': return (Array.isArray(v) ? v : [String(v)]).map(id => entityTitle(p, id)).join(', ')
+    case 'group': return ''
   }
 }
 
@@ -253,7 +414,7 @@ export function entityTitle(p: Project, id: Id): string {
 /** Best-effort conversion when a field changes kind; null = value lost. */
 export function convertValue(from: FieldKind, to: FieldKind, v: FieldValue | null): FieldValue | null {
   if (v === null || from === to) return v
-  if (to === 'ref' || from === 'ref') return null
+  if (to === 'ref' || from === 'ref' || to === 'group' || from === 'group') return null
   // Toggle: yes/no words and non-zero numbers read as on; it writes back as Yes/No text or 1/0.
   if (to === 'toggle') return from === 'select' ? null : parseToggle(v)
   if (from === 'toggle') {
@@ -271,26 +432,58 @@ export function convertValue(from: FieldKind, to: FieldKind, v: FieldValue | nul
   return to === 'int' ? Math.round(n) : n
 }
 
-/** Everything a field touches: attachments, explicit values and processors. */
+/** Everything a field touches: attachments (through its root group for children), explicit values and processors. */
 export function fieldUsage(p: Project, fieldId: Id) {
-  const types = p.types.filter(t => t.fields.some(a => a.fieldId === fieldId))
-  const folders = p.typeFolders.filter(f => (f.fields ?? []).some(a => a.fieldId === fieldId))
-  const levels = p.hierarchyLevels.filter(l => l.fields.some(a => a.fieldId === fieldId))
-  const items = p.items.filter(it => it.fieldValues?.[fieldId] !== undefined)
-  const sections = p.sections.filter(sc => sc.fieldValues?.[fieldId] !== undefined)
-  const processors = p.processors.filter(pr => pr.fieldId === fieldId)
+  const field = fieldById(p, fieldId)
+  const rootId = field ? rootOf(p, field).id : fieldId
+  const types = p.types.filter(t => t.fields.some(a => a.fieldId === rootId))
+  const folders = p.typeFolders.filter(f => (f.fields ?? []).some(a => a.fieldId === rootId))
+  const levels = p.hierarchyLevels.filter(l => l.fields.some(a => a.fieldId === rootId))
+  // A group's stored values are its descendants'.
+  const ids = new Set([fieldId, ...(field && field.kind === 'group' ? descendantsOf(p, field).map(f => f.id) : [])])
+  const has = (rec: Record<Id, FieldValue> | undefined) => !!rec && [...ids].some(id => rec[id] !== undefined)
+  const items = p.items.filter(it => has(it.fieldValues))
+  const sections = p.sections.filter(sc => has(sc.fieldValues))
+  const processors = p.processors.filter(pr => pr.fieldId !== null && ids.has(pr.fieldId))
   return { types, folders, levels, items, sections, processors }
 }
 
-/** Detach a field everywhere and drop its values; processors using it lose their field. */
+/** Detach a field everywhere and drop its values (a group takes its children along); processors using it lose their field. */
 export function removeField(p: Project, fieldId: Id) {
-  p.fields = p.fields.filter(f => f.id !== fieldId)
-  for (const t of p.types) t.fields = t.fields.filter(a => a.fieldId !== fieldId)
-  for (const f of p.typeFolders) if (f.fields) f.fields = f.fields.filter(a => a.fieldId !== fieldId)
-  for (const l of p.hierarchyLevels) l.fields = l.fields.filter(a => a.fieldId !== fieldId)
-  for (const it of p.items) delete it.fieldValues[fieldId]
-  for (const sc of p.sections) delete sc.fieldValues[fieldId]
-  for (const pr of p.processors) if (pr.fieldId === fieldId) pr.fieldId = null
+  const field = fieldById(p, fieldId)
+  const ids = [fieldId, ...(field && field.kind === 'group' ? descendantsOf(p, field).map(f => f.id) : [])]
+  const gone = new Set(ids)
+  p.fields = p.fields.filter(f => !gone.has(f.id))
+  for (const f of p.fields) if (f.kind === 'group' && f.children) f.children = f.children.filter(id => !gone.has(id))
+  for (const t of p.types) t.fields = t.fields.filter(a => !gone.has(a.fieldId))
+  for (const f of p.typeFolders) if (f.fields) f.fields = f.fields.filter(a => !gone.has(a.fieldId))
+  for (const l of p.hierarchyLevels) l.fields = l.fields.filter(a => !gone.has(a.fieldId))
+  for (const it of p.items) for (const id of ids) delete it.fieldValues[id]
+  for (const sc of p.sections) for (const id of ids) delete sc.fieldValues[id]
+  for (const pr of p.processors) if (pr.fieldId && gone.has(pr.fieldId)) pr.fieldId = null
+}
+
+/** File `fieldId` into `groupId` (null = make it top-level) at the end of the group's children. */
+export function moveIntoGroup(p: Project, fieldId: Id, groupId: Id | null) {
+  const f = fieldById(p, fieldId)
+  if (!f) return
+  if (groupId) {
+    const g = fieldById(p, groupId)
+    if (!g || g.kind !== 'group' || g.id === f.id) return
+    // Never nest a group inside its own descendant.
+    if (f.kind === 'group' && descendantsOf(p, f).some(d => d.id === g.id)) return
+  }
+  for (const g of p.fields) if (g.kind === 'group' && g.children) g.children = g.children.filter(id => id !== fieldId)
+  f.parentId = groupId
+  if (groupId) {
+    const g = fieldById(p, groupId)!
+    g.children = [...(g.children ?? []), fieldId]
+    // A child lives in its group's folder; attachments of its own are dropped (it is attached through the group now).
+    f.folderId = null
+    for (const t of p.types) t.fields = t.fields.filter(a => a.fieldId !== fieldId)
+    for (const fo of p.typeFolders) if (fo.fields) fo.fields = fo.fields.filter(a => a.fieldId !== fieldId)
+    for (const l of p.hierarchyLevels) l.fields = l.fields.filter(a => a.fieldId !== fieldId)
+  }
 }
 
 /** Change a field's kind, converting stored values and defaults best-effort. */
@@ -488,6 +681,31 @@ export function stripRefs(p: Project, ids: Set<Id>) {
 export function repairSchema(p: Project) {
   const fieldIds = new Set(p.fields.map(f => f.id))
   const procIds = new Set(p.processors.map(f => f.id))
+  // Composites: children lists hold only existing fields that point back, a
+  // field belongs to at most one group, groups never contain an ancestor.
+  const byId = new Map(p.fields.map(f => [f.id, f]))
+  const owned = new Set<Id>()
+  for (const g of p.fields) {
+    if (g.kind !== 'group') { if (g.children?.length) g.children = []; continue }
+    const kids: Id[] = []
+    for (const id of g.children ?? []) {
+      const c = byId.get(id)
+      if (!c || c.id === g.id || owned.has(id) || kids.includes(id)) continue
+      // Cycle check: g must not sit below c.
+      let cur: FieldDef | undefined = g
+      let cyc = false
+      const seen = new Set<Id>()
+      while (cur?.parentId && !seen.has(cur.id)) { seen.add(cur.id); if (cur.parentId === c.id) { cyc = true; break } cur = byId.get(cur.parentId) }
+      if (cyc) continue
+      kids.push(id)
+      owned.add(id)
+    }
+    if (kids.join('\n') !== (g.children ?? []).join('\n')) g.children = kids
+  }
+  for (const f of p.fields) {
+    const want = [...p.fields].find(g => g.kind === 'group' && g.children?.includes(f.id))?.id ?? null
+    if ((f.parentId ?? null) !== want) f.parentId = want
+  }
   const dedupeFields = (list: FieldAttachment[]) => {
     const seen = new Set<Id>()
     return list.filter(a => fieldIds.has(a.fieldId) && !seen.has(a.fieldId) && seen.add(a.fieldId))
@@ -515,11 +733,13 @@ export function repairSchema(p: Project) {
   if (dead.size) stripRefs(p, dead)
 }
 
-/** Types/levels that carry a field, for display. */
+/** Types/levels that carry a field (children count through their root group), for display. */
 export function attachedToNames(p: Project, fieldId: Id): string[] {
+  const field = fieldById(p, fieldId)
+  const id = field ? rootOf(p, field).id : fieldId
   return [
-    ...p.types.filter(t => t.fields.some(a => a.fieldId === fieldId)).map(t => t.name),
-    ...p.typeFolders.filter(f => (f.fields ?? []).some(a => a.fieldId === fieldId)).map(f => `${f.name}/`),
-    ...p.hierarchyLevels.filter(l => l.fields.some(a => a.fieldId === fieldId)).map(l => l.name),
+    ...p.types.filter(t => t.fields.some(a => a.fieldId === id)).map(t => t.name),
+    ...p.typeFolders.filter(f => (f.fields ?? []).some(a => a.fieldId === id)).map(f => `${f.name}/`),
+    ...p.hierarchyLevels.filter(l => l.fields.some(a => a.fieldId === id)).map(l => l.name),
   ]
 }

@@ -65,7 +65,7 @@ export function normalizeProject(p: Project): Project {
   p.typeFolders ??= []
   for (const f of p.typeFolders) {
     f.parentId ??= null
-    f.fields = Array.isArray(f.fields) ? f.fields.map(a => ({ fieldId: a.fieldId, defaultValue: a.defaultValue ?? null })) : []
+    f.fields = Array.isArray(f.fields) ? f.fields.map(a => normalizeAttachment(a)) : []
   }
   for (const t of p.types) t.folderId ??= null
   p.fieldFolders = Array.isArray(p.fieldFolders) ? p.fieldFolders : []
@@ -82,6 +82,13 @@ export function normalizeProject(p: Project): Project {
   refreshSectionDepths(p)
   repairSchema(p)
   return p
+}
+
+/** An attachment as stored: field id, default override and (for composites) per-child defaults. */
+function normalizeAttachment(a: FieldAttachment): FieldAttachment {
+  const out: FieldAttachment = { fieldId: a.fieldId, defaultValue: a.defaultValue ?? null }
+  if (a.childDefaults && typeof a.childDefaults === 'object' && Object.keys(a.childDefaults).length) out.childDefaults = a.childDefaults
+  return out
 }
 
 export const DEFAULT_LEVEL_NAMES = ['Chapter', 'Level', 'Section']
@@ -101,7 +108,7 @@ function normalizeLevels(raw: unknown): HierarchyLevel[] {
     return {
       id: o.id ?? `level-${i}`,
       name: o.name ?? `Level ${i + 1}`,
-      fields: Array.isArray(o.fields) ? o.fields.map(a => ({ fieldId: a.fieldId, defaultValue: a.defaultValue ?? null })) : [],
+      fields: Array.isArray(o.fields) ? o.fields.map(a => normalizeAttachment(a)) : [],
       processors: Array.isArray(o.processors) ? o.processors.map(a => ({ processorId: a.processorId, showOnBand: !!a.showOnBand })) : [],
     }
   })
@@ -118,7 +125,7 @@ function migrateLegacyFields(p: Project) {
     t.fields ??= []
     const next: FieldAttachment[] = []
     for (const raw of t.fields as unknown as ({ id: Id; name: string } | FieldAttachment)[]) {
-      if ('fieldId' in raw) { next.push({ fieldId: raw.fieldId, defaultValue: raw.defaultValue ?? null }); continue }
+      if ('fieldId' in raw) { next.push(normalizeAttachment(raw)); continue }
       const key = (raw.name ?? '').trim().toLowerCase()
       let def: FieldDef | undefined = p.fields.find(f => f.kind === 'text' && f.name.trim().toLowerCase() === key)
       if (!def) { def = newFieldDef(raw.id, raw.name || 'Field', 'text'); p.fields.push(def) }

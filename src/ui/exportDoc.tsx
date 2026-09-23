@@ -1,10 +1,10 @@
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { iconByName } from '../model/icons'
-import { attachmentsFor, effectiveValue, formatValue, groupAttachments } from '../model/fields'
+import { displayEntries, groupAttachments, type DisplayEntry } from '../model/fields'
 import { typeOf } from '../model/layout'
 import { shownProcessorResults } from '../model/processors'
-import type { FieldDef, Item, Project, Section } from '../model/types'
+import type { Item, Project, Section } from '../model/types'
 import { formatUnit, unitSuffix } from '../model/util'
 import { isItemVisible } from './exportScope'
 import { Markdown } from './Markdown'
@@ -95,7 +95,7 @@ function Heading({ level, className, children }: { level: number; className?: st
 }
 
 /** Field values as a definition list, grouped under their sidebar folder (a caption row per folder). */
-function FieldList({ proj, fields }: { proj: Project; fields: { field: FieldDef; text: string }[] }) {
+function FieldList({ proj, fields }: { proj: Project; fields: DisplayEntry[] }) {
   if (!fields.length) return null
   return (
     <dl className="fields">
@@ -103,9 +103,9 @@ function FieldList({ proj, fields }: { proj: Project; fields: { field: FieldDef;
         <React.Fragment key={g.folder?.id ?? 'root'}>
           {g.folder && <div className="group"><dt style={{ color: g.folder.color }}>{g.folder.name}</dt><dd /></div>}
           {g.entries.map(f => (
-            <div key={f.field.id} className={f.field.showName ? '' : 'noname'}>
-              {f.field.showName && <dt>{f.field.name}</dt>}
-              <dd title={f.field.showName ? undefined : f.field.name}>{f.field.kind === 'text' ? <Markdown text={f.text} /> : f.text}</dd>
+            <div key={f.field.id} className={f.label ? '' : 'noname'}>
+              {f.label && <dt>{f.label}</dt>}
+              <dd title={f.label ? undefined : f.field.name}>{f.field.kind === 'text' ? <Markdown text={f.text} /> : f.text}</dd>
             </div>
           ))}
         </React.Fragment>
@@ -123,10 +123,7 @@ function DocBody({ proj, roots, loose }: { proj: Project; roots: SectionNode[]; 
     const t = typeOf(proj, it)
     const Icon = iconByName(t?.icon ?? 'Circle')
     const layer = proj.layers.find(l => l.id === (it.layerId ?? t?.defaultLayerId))
-    const fields = attachmentsFor(proj, { kind: 'item', entity: it })
-      .filter(({ field }) => !(proj.filters.offFields ?? []).includes(field.id))
-      .map(({ att, field }) => ({ field, text: formatValue(proj, field, effectiveValue(field, att, it.fieldValues[field.id])) }))
-      .filter(f => f.text.trim())
+    const fields = displayEntries(proj, { kind: 'item', entity: it }, { skip: f => (proj.filters.offFields ?? []).includes(f.id) })
     const meta: string[] = [
       it.duration > 0 ? `${fmt(it.pos)} → ${fmt(it.pos + it.duration)} (${fmt(it.duration)})` : fmt(it.pos),
     ]
@@ -160,10 +157,7 @@ function DocBody({ proj, roots, loose }: { proj: Project; roots: SectionNode[]; 
     ].sort((a, b) => a.pos - b.pos)
     // The section's own field values and its processor results (the same
     // numbers the inspector shows), so a reader gets the totals too.
-    const secFields = attachmentsFor(proj, { kind: 'section', entity: sc })
-      .filter(({ field }) => !(proj.filters.offFields ?? []).includes(field.id))
-      .map(({ att, field }) => ({ field, text: formatValue(proj, field, effectiveValue(field, att, sc.fieldValues?.[field.id])) }))
-      .filter(f => f.text.trim())
+    const secFields = displayEntries(proj, { kind: 'section', entity: sc }, { skip: f => (proj.filters.offFields ?? []).includes(f.id) })
     const procs = shownProcessorResults(proj, sc)
     return (
       <section key={sc.id} className={`sec l${level}`}>

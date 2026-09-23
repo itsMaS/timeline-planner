@@ -1,5 +1,5 @@
 import type { Camera, FieldDef, Filters, Item, Project } from './types'
-import { attachmentsFor, effectiveValue, formatValue, type Owner } from './fields'
+import { attachmentsFor, displayEntries, effectiveValue, type Owner } from './fields'
 import { matchesRule } from './scope'
 import { clamp, lerp } from './util'
 
@@ -110,11 +110,8 @@ export function isFieldShown(p: Project, field: FieldDef): boolean {
  * the filters and toggles that show as an icon badge instead.
  */
 export function itemFieldText(p: Project, it: Item): string {
-  return attachmentsFor(p, { kind: 'item', entity: it })
-    .filter(({ field }) => isFieldShown(p, field))
-    .map(({ att, field }) => ({ field, v: formatValue(p, field, effectiveValue(field, att, it.fieldValues[field.id])) }))
-    .filter(x => x.v.trim())
-    .map(x => (x.field.showName ? `${x.field.name}: ${x.v}` : x.v))
+  return displayEntries(p, { kind: 'item', entity: it }, { skip: f => !isFieldShown(p, f) })
+    .map(x => (x.label ? `${x.label}: ${x.text}` : x.text))
     .join(FIELD_SEP)
 }
 

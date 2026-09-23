@@ -88,6 +88,7 @@ export function FieldValueInput(props: {
     ? (props.att && field.defaultValue !== null ? `field default: ${formatValue(proj, field, field.defaultValue)}` : 'no default')
     : fallback !== null ? `default: ${formatValue(proj, field, fallback)}` : ''
 
+  if (field.kind === 'group') return null // composites have no value of their own; the inspector boxes their children
   if (field.kind === 'ref') {
     return (
       <RefPicker

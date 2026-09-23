@@ -1,6 +1,8 @@
 import React, { useRef, useState } from 'react'
 import { ChevronDown, ChevronRight, Eye, EyeOff, FolderPlus, Plus, Settings2, Target, Trash2 } from 'lucide-react'
-import { attachedToNames, fieldUsage, kindGlyph, kindLabel, newFieldDef, typesWithField } from '../model/fields'
+import {
+  attachedToNames, childrenOf, descendantsOf, fieldUsage, isDerived, kindGlyph, kindLabel, newFieldDef, rootFields, typesWithField,
+} from '../model/fields'
 import {
   childFolders, dissolveFolder, foldersOf, folderTree, isSelfOrDescendant, membersInFolder, membersInSubtree, membersOf,
   moveMember, newFolder, type FolderMember,
@@ -44,11 +46,14 @@ export function SchemaTree({ kind, query }: { kind: Kind; query: string }) {
   const rootRef = useRef<HTMLDivElement>(null)
 
   const q = query.trim().toLowerCase()
-  const members = membersOf(proj, kind) as (FieldDef | ProcessorDef)[]
+  // Children of a composite are listed under their group, never as members of the tree themselves.
+  const members = (kind === 'fields' ? rootFields(proj) : membersOf(proj, kind)) as (FieldDef | ProcessorDef)[]
   const folders = foldersOf(proj, kind)
   const describe = (m: FieldDef | ProcessorDef) =>
     kind === 'fields' ? kindLabel((m as FieldDef).kind) : describeProcessor(proj.fields, m as ProcessorDef)
-  const matches = (m: FieldDef | ProcessorDef) => !q || m.name.toLowerCase().includes(q) || describe(m).toLowerCase().includes(q)
+  const matchesSelf = (m: FieldDef | ProcessorDef) => !q || m.name.toLowerCase().includes(q) || describe(m).toLowerCase().includes(q)
+  const matches = (m: FieldDef | ProcessorDef): boolean =>
+    matchesSelf(m) || (kind === 'fields' && (m as FieldDef).kind === 'group' && descendantsOf(proj, m as FieldDef).some(matchesSelf))
   const isCollapsed = (f: Folder) => (q ? false : canEdit ? f.collapsed : (localCollapsed[f.id] ?? f.collapsed))
   const toggleCollapsed = (f: Folder) => {
     if (canEdit) tweak(p => { const x = foldersOf(p, kind).find(y => y.id === f.id); if (x) x.collapsed = !x.collapsed })
@@ -165,8 +170,8 @@ export function SchemaTree({ kind, query }: { kind: Kind; query: string }) {
   }
   const folderDropClass = (id: string) => (drop && 'folderId' in drop && drop.folderId === id ? 'drop-into' : '')
 
-  const memberRow = (m: FieldDef | ProcessorDef) => {
-    if (!matches(m)) return null
+  const memberRow = (m: FieldDef | ProcessorDef, depth = 0): React.ReactNode => {
+    if (depth === 0 && !matches(m)) return null
     let sub: string
     let count: string | null = null
     let title: string
@@ -175,7 +180,9 @@ export function SchemaTree({ kind, query }: { kind: Kind; query: string }) {
       const u = fieldUsage(proj, f.id)
       const attached = attachedToNames(proj, f.id)
       const values = u.items.length + u.sections.length
-      sub = attached.length ? attached.join(', ') : 'unused'
+      sub = f.kind === 'group'
+        ? `${childrenOf(proj, f).length} inside${attached.length ? ` · ${attached.join(', ')}` : ''}`
+        : isDerived(f) ? `= ${f.formula}` : attached.length ? attached.join(', ') : 'unused'
       count = String(values)
       title = `${kindLabel(f.kind)} · on ${attached.join(', ') || 'nothing'} · ${values} value(s)`
     } else {
@@ -187,13 +194,16 @@ export function SchemaTree({ kind, query }: { kind: Kind; query: string }) {
     const lifting = drag?.what === 'member' && drag.id === m.id
     const off = isOff(m.id)
     const stop = (e: React.SyntheticEvent) => e.stopPropagation()
+    const child = depth > 0
+    const kids = kind === 'fields' && (m as FieldDef).kind === 'group' ? childrenOf(proj, m as FieldDef) : []
     return (
+      <React.Fragment key={m.id}>
       <div
-        key={m.id}
-        className={`schema-row ${dropClass(m.id)} ${lifting ? 'lifting' : ''} ${off ? 'off' : ''}`}
-        data-st-member={m.id}
-        title={canEdit ? `${title} · drag to reorder or file into a folder` : title}
-        onPointerDown={e => startDrag(e, { what: 'member', id: m.id, x: e.clientX, y: e.clientY, started: false })}
+        className={`schema-row ${child ? 'child' : dropClass(m.id)} ${lifting ? 'lifting' : ''} ${off ? 'off' : ''}`}
+        style={child ? { marginLeft: depth * 14 } : undefined}
+        data-st-member={child ? undefined : m.id}
+        title={canEdit && !child ? `${title} · drag to reorder or file into a folder` : title}
+        onPointerDown={child ? undefined : e => startDrag(e, { what: 'member', id: m.id, x: e.clientX, y: e.clientY, started: false })}
         onClick={() => { if (canEdit && !dragRef.current?.started) openEditor(m.id) }}
       >
         <span className="kind-glyph">{kind === 'fields' ? kindGlyph((m as FieldDef).kind) : 'Σ'}</span>
@@ -215,6 +225,8 @@ export function SchemaTree({ kind, query }: { kind: Kind; query: string }) {
         >{off ? <EyeOff width={12} height={12} /> : <Eye width={12} height={12} />}</button>
         {canEdit && <Settings2 width={12} height={12} className="row-gear" />}
       </div>
+      {kids.map(c => memberRow(c, depth + 1))}
+      </React.Fragment>
     )
   }
 

@@ -1,6 +1,6 @@
 import { compile, evaluate, truthy, type Scope, type Value } from './expr'
-import { attachmentsFor, effectiveValue, entityTitle, levelOf, sectionsAt, type Owner } from './fields'
-import type { FieldDef, Item, Project, Section } from './types'
+import { attachmentsFor, effectiveValue, entityTitle, groupText, levelOf, sectionsAt, type Owner } from './fields'
+import type { FieldDef, FieldValue, Item, Project, Section } from './types'
 
 /**
  * What an expression sees when evaluated against an item or a section: the
@@ -73,22 +73,38 @@ export function entityScope(
     const att = attachmentsFor(p, owner).find(a => a.field.id === field.id)?.att ?? null
     return effectiveValue(field, att, owner.entity.fieldValues?.[field.id]) as Value
   },
+  /** Names to resolve first (a derived field's siblings inside its composite). */
+  prefer: FieldDef[] = [],
 ): Scope {
   const atts = attachmentsFor(p, owner)
   const byName = new Map<string, FieldDef>()
-  for (const { field } of atts) if (!byName.has(field.name.trim().toLowerCase())) byName.set(field.name.trim().toLowerCase(), field)
+  const key = (s: string) => s.trim().toLowerCase()
+  for (const f of prefer) if (!byName.has(key(f.name))) byName.set(key(f.name), f)
+  for (const { field, group } of atts) {
+    if (!byName.has(key(field.name))) byName.set(key(field.name), field)
+    // Children also answer to "Group.child" and "Group · child".
+    if (group) {
+      const dotted = `${key(group.name)}.${key(field.name)}`
+      if (!byName.has(dotted)) byName.set(dotted, field)
+      byName.set(`${key(group.name)} · ${key(field.name)}`, field)
+    }
+  }
+  const valueOf = (f: FieldDef): Value => {
+    if (f.kind === 'group') { const t = groupText(p, owner, f, c => read(c) as FieldValue | null); return t || null }
+    return fieldValueFor(p, f, read(f))
+  }
   return {
     get: raw => {
-      const name = raw.trim().toLowerCase()
+      const name = key(raw)
       const alias = name.startsWith('$') ? name.slice(1) : null
       if (!alias) {
         const f = byName.get(name)
-        if (f) return { found: true, value: fieldValueFor(p, f, read(f)) }
+        if (f) return { found: true, value: valueOf(f) }
         // A field that exists in the project but is not attached here reads as unset (not as text).
-        if (p.fields.some(x => x.name.trim().toLowerCase() === name)) return { found: true, value: null }
+        if (p.fields.some(x => key(x.name) === name)) return { found: true, value: null }
       }
-      const key = alias ?? name
-      return owner.kind === 'item' ? itemBuiltin(p, owner.entity, key) : sectionBuiltin(p, owner.entity, key)
+      const k = alias ?? name
+      return owner.kind === 'item' ? itemBuiltin(p, owner.entity, k) : sectionBuiltin(p, owner.entity, k)
     },
   }
 }
@@ -102,8 +118,8 @@ export function matchesRule(p: Project, owner: Owner, rules: string | undefined)
 }
 
 /** Evaluate an expression against an entity; null on parse or runtime error. */
-export function evalOn(p: Project, owner: Owner, src: string, read?: (field: FieldDef) => Value): Value {
+export function evalOn(p: Project, owner: Owner, src: string, read?: (field: FieldDef) => Value, prefer?: FieldDef[]): Value {
   const { ast } = compile(src)
   if (!ast) return null
-  try { return evaluate(ast, entityScope(p, owner, read)) } catch { return null }
+  try { return evaluate(ast, entityScope(p, owner, read, prefer)) } catch { return null }
 }

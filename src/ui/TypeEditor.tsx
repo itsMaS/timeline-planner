@@ -28,7 +28,7 @@ export function TypeEditor() {
     })
 
   const close = () => setUI({ editTypeId: null })
-  const inherited = typeAttachments(proj, type).filter(a => a.from)
+  const inherited = typeAttachments(proj, type).filter(a => a.from && !a.group)
 
   return (
     <div className="modal-scrim" onPointerDown={e => { if (e.target === e.currentTarget) close() }}>
