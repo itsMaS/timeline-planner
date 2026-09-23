@@ -1,8 +1,8 @@
 import React, { useMemo, useRef, useState } from 'react'
 import {
-  ChevronDown, ChevronRight, ChevronUp, Eye, EyeOff, FolderPlus, Pin, Plus, Settings2, Target, Trash2,
+  ChevronDown, ChevronRight, ChevronUp, Eye, EyeOff, FolderPlus, Pin, Plus, Search, Settings2, Target, Trash2, X,
 } from 'lucide-react'
-import { childFolders, dissolveFolder, folderTree, isSelfOrDescendant, typesInFolder, typesInSubtree } from '../model/folders'
+import { childFolders, dissolveFolder, folderPath, folderTree, isSelfOrDescendant, typesInFolder, typesInSubtree } from '../model/folders'
 import { iconByName } from '../model/icons'
 import { attachedToNames, fieldUsage, kindGlyph, kindLabel, newFieldDef } from '../model/fields'
 import { itemMatchesFilters, typeOf } from '../model/layout'
@@ -16,7 +16,40 @@ import { chipDrop, nav } from './nav'
 import { Select } from './Select'
 import { ProposalsPanel } from './Proposals'
 import { describeProcessor, FieldAttachList } from './SchemaEditors'
-import { TypeSearch } from './TypeSearch'
+
+/** Small in-place filter box for a sidebar list: typing narrows the list below, Escape clears. */
+function ListFilter(props: {
+  value: string
+  onChange: (q: string) => void
+  placeholder: string
+  /** Enter with a query that matches nothing. */
+  onEnterNoMatch?: () => void
+  hasMatch: boolean
+}) {
+  return (
+    <div className="search-box list-filter">
+      <Search width={13} height={13} />
+      <input
+        className="search-input"
+        placeholder={props.placeholder}
+        value={props.value}
+        onChange={e => props.onChange(e.target.value)}
+        onKeyDown={e => {
+          if (e.key === 'Escape') {
+            e.preventDefault(); e.stopPropagation()
+            if (props.value) props.onChange(''); else (e.target as HTMLInputElement).blur()
+          } else if (e.key === 'Enter' && props.value.trim() && !props.hasMatch && props.onEnterNoMatch) {
+            e.preventDefault()
+            props.onEnterNoMatch()
+          }
+        }}
+      />
+      {props.value && (
+        <button className="ghost-btn" title="Clear" onClick={() => props.onChange('')}><X width={12} height={12} /></button>
+      )}
+    </div>
+  )
+}
 
 // The min-zoom slider is logarithmic: camera zoom spans several orders of
 // magnitude depending on the project's scope (a 4-hour plan in hours sits in
@@ -57,6 +90,16 @@ export function Sidebar() {
   const toggle = (k: keyof typeof open) => setOpen(o => ({ ...o, [k]: !o[k] }))
   const [openLayerId, setOpenLayerId] = useState<string | null>(null)
   const [openFolderId, setOpenFolderId] = useState<string | null>(null)
+  // In-place list filters: types (folders whose name matches show all their
+  // types; otherwise only matching types, under their auto-expanded folders)
+  // and the fields & processors list.
+  const [typeQ, setTypeQ] = useState('')
+  const [schemaQ, setSchemaQ] = useState('')
+  const tq = typeQ.trim().toLowerCase()
+  const sq = schemaQ.trim().toLowerCase()
+  const typeMatches = (t: ItemType) => !tq || t.name.toLowerCase().includes(tq) || folderPath(proj, t.folderId ?? null).toLowerCase().includes(tq)
+  const anyTypeMatch = proj.types.some(typeMatches)
+  const fieldMatches = (name: string, kind: string) => !sq || name.toLowerCase().includes(sq) || kind.toLowerCase().includes(sq)
   const [folderIconPick, setFolderIconPick] = useState(false)
   // Folder collapse state lives in the document (and syncs); a read-only
   // viewer can't write it, so it keeps its own overrides locally instead.
@@ -285,6 +328,7 @@ export function Sidebar() {
   if (!ui.sidebarOpen) return null
 
   const typeRow = (t: ItemType) => {
+    if (!typeMatches(t)) return null
     const Icon = iconByName(t.icon)
     const off = proj.filters.offTypes.includes(t.id)
     return (
@@ -329,8 +373,11 @@ export function Sidebar() {
     const subs = childFolders(proj, f.id)
     const direct = typesInFolder(proj, f.id)
     const all = typesInSubtree(proj, f.id)
+    // While filtering, a folder shows only when something inside matches, and
+    // it stays expanded whatever its collapse state.
+    if (tq && !all.some(typeMatches)) return null
     const FIcon = iconByName(f.icon)
-    const collapsed = isCollapsed(f)
+    const collapsed = tq ? false : isCollapsed(f)
     const Chev = collapsed ? ChevronRight : ChevronDown
     const allOff = all.length > 0 && all.every(t => proj.filters.offTypes.includes(t.id))
     const lifting = ui.dragFolderId === f.id
@@ -486,19 +533,36 @@ export function Sidebar() {
       />
       {open.types && (
         <div className="sb-body" data-type-folder="">
-          {canEdit && proj.types.length > 0 && (
-            <TypeSearch
-              proj={proj}
-              placeholder="Add item… (search types)"
-              onPick={typeId => { nav.current?.addItem(typeId) }}
-              onCreateType={name => { nav.current?.addItem(newType(null, undefined, name)) }}
+          {(proj.types.length > 3 || tq) && (
+            <ListFilter
+              value={typeQ}
+              onChange={setTypeQ}
+              placeholder={canEdit ? 'Filter types… (Enter creates)' : 'Filter types…'}
+              hasMatch={anyTypeMatch}
+              onEnterNoMatch={canEdit ? () => {
+                const id = newType(null, undefined, typeQ.trim())
+                setTypeQ('')
+                setUI({ editTypeId: id })
+              } : undefined}
             />
           )}
           {childFolders(proj, null).map(folderNode)}
           {typesInFolder(proj, null).map(typeRow)}
           {proj.types.length === 0 && <div className="sb-hint">no types yet</div>}
-          {canEdit && (
-            <div className="sb-hint">drag a type onto the line to place it · drop types and folders onto a folder to file them</div>
+          {tq && !anyTypeMatch && (
+            canEdit ? (
+              <button
+                className="type-row new-type-row"
+                title="Create a type with this name and open its settings"
+                onClick={() => { const id = newType(null, undefined, typeQ.trim()); setTypeQ(''); setUI({ editTypeId: id }) }}
+              >
+                <span className="type-swatch"><Plus width={14} height={14} /></span>
+                <span className="type-name">New type “{typeQ.trim()}”</span>
+              </button>
+            ) : <div className="sb-hint">no types match</div>
+          )}
+          {canEdit && !tq && (
+            <div className="sb-hint">drag a type onto the line to place it · drop types and folders onto a folder to file them · right-click the timeline to add items</div>
           )}
         </div>
       )}
@@ -703,8 +767,11 @@ export function Sidebar() {
       />
       {open.schema && (
         <div className="sb-body">
+          {(proj.fields.length + proj.processors.length > 3 || sq) && (
+            <ListFilter value={schemaQ} onChange={setSchemaQ} placeholder="Filter fields & processors…" hasMatch />
+          )}
           <div className="sb-sub">Fields</div>
-          {proj.fields.map(f => {
+          {proj.fields.filter(f => fieldMatches(f.name, kindLabel(f.kind))).map(f => {
             const u = fieldUsage(proj, f.id)
             const attached = attachedToNames(proj, f.id)
             const values = u.items.length + u.sections.length
@@ -730,7 +797,7 @@ export function Sidebar() {
               }}><Plus width={13} height={13} /></button>
             )}
           </div>
-          {proj.processors.map(pr => {
+          {proj.processors.filter(pr => fieldMatches(pr.name, describeProcessor(proj.fields, pr))).map(pr => {
             const levels = processorUsage(proj, pr.id)
             return (
               <div key={pr.id} className="schema-row" title={`${describeProcessor(proj.fields, pr)} · on ${levels.map(l => l.name).join(', ') || 'no level'}`}

@@ -92,6 +92,13 @@ input, select, textarea { font: inherit; color: inherit; }
 .menu.ctx .type-search-row { padding: 6px 8px; }
 .menu.ctx .name-prompt .search-input { font-weight: 600; }
 
+/* In-place list filters in the sidebar (types, fields & processors). */
+.list-filter { min-width: 0; margin: 2px 0 6px; padding: 3px 7px; }
+.list-filter .search-input { width: 100%; min-width: 0; font-size: 12px; }
+.list-filter .ghost-btn { padding: 2px; }
+.new-type-row { width: 100%; color: var(--muted); font-style: italic; cursor: pointer; }
+.new-type-row .type-swatch { background: var(--panel2); color: var(--muted); }
+
 .tools { display: flex; align-items: center; gap: 2px; margin-left: auto; }
 .sep { width: 1px; height: 18px; background: var(--line-soft); margin: 0 5px; }
 .density { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 11px; margin-right: 6px; }
