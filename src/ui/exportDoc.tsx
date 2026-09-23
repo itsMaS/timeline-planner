@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { iconByName } from '../model/icons'
 import { attachmentsFor, effectiveValue, formatValue } from '../model/fields'
 import { typeOf } from '../model/layout'
+import { processorResults } from '../model/processors'
 import type { Item, Project, Section } from '../model/types'
 import { formatUnit, unitSuffix } from '../model/util'
 import { isItemVisible } from './exportScope'
@@ -145,6 +146,12 @@ function DocBody({ proj, roots, loose }: { proj: Project; roots: SectionNode[]; 
       ...n.items.map(it => ({ pos: it.pos, node: renderItem(it, level + 1) })),
       ...n.children.map(c => ({ pos: c.section.start, node: renderSection(c, level + 1) })),
     ].sort((a, b) => a.pos - b.pos)
+    // The section's own field values and its processor results (the same
+    // numbers the inspector shows), so a reader gets the totals too.
+    const secFields = attachmentsFor(proj, { kind: 'section', entity: sc })
+      .map(({ att, field }) => ({ field, text: formatValue(proj, field, effectiveValue(field, att, sc.fieldValues?.[field.id])) }))
+      .filter(f => f.text.trim())
+    const procs = processorResults(proj, sc).filter(r => !r.error)
     return (
       <section key={sc.id} className={`sec l${level}`}>
         <Heading level={level} className="sec-h">
@@ -152,6 +159,26 @@ function DocBody({ proj, roots, loose }: { proj: Project; roots: SectionNode[]; 
           <span className="type">{proj.hierarchyLevels[sc.depth]?.name ?? `Level ${sc.depth + 1}`}</span>
         </Heading>
         <p className="meta">{fmt(sc.start)} → {fmt(sc.end)} ({fmt(sc.end - sc.start)}) · {countItems(n)} item{countItems(n) === 1 ? '' : 's'}</p>
+        {procs.length > 0 && (
+          <p className="procs">
+            {procs.map((r, i) => (
+              <span key={r.proc.id} className="proc">
+                {i > 0 && <span className="sep"> · </span>}
+                <span className="proc-name">{r.proc.name}</span> <span className="proc-value">{r.text}</span>
+              </span>
+            ))}
+          </p>
+        )}
+        {secFields.length > 0 && (
+          <dl className="fields">
+            {secFields.map(f => (
+              <div key={f.field.id} className={f.field.showName ? '' : 'noname'}>
+                {f.field.showName && <dt>{f.field.name}</dt>}
+                <dd title={f.field.showName ? undefined : f.field.name}>{f.field.kind === 'text' ? <Markdown text={f.text} /> : f.text}</dd>
+              </div>
+            ))}
+          </dl>
+        )}
         {sc.description?.trim() && <Markdown text={sc.description} />}
         {entries.map((e, i) => <React.Fragment key={i}>{e.node}</React.Fragment>)}
       </section>
@@ -207,6 +234,10 @@ h1.item-h { font-size: 19pt; } h2.item-h { font-size: 15.5pt; } h3.item-h { font
 .item-h .icon svg { width: 1em; height: 1em; }
 .item-h .type { color: var(--c); border-color: color-mix(in srgb, var(--c) 45%, #fff); }
 .meta { margin: 1px 0 6px; font-size: 9.5pt; color: #6b7180; }
+.procs { margin: 0 0 6px; font-size: 10.5pt; color: #4b5162; }
+.procs .proc-name { font-weight: 600; }
+.procs .proc-value { font-variant-numeric: tabular-nums; color: #1c1f26; }
+.procs .sep { color: #b0b5c2; }
 .md p { margin: 0 0 6px; } .md ul { margin: 0 0 6px; padding-left: 20px; }
 .md code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.9em; background: #eef0f4; border-radius: 4px; padding: 0 4px; }
 .md a, .link a { color: #2563eb; text-decoration: none; }

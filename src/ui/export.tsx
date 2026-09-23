@@ -3,8 +3,8 @@ import { iconByName } from '../model/icons'
 import { contentExtent, layoutTimeline, rowY, spineYFor, splitLabel, typeOf } from '../model/layout'
 import type { Camera, Project } from '../model/types'
 import { clamp, download, formatUnit, rulerStepFor, sectionHue, unitSuffix } from '../model/util'
-import { attachmentsFor, effectiveValue, formatValue } from '../model/fields'
-import { bandBadge } from '../model/processors'
+import { attachmentsFor, effectiveValue, formatValue, levelOf } from '../model/fields'
+import { bandBadge, processorResults } from '../model/processors'
 import { scopedProject, type ExportScope } from './exportScope'
 
 interface Colors { bg: string; text: string; line: string; muted: string }
@@ -226,7 +226,32 @@ export function exportCSV(proj: Project, scope: ExportScope) {
         }),
       ].map(esc).join(',')
     })
-  const csv = '\ufeff' + [header.map(esc).join(','), ...rows].join('\r\n')
+  // Second table: the sections in scope with their own field values and every
+  // processor result (blank where the processor is not on the section's level).
+  const inScope = (sc: { start: number; end: number }) =>
+    !scope.sections.length || scope.sections.some(s => sc.start >= s.start - 1e-9 && sc.end <= s.end + 1e-9)
+  const sections = [...proj.sections].filter(inScope).sort((a, b) => a.start - b.start || a.depth - b.depth)
+  const secHeader = ['Level', 'Section', 'Start', 'End', 'Length', 'Description', ...proj.fields.map(f => f.name), ...proj.processors.map(p => p.name)]
+  const secRows = sections.map(sc => {
+    const atts = attachmentsFor(proj, { kind: 'section', entity: sc })
+    const results = new Map(processorResults(proj, sc).map(r => [r.proc.id, r]))
+    return [
+      levelOf(proj, sc)?.name ?? `Level ${sc.depth + 1}`,
+      sc.name,
+      sc.start,
+      sc.end,
+      sc.end - sc.start,
+      sc.description ?? '',
+      ...proj.fields.map(f => {
+        const a = atts.find(x => x.field.id === f.id)
+        return a ? formatValue(proj, f, effectiveValue(f, a.att, sc.fieldValues?.[f.id])) : ''
+      }),
+      ...proj.processors.map(p => { const r = results.get(p.id); return r && !r.error ? r.text : '' }),
+    ].map(esc).join(',')
+  })
+  const parts = [header.map(esc).join(','), ...rows]
+  if (sections.length) parts.push('', secHeader.map(esc).join(','), ...secRows)
+  const csv = '\ufeff' + parts.join('\r\n')
   download(`${proj.name.replace(/\s+/g, '-').toLowerCase()}.csv`,
     new Blob([csv], { type: 'text/csv;charset=utf-8' }))
 }
