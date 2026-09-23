@@ -72,6 +72,25 @@ function ProposalSlot({ col, id }: { col: 'items' | 'sections'; id: string }) {
   return pending ? <ProposalChangeCard proposal={pending.proposal} change={pending.change} /> : null
 }
 
+/**
+ * Enter in any single-line input of the inspector moves to the next input
+ * (Shift+Enter to the previous one); the last one just blurs. Inputs that
+ * already consumed Enter (reference search, tag entry) are left alone.
+ */
+function enterNav(e: React.KeyboardEvent<HTMLDivElement>) {
+  if (e.key !== 'Enter' || e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented) return
+  const t = e.target as HTMLElement
+  if (t.tagName !== 'INPUT') return
+  const all = [...e.currentTarget.querySelectorAll<HTMLElement>(
+    'input:not([type="checkbox"]):not([type="color"]):not([type="range"]):not([type="file"]), textarea',
+  )].filter(el => !(el as HTMLInputElement).disabled && el.offsetParent !== null)
+  const i = all.indexOf(t)
+  if (i < 0) return
+  e.preventDefault()
+  const next = all[i + (e.shiftKey ? -1 : 1)]
+  if (next) { next.focus(); (next as HTMLInputElement).select?.() } else t.blur()
+}
+
 function Head(props: { title: string; children?: React.ReactNode }) {
   const select = useStore(s => s.select)
   return (
@@ -306,7 +325,7 @@ function ItemPanel({ id }: { id: string }) {
           onClick={() => requestDelete({ itemIds: [id] }, () => { select([]); showToast('Item deleted.', true) })}
         ><Trash2 width={14} height={14} /></button>
       </Head>
-      <div className="insp-body">
+      <div className="insp-body" onKeyDown={enterNav}>
         <ProposalSlot col="items" id={item.id} />
         <input
           className="input title-input"
@@ -374,7 +393,7 @@ function ItemPanel({ id }: { id: string }) {
         )}
         {attachmentsFor(proj, { kind: 'item', entity: item }).map(({ att, field }) => (
           <FieldRow
-            key={field.id} field={field} att={att} ownerId={item.id}
+            key={`${item.id}:${field.id}`} field={field} att={att} ownerId={item.id}
             raw={item.fieldValues[field.id]}
             onChange={v => edit(it => { if (v === null) delete it.fieldValues[field.id]; else it.fieldValues[field.id] = v })}
           />
@@ -514,7 +533,7 @@ function SectionPanel({ section }: { section: Section }) {
           onClick={() => requestDelete({ sectionIds: [section.id] }, () => { select([]); showToast('Section deleted.', true) })}
         ><Trash2 width={14} height={14} /></button>
       </Head>
-      <div className="insp-body">
+      <div className="insp-body" onKeyDown={enterNav}>
         <ProposalSlot col="sections" id={section.id} />
         <input className="input title-input" value={section.name} onChange={e => edit(s => { s.name = e.target.value })} />
         <div className="row gap">
@@ -541,7 +560,7 @@ function SectionPanel({ section }: { section: Section }) {
         </div>
         {attachmentsFor(proj, { kind: 'section', entity: section }).map(({ att, field }) => (
           <FieldRow
-            key={field.id} field={field} att={att} ownerId={section.id}
+            key={`${section.id}:${field.id}`} field={field} att={att} ownerId={section.id}
             raw={section.fieldValues?.[field.id]}
             onChange={v => edit(sc => { sc.fieldValues ??= {}; if (v === null) delete sc.fieldValues[field.id]; else sc.fieldValues[field.id] = v })}
           />

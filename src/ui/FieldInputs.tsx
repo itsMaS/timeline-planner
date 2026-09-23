@@ -186,7 +186,13 @@ export function FieldValueInput(props: {
   return <NumberInput field={field} value={value === null ? null : Number(value)} placeholder={placeholder} compact={props.compact} onChange={props.onChange} />
 }
 
-/** Numbers commit on blur / Enter so typing is free and the snap happens once. */
+/**
+ * Numbers commit on blur / Enter so typing is free and the snap happens once.
+ * Selecting another entry on the canvas swaps the inspector before the input
+ * blurs, so a pending edit is also flushed when the input unmounts; the row is
+ * keyed by owner + field, which makes every owner change an unmount and keeps
+ * the typed text from ever landing on the newly selected entry.
+ */
 function NumberInput(props: {
   field: FieldDef
   value: number | null
@@ -199,6 +205,15 @@ function NumberInput(props: {
   const [text, setText] = useState(show(value))
   const focused = useRef(false)
   useEffect(() => { if (!focused.current) setText(show(value)) }, [value])
+  // Latest props/text for the unmount flush (effects only see the values they closed over).
+  const latest = useRef({ field, value, text, onChange: props.onChange })
+  latest.current = { field, value, text, onChange: props.onChange }
+  useEffect(() => () => {
+    if (!focused.current) return
+    const l = latest.current
+    const v = clampValue(l.field, parseInput(l.field, l.text))
+    if (v !== l.value) l.onChange(v)
+  }, [])
   const commit = () => {
     const v = clampValue(field, parseInput(field, text))
     setText(show(v === null ? null : Number(v)))
