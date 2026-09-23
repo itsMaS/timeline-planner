@@ -1,5 +1,5 @@
 import type { Camera, FieldDef, Filters, Item, Project } from './types'
-import { attachmentsFor, displayEntries, effectiveValue, type Owner } from './fields'
+import { attachmentsFor, displayEntries, readValue, type Owner } from './fields'
 import { matchesRule } from './scope'
 import { clamp, lerp } from './util'
 
@@ -120,7 +120,7 @@ export function toggleBadges(p: Project, owner: Owner): { field: FieldDef; on: b
   return attachmentsFor(p, owner)
     .filter(({ field }) => field.kind === 'toggle' && field.badge && !(p.filters?.offFields ?? []).includes(field.id))
     .map(({ att, field }) => {
-      const v = effectiveValue(field, att, owner.entity.fieldValues?.[field.id])
+      const v = readValue(p, owner, field, att)
       return { field, on: typeof v === 'boolean' ? v : null }
     })
 }

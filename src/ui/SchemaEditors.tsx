@@ -11,7 +11,7 @@ import { useActiveProject, useStore } from '../model/store'
 import type { FieldAttachment, FieldDef, FieldKind, HierarchyLevel, Id, ProcessorAttachment, ProcessorDef, ProcessorOp } from '../model/types'
 import { uid } from '../model/util'
 import { FieldValueInput } from './FieldInputs'
-import { RuleEditor } from './RuleFilter'
+import { FormulaEditor, RuleEditor } from './RuleFilter'
 import { Select } from './Select'
 
 // ------------------------------------------------------------------ small controls
@@ -141,7 +141,9 @@ export function FieldAttachList(props: { list: FieldAttachment[]; onChange: (lis
               <span className="kind-glyph" title={kindLabel(f.kind)}>{kindGlyph(f.kind)}</span>
               <span className="attach-name" title={f.name}>{f.name}</span>
               <div className="attach-default">
-                {f.kind === 'group' ? (
+                {isDerived(f) ? (
+                  <span className="muted attach-sub" title={f.formula}>= {f.formula}</span>
+                ) : f.kind === 'group' ? (
                   <button
                     className="ghost-btn add" disabled={!kids.length}
                     title={kids.length ? 'Defaults for the fields inside, for this type / level' : 'No fields inside yet'}
@@ -303,6 +305,9 @@ export function FieldEditor() {
   }
 
   const parent = parentOf(proj, field)
+  // "Derived" stays on while the formula is being typed, even when it is still empty.
+  const [derivedOn, setDerived] = useState(isDerived(field))
+  const derived = derivedOn || isDerived(field)
   const attachedTo = [
     ...proj.types.map(t => ({ id: t.id, name: t.name, kind: 'type' as const, on: t.fields.some(a => a.fieldId === field.id), icon: t.icon, color: t.color })),
     ...proj.typeFolders.map(f => ({ id: f.id, name: folderPath(proj, f.id), kind: 'folder' as const, on: (f.fields ?? []).some(a => a.fieldId === field.id), icon: f.icon, color: f.color })),
@@ -439,6 +444,22 @@ export function FieldEditor() {
 
       {field.kind !== 'group' && (
         <div className="field">
+          <label className="check-row" style={{ padding: 0 }}>
+            <input type="checkbox" checked={derived} onChange={e => { setDerived(e.target.checked); if (!e.target.checked) edit(f => { f.formula = '' }) }} />
+            Derived from a formula <span className="muted">(computed on read, never stored)</span>
+          </label>
+          {derived && (
+            <FormulaEditor
+              value={field.formula ?? ''}
+              onChange={t => edit(f => { f.formula = t })}
+              placeholder={parent ? 'e.g. total - done' : 'e.g. [Scope total] - [Scope done]'}
+              hint={parent ? `fields inside “${parent.name}” by name first, then any field of the entry` : 'any field of the entry by name ([brackets] when it has spaces), plus built-ins like pos, duration, tags'}
+            />
+          )}
+        </div>
+      )}
+      {field.kind !== 'group' && !derived && (
+        <div className="field">
           <label>Default value <span className="muted">(types and levels can override it)</span></label>
           <FieldValueInput field={field} value={field.defaultValue} asDefault onChange={v => edit(f => { f.defaultValue = v })} />
         </div>
@@ -458,7 +479,7 @@ export function FieldEditor() {
         <label>Help text</label>
         <input className="input" value={field.help} placeholder="shown under the input" onChange={e => edit(f => { f.help = e.target.value })} />
       </div>
-      {field.kind !== 'group' && (
+      {field.kind !== 'group' && !derived && (
         <label className="check-row">
           <input type="checkbox" checked={field.required} onChange={e => edit(f => { f.required = e.target.checked })} />
           Required — warn when left empty

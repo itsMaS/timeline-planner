@@ -1,7 +1,7 @@
 import React, { useRef, useState } from 'react'
 import { ChevronDown, ChevronRight, Eye, EyeOff, FolderPlus, Plus, Settings2, Target, Trash2 } from 'lucide-react'
 import {
-  attachedToNames, childrenOf, descendantsOf, fieldUsage, isDerived, kindGlyph, kindLabel, newFieldDef, rootFields, typesWithField,
+  attachedToNames, childrenOf, descendantsOf, fieldUsage, glyphFor, isDerived, kindLabel, newFieldDef, rootFields, typesWithField,
 } from '../model/fields'
 import {
   childFolders, dissolveFolder, foldersOf, folderTree, isSelfOrDescendant, membersInFolder, membersInSubtree, membersOf,
@@ -206,7 +206,7 @@ export function SchemaTree({ kind, query }: { kind: Kind; query: string }) {
         onPointerDown={child ? undefined : e => startDrag(e, { what: 'member', id: m.id, x: e.clientX, y: e.clientY, started: false })}
         onClick={() => { if (canEdit && !dragRef.current?.started) openEditor(m.id) }}
       >
-        <span className="kind-glyph">{kind === 'fields' ? kindGlyph((m as FieldDef).kind) : 'Σ'}</span>
+        <span className="kind-glyph">{kind === 'fields' ? glyphFor(m as FieldDef) : 'Σ'}</span>
         <span className="type-name">{m.name}</span>
         <span className="schema-sub">{sub}</span>
         {count !== null && <span className="count">{count}</span>}

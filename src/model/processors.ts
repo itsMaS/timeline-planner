@@ -1,4 +1,4 @@
-import { attachmentsFor, effectiveValue, entityTitle, fieldById, formatNumber, formatToggle, isNumberKind, levelOf, type Owner } from './fields'
+import { attachmentsFor, entityTitle, fieldById, formatNumber, formatToggle, isNumberKind, levelOf, readValue, type Owner } from './fields'
 import { matchesRule } from './scope'
 import type { FieldValue, Id, ProcessorAttachment, ProcessorDef, ProcessorOp, Project, Section } from './types'
 
@@ -64,7 +64,7 @@ export function evalProcessor(p: Project, section: Section, proc: ProcessorDef, 
     if (field) {
       const a = attachmentsFor(p, o).find(x => x.field.id === field.id)
       if (!a) continue
-      const v = effectiveValue(field, a.att, o.entity.fieldValues?.[field.id])
+      const v = readValue(p, o, field, a.att)
       if (v === null) continue
       values.push(v)
     }

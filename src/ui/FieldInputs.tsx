@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Crosshair, RotateCcw, X } from 'lucide-react'
 import {
-  backlinks, clampValue, coerceValue, defaultFor, effectiveValue, entityTitle, formatToggle, formatValue, kindGlyph, levelOf, locationOf,
-  ownerOf, parseInput, refCandidates, type Owner,
+  backlinks, clampValue, coerceValue, defaultFor, derivedValue, effectiveValue, entityTitle, formatToggle, formatValue, isDerived, kindGlyph,
+  levelOf, locationOf, ownerOf, parseInput, refCandidates, type Owner,
 } from '../model/fields'
 import { iconByName } from '../model/icons'
 import { useActiveProject, useStore } from '../model/store'
@@ -43,6 +43,26 @@ export function FieldRow(props: {
   const proj = useActiveProject()
   const explicit = coerceValue(field, props.raw)
   const eff = effectiveValue(field, att, props.raw)
+  if (isDerived(field)) {
+    // Derived: computed from the formula, shown read-only with the formula as the hint.
+    const owner = ownerOf(proj, props.ownerId)
+    const v = owner ? derivedValue(proj, owner, field) : null
+    return (
+      <div className={`field fdef derived ${field.showName ? '' : 'noname'}`} title={`${field.name} = ${field.formula}`}>
+        {field.showName && (
+          <label title={`= ${field.formula}`}>
+            <span className="kind-glyph">ƒ</span>
+            {field.name}
+          </label>
+        )}
+        <div className="read-value derived-value">
+          {v === null ? <span className="muted">—</span> : <ReadFieldValue field={field} value={v} />}
+          <span className="derived-formula muted" title={field.formula}>= {field.formula}</span>
+        </div>
+        {field.help && <div className="field-help">{field.help}</div>}
+      </div>
+    )
+  }
   const invalid = field.required && eff === null
   const canReset = explicit !== null && defaultFor(field, att) !== null
   // A field that hides its name gets no label row unless something has to go

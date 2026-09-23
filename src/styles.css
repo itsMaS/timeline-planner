@@ -583,6 +583,8 @@ input, select, textarea { font: inherit; color: inherit; }
 .fv-toggle-hint { font-size: 11px; }
 .fv-toggle-default button { padding: 5px 4px; }
 .field.fdef label .reset-btn { margin-left: auto; padding: 2px; }
+.field.fdef.derived .derived-value { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; font-size: 12.5px; }
+.field.fdef.derived .derived-formula { font-size: 10.5px; font-family: ui-monospace, Menlo, Consolas, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
 .field.fdef label .reset-btn:hover { color: var(--accent); }
 .seg.sm button { padding: 3px 4px; font-size: 11px; }
 .slider-row { display: flex; align-items: center; gap: 10px; padding: 2px 0; }

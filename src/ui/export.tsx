@@ -4,7 +4,7 @@ import { contentExtent, isFieldShown, layoutTimeline, rowY, spineYFor, splitLabe
 import type { Camera, FieldDef, Project } from '../model/types'
 import { clamp, download, formatUnit, rulerStepFor, sectionHue, unitSuffix } from '../model/util'
 import {
-  attachmentsFor, childrenOf, effectiveValue, fieldDisplayName, formatValue, groupText, levelOf, orderedFields, parentOf, type Owner,
+  attachmentsFor, childrenOf, fieldDisplayName, formatValue, groupText, levelOf, orderedFields, parentOf, readValue, type Owner,
 } from '../model/fields'
 import { bandBadge, shownProcessorResults } from '../model/processors'
 import { ToggleBadges } from './Canvas'
@@ -228,7 +228,7 @@ export function exportCSV(proj: Project, scope: ExportScope) {
   const cell = (owner: Owner, f: FieldDef) => {
     const a = attachmentsFor(proj, owner).find(x => x.field.id === f.id)
     if (!a) return ''
-    return f.kind === 'group' ? groupText(proj, owner, f) : formatValue(proj, f, effectiveValue(f, a.att, owner.entity.fieldValues?.[f.id]))
+    return f.kind === 'group' ? groupText(proj, owner, f) : formatValue(proj, f, readValue(proj, owner, f, a.att))
   }
   const header = [...levels, 'Title', 'Type', 'Position', 'Duration', 'Tags', 'Description', 'Link', 'Created by', ...columns.map(f => fieldDisplayName(proj, f))]
   const rows = scope.items

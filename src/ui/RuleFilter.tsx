@@ -216,6 +216,31 @@ export function RuleEditor(props: {
   )
 }
 
+/** One-line expression input with parse errors and unknown-name warnings, for derived-field formulas. */
+export function FormulaEditor(props: { value: string; onChange: (text: string) => void; placeholder?: string; hint?: string }) {
+  const proj = useActiveProject()
+  const [text, setText] = useState(props.value)
+  useEffect(() => { setText(props.value) }, [props.value])
+  const parsed = useMemo(() => (props.value.trim() ? tryParse(props.value.trim()) : null), [props.value])
+  const names = nameOptions(proj, 'any')
+  const unknown = parsed?.ast
+    ? namesIn(parsed.ast).filter(n => !names.some(o => o.value.trim().toLowerCase() === n.trim().toLowerCase() || o.label.trim().toLowerCase() === n.trim().toLowerCase()))
+    : []
+  return (
+    <div className="rule-text">
+      <input
+        className="input" value={text} placeholder={props.placeholder ?? 'e.g. total - done'} spellCheck={false}
+        onChange={e => setText(e.target.value)}
+        onBlur={() => { if (text.trim() !== props.value.trim()) props.onChange(text.trim()) }}
+        onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+      />
+      {parsed?.error && text.trim() === props.value.trim() && <div className="rule-error">{parsed.error.message} (at {parsed.error.pos + 1})</div>}
+      {parsed && !parsed.error && unknown.length > 0 && <div className="rule-warn">unknown: {unknown.join(', ')} (read as text)</div>}
+      {props.hint && <div className="sb-hint">{props.hint} · + - * / · if(), min(), max(), round(), len(), coalesce()</div>}
+    </div>
+  )
+}
+
 /** Toolbar funnel: opens the rule editor for the live filters; a badge shows how many rules are active. */
 export function RuleFilterButton() {
   const proj = useActiveProject()

@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react'
 import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Copy, FileText, Trash2, X } from 'lucide-react'
-import { attachmentsFor, effectiveValue, fieldLabel, groupAttachments, groupText, kindGlyph, levelOf, type Owner } from '../model/fields'
+import { attachmentsFor, fieldLabel, groupAttachments, groupText, kindGlyph, levelOf, readValue, type Owner } from '../model/fields'
 import { iconByName } from '../model/icons'
 import { typeOf } from '../model/layout'
 import { processorResults, type ProcessorResult } from '../model/processors'
@@ -213,7 +213,7 @@ function ReadItemPanel({ id }: { id: string }) {
   const fmt = (v: number) => formatUnit(v, Math.max(Math.abs(v), 0.01), suffix, proj.settings.unit.preset)
   const owner: Owner = { kind: 'item', entity: item }
   const fields = attachmentsFor(proj, owner)
-    .map(a => ({ ...a, value: effectiveValue(a.field, a.att, item.fieldValues[a.field.id]) }))
+    .map(a => ({ ...a, value: readValue(proj, owner, a.field, a.att) }))
     .filter(a => a.value !== null || a.field.kind === 'group')
   return (
     <>
@@ -298,7 +298,7 @@ function ReadSectionPanel({ section }: { section: Section }) {
   const fmt = (v: number) => formatUnit(v, Math.max(Math.abs(v), 0.01), suffix, proj.settings.unit.preset)
   const owner: Owner = { kind: 'section', entity: section }
   const fields = attachmentsFor(proj, owner)
-    .map(a => ({ ...a, value: effectiveValue(a.field, a.att, section.fieldValues?.[a.field.id]) }))
+    .map(a => ({ ...a, value: readValue(proj, owner, a.field, a.att) }))
     .filter(a => a.value !== null || a.field.kind === 'group')
   return (
     <>

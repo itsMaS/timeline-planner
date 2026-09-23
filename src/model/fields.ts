@@ -2,6 +2,8 @@ import type {
   FieldAttachment, FieldDef, FieldKind, FieldValue, Folder, HierarchyLevel, Id, Item, ItemType, Project, Section, TypeFolder,
 } from './types'
 import { folderChain, groupedMembers, orderedMembers } from './folders'
+import { evalOn } from './scope'
+import type { Value } from './expr'
 import { formatUnit, unitSuffix } from './util'
 
 /**
@@ -257,7 +259,7 @@ export function displayEntries(
   opts: { skip?: (field: FieldDef) => boolean; read?: (field: FieldDef, att: FieldAttachment) => FieldValue | null } = {},
 ): DisplayEntry[] {
   const out: DisplayEntry[] = []
-  const read = opts.read ?? ((field, att) => effectiveValue(field, att, owner.entity.fieldValues?.[field.id]))
+  const read = opts.read ?? ((field, att) => readValue(p, owner, field, att))
   const hiddenGroups = new Set<Id>()
   for (const e of attachmentsFor(p, owner)) {
     if (e.group && hiddenGroups.has(e.group.id)) { if (e.field.kind === 'group') hiddenGroups.add(e.field.id); continue }
@@ -292,11 +294,53 @@ export function effectiveValue(field: FieldDef, att: FieldAttachment | null | un
   return v ?? defaultFor(field, att)
 }
 
-/** Effective value of `field` on an owner (looks up the attachment for the default). */
-export function valueOn(p: Project, owner: Owner, field: FieldDef): FieldValue | null {
-  const att = attachmentsFor(p, owner).find(a => a.field.id === field.id)?.att ?? null
+/**
+ * What a field reads as on an owner: a derived field's formula result
+ * (computed on read, coerced to the field's kind), else the explicit value or
+ * the attachment / field default.
+ */
+export function readValue(p: Project, owner: Owner, field: FieldDef, att: FieldAttachment | null | undefined): FieldValue | null {
+  if (isDerived(field)) return derivedValue(p, owner, field)
   return effectiveValue(field, att, owner.entity.fieldValues?.[field.id])
 }
+
+/** Effective value of `field` on an owner (looks up the attachment for the default; derived fields compute). */
+export function valueOn(p: Project, owner: Owner, field: FieldDef): FieldValue | null {
+  const att = attachmentsFor(p, owner).find(a => a.field.id === field.id)?.att ?? null
+  return readValue(p, owner, field, att)
+}
+
+/** Derived-field evaluations in flight, so a formula that (indirectly) reads itself yields null instead of looping. */
+const evaluating = new Set<string>()
+
+/** A derived field's value on an owner: its formula evaluated against the owner's other fields, coerced to its kind. */
+export function derivedValue(p: Project, owner: Owner, field: FieldDef): FieldValue | null {
+  const key = `${owner.entity.id}:${field.id}`
+  if (evaluating.has(key)) return null
+  evaluating.add(key)
+  try {
+    const parent = parentOf(p, field)
+    const siblings = parent ? childrenOf(p, parent).filter(c => c.id !== field.id) : []
+    const raw = evalOn(p, owner, field.formula ?? '', f => valueOn(p, owner, f) as Value, siblings)
+    if (raw === null || raw === undefined) return null
+    if (field.kind === 'toggle') return parseToggle(raw)
+    if (isNumberKind(field.kind)) {
+      const n = typeof raw === 'number' ? raw : typeof raw === 'boolean' ? (raw ? 1 : 0) : Number(String(raw).trim().replace(',', '.'))
+      return Number.isFinite(n) ? clampValue(field, n) : null
+    }
+    if (field.kind === 'text') {
+      const s = Array.isArray(raw) ? raw.join(', ') : typeof raw === 'boolean' ? formatToggle(raw) : typeof raw === 'number' ? String(Number(raw.toFixed(6))) : String(raw)
+      return s === '' ? null : clampValue(field, s)
+    }
+    // select / ref: a derived value must name existing options / ids.
+    return clampValue(field, coerceValue(field, Array.isArray(raw) ? raw : String(raw)))
+  } finally {
+    evaluating.delete(key)
+  }
+}
+
+/** Glyph for a field row: ƒ for derived fields, else the kind's glyph. */
+export const glyphFor = (f: FieldDef) => (isDerived(f) ? 'ƒ' : kindGlyph(f.kind))
 
 /** Shape-check a stored value against the field's kind; anything else is treated as unset. */
 export function coerceValue(field: FieldDef, v: unknown): FieldValue | null {

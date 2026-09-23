@@ -1,5 +1,5 @@
 import { compile, evaluate, truthy, type Scope, type Value } from './expr'
-import { attachmentsFor, effectiveValue, entityTitle, groupText, levelOf, sectionsAt, type Owner } from './fields'
+import { attachmentsFor, entityTitle, groupText, levelOf, sectionsAt, valueOn, type Owner } from './fields'
 import type { FieldDef, FieldValue, Item, Project, Section } from './types'
 
 /**
@@ -69,10 +69,7 @@ function fieldValueFor(p: Project, field: FieldDef, v: Value): Value {
 export function entityScope(
   p: Project,
   owner: Owner,
-  read: (field: FieldDef) => Value = field => {
-    const att = attachmentsFor(p, owner).find(a => a.field.id === field.id)?.att ?? null
-    return effectiveValue(field, att, owner.entity.fieldValues?.[field.id]) as Value
-  },
+  read: (field: FieldDef) => Value = field => valueOn(p, owner, field) as Value,
   /** Names to resolve first (a derived field's siblings inside its composite). */
   prefer: FieldDef[] = [],
 ): Scope {
