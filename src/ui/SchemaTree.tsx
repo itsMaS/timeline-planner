@@ -303,7 +303,7 @@ export function SchemaTree({ kind, query }: { kind: Kind; query: string }) {
         {!collapsed && (
           <div className={`folder-types ${folderDropClass(f.id)}`} data-st-folder={f.id}>
             {subs.map(folderNode)}
-            {direct.map(memberRow)}
+            {direct.map(m => memberRow(m))}
             {subs.length === 0 && direct.length === 0 && <div className="sb-hint">{canEdit ? 'drag rows here' : 'empty folder'}</div>}
           </div>
         )}
@@ -320,7 +320,7 @@ export function SchemaTree({ kind, query }: { kind: Kind; query: string }) {
   return (
     <div ref={rootRef} className={`schema-tree ${drag?.started ? 'dragging' : ''} ${folderDropClass('')}`} data-st-folder="">
       {childFolders(proj, null, kind).map(folderNode)}
-      {[...rootMembers, ...stray].map(memberRow)}
+      {[...rootMembers, ...stray].map(m => memberRow(m))}
       {members.length === 0 && (
         <div className="sb-hint">
           {kind === 'fields'
