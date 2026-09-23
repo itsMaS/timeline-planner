@@ -17,7 +17,13 @@
 - `src/ui/` — components; `Canvas.tsx` holds all pointer interactions.
 - Display settings live on each timeline (`Timeline.settings`, see the
   Timelines section); `Project.settings` only seeds new timelines. See
-  `normalizeProject` in `src/model/store.ts` for migration of old saves.
+  `normalizeProject` in `src/model/normalize.ts` for migration of old saves.
+  `normalize.ts` holds the pure helpers (`blankProject`, `emptyFilters`,
+  `normalizeFilters`, `normalizeProject`) so the CLI and the Edge Function
+  can import them without pulling in zustand; `store.ts` re-exports them.
+- `ROADMAP.md` records what the fields system shipped, the decisions taken
+  with the owner and what comes next. Update it when a listed item ships or a
+  decision changes.
 
 ## Sharing / realtime (Supabase)
 
@@ -68,10 +74,21 @@
   `apihelp`), which renders capabilities, the call convention, a function
   table, recipes and copyable examples pre-filled with the real endpoint, key
   and the tab's token. Keep it in step with `API.md` when the surface changes.
-- The token cannot touch the schema, delete, move items or manage links; keep
-  it that way and grow the surface with new `api_*` functions rather than
-  widening existing ones. Private helpers are `revoke execute`d from
-  `anon`/`authenticated`.
+- The token can create fields and change their settings (`api_create_field`,
+  `api_update_field` in `0009_fields_schema_api.sql`; never a field's kind,
+  children, parent or folder) but cannot touch types, levels, layers or
+  timelines, delete, move items or manage links; keep it that way and grow the
+  surface with new `api_*` functions rather than widening existing ones.
+  Private helpers are `revoke execute`d from `anon`/`authenticated`.
+- Rule evaluation and computed values need the app's TypeScript, so they live
+  in the `api-query` Edge Function (`supabase/functions/api-query/src.ts`,
+  bundled into `index.ts` by `npm run build:api`, deployed with
+  `verify_jwt: false` because publishable keys are not JWTs). It calls
+  `api_read` with the caller's token and evaluates through
+  `src/api/compute.ts` (`prepare`, `queryItems`, `computeDoc`), which the
+  agent CLI's `query` command shares. Rebuild and redeploy the bundle whenever
+  `expr.ts`, `scope.ts`, `fields.ts`, `processors.ts` or `normalize.ts`
+  change.
 - The live project has anonymous sign-ins off, so tabs poll (every 4 s) and
   `realtime.messages` has no partitions; the API broadcast is a no-op there
   and the version-checked autosave is what keeps API writes safe.
@@ -141,9 +158,41 @@
 
 ## Fields & processors
 
-- Fields are project-global (`Project.fields`, kinds text / int / float / toggle / select / ref;
+- Fields are project-global (`Project.fields`, kinds text / int / float / toggle / select / ref / group;
   toggles store a boolean, `parseToggle` reads yes/no-ish input, and `sum` over a
   toggle counts the ones switched on).
+- **Expression language** (`src/model/expr.ts`): one tokenizer, parser and
+  evaluator shared by rule filters (`Filters.rules`), processor conditions
+  (`ProcessorDef.where`), derived formulas (`FieldDef.formula`), the API and
+  the CLI. `compile` caches, `toText`/`quoteName`/`quoteValue` round-trip,
+  `looseEqual` compares loosely (an unset toggle equals `no`).
+  `src/model/scope.ts` resolves names for an entity (`entityScope`: attached
+  fields case-insensitively, `Group.child`, built-ins, `$name` aliases;
+  `matchesRule`, `evalOn`). `fields.ts` and `scope.ts` import each other on
+  purpose; keep the calls at run time, never at module init.
+- **Folders** are generic (`Folder`, `FolderKind = 'types' | 'fields' |
+  'processors'`, `Project.fieldFolders` / `processorFolders`,
+  `folderId` on fields and processors) with the helpers in
+  `src/model/folders.ts` (`foldersOf`, `orderedMembers`, `groupedMembers`,
+  `moveMember`, `dissolveFolder`). `SchemaTree` (`src/ui/SchemaTree.tsx`) is
+  the sidebar tree for fields and processors: drag to reorder or file, eye
+  for visibility, target to reveal.
+- **Composites**: kind `group` with `children` ids and `parentId` on each
+  child, `template` for the display text, `FieldAttachment.childDefaults`.
+  `typeAttachments` / `levelAttachments` / `attachmentsFor` return the
+  expanded list with a `group` on each entry, so children are attached
+  through their root; `displayEntries` is what renders (canvas label,
+  tooltip, exports) and `groupText` fills the template. `repairSchema` cuts
+  cycles and dangling children.
+- **Derived fields**: `isDerived(f)` when `formula` is non-empty; `readValue`
+  (and `valueOn`) evaluates it on read with a cycle guard and coerces to the
+  field's kind. They are never stored, read-only in the inspector, and
+  refused by the API writes.
+- **Visibility and badges**: `Filters.offFields` / `offProcessors` hide ids
+  everywhere but the inspector (`isFieldShown` in `layout.ts`,
+  `shownProcessorResults`); `FieldDef.badge` on a toggle draws ✓ / ✗ on the
+  icon (`toggleBadges`, `ToggleBadges` in `Canvas.tsx`) and after section
+  names, and drops the field from the label.
   Item types, type folders and hierarchy levels attach them via
   `FieldAttachment` (with an optional per-attachment default that overrides
   the field's default); items and sections store explicit values in
@@ -160,7 +209,9 @@
   (deterministically, so shared docs migrate identically on every client).
 - Processors (`Project.processors`, evaluated in `src/model/processors.ts`)
   are attached to hierarchy levels and aggregate items / nested sections whose
-  start lies inside a section. Results are computed on read, never stored.
+  start lies inside a section and satisfy the optional `where` rule. Results
+  are computed on read, never stored; the document PDF and the CSV's second
+  sections table include them.
 - Reference pick mode, hover highlight and the confirm dialog run through
   `ui.pickRef`, `ui.highlightId` and `ui.confirm`; deletes of items/sections
   go through `requestDelete` (`src/ui/deletion.ts`) so referenced entries warn.
@@ -176,7 +227,14 @@
 - `Project.activeViewId` survives filter changes: `viewDirty()`
   (`src/model/views.ts`) compares the live filters with the view, and the
   viewbar offers Update / Revert / Save as new view. Never reset
-  `activeViewId` when tweaking filters.
+  `activeViewId` when tweaking filters. `Filters` also carry `rules` (the
+  funnel expression, AND-ed on top, items only, hidden items hide),
+  `offFields` and `offProcessors`; `filtersEqual` / `isUnfiltered` /
+  `emptyFilters` must stay in step when a key is added. `RuleFilterButton`
+  and `RuleEditor` (`src/ui/RuleFilter.tsx`) are the funnel popover and the
+  rows ↔ text editor, reused by the processor and formula editors.
+- Sidebar search boxes (`ListFilter` in `Sidebar.tsx`) filter their list in
+  place; creating items stays on the canvas.
 - New types go through `hideNewTypeInFilters()` so type-restricted views (and
   live filters) keep hiding them; the create-type-and-item path un-hides the
   type in the live filters afterwards.
@@ -208,10 +266,17 @@
   (`ProposalChangeCard`, `usePendingChange`) and scrolls the review panel to
   that change; clicking a change in the panel selects and flies to its entity.
 - `agent/timeline.ts` (`npx tsx agent/timeline.ts …`) is how an agent works on
-  a shared timeline through its edit link: `read`, `outline`, `propose`
-  (default), `apply` (direct save with version check via `share_save_if`),
-  `status`, `withdraw`, `export` (the app's document export → PDF via the
-  locally installed Chrome/Chromium/Edge, no npm dependency).
+  a shared timeline through its edit link: `read`, `outline`, `query`
+  (`--where` rule, `--compute` for derived values and processor results,
+  `--json`), `propose` (default), `apply` (direct save with version check
+  via `share_save_if`), `status`, `withdraw`, `export` (the app's document
+  export → PDF via the locally installed Chrome/Chromium/Edge, no npm
+  dependency; `--where` filters like the funnel).
+- **Parity rule**: whatever the app learns about the document (a new field
+  kind, a new filter key, a new computed value) must reach the API
+  (`API.md`, `ApiHelp.tsx`, migration or Edge Function) and the CLI
+  (`agent/timeline.ts`, `SKILL.md`, bundle, version bump) in the same
+  release.
 - It ships as the `timeline-agent` plugin: `.claude-plugin/marketplace.json`
   makes this repo a Claude Code marketplace and `plugins/timeline-agent/` holds
   the skill plus `scripts/timeline.cjs`, a self-contained bundle regenerated by

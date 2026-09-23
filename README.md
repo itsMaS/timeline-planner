@@ -58,6 +58,16 @@ To ship an update: `npm run build`, commit the regenerated
   the changes into it, *Revert* goes back, *Save as new view* keeps both.
   Double-click (or the pencil) renames a view. A newly created type stays
   hidden in every view that already filters by type.
+- **Fields** — global, attached to types, type folders and hierarchy levels,
+  organised in folders. Toggles can show as ✓ / ✗ badges on the icon; a
+  *composite* field groups several fields under one label with a display
+  template; a *derived* field is a formula (`total - done`) computed on read.
+  The funnel next to the search box filters items by rule
+  (`Implemented = no and [VFX Scope] >= 10`), and every field and processor
+  has an eye to hide it from labels and exports; rules and visibility save
+  with views. Processors (sum, count, …) on hierarchy levels accept a `where`
+  condition and print into the PDF and CSV exports. See [ROADMAP.md](ROADMAP.md)
+  for the design and what comes next.
 - **Toolbar toggles** — hide item titles (icons pack much tighter), show
   custom field values next to titles, hide filtered items instead of ghosting.
 - **Feel** — springy micro-animations, particle bursts on create/delete/snap,
@@ -94,13 +104,19 @@ by stable random ids; positions are floats on an unbounded abstract axis.
   "hierarchyLevels": [{ "id": "…", "name": "Chapter",   // section depth names
                         "fields": [],                  // FieldAttachment[] like on types
                         "processors": [{ "processorId": "…", "showOnBand": true }] }],
-  "fields":     [{ "id": "…", "name": "Coins", "kind": "int", // "text" | "int" | "float" | "toggle" | "select" | "ref"
+  "fields":     [{ "id": "…", "name": "Coins", "kind": "int", // "text" | "int" | "float" | "toggle" | "select" | "ref" | "group"
                    "options": [], "selectMultiple": false,   // select: preset choices
                    "min": 0, "max": null, "decimals": null, "unit": "coins", "maxLength": null,
                    "refTargets": [], "refMultiple": false, "refShowLinks": false,
-                   "defaultValue": null, "help": "", "required": false, "showInTooltip": false }],
+                   "defaultValue": null, "help": "", "required": false, "showInTooltip": false,
+                   "folderId": null,       // sidebar folder (fieldFolders)
+                   "badge": false,         // toggle: show as ✓ / ✗ on the icon
+                   "children": [], "template": "", "parentId": null, // composites (kind "group")
+                   "formula": "" }],       // derived field: computed on read, never stored
+  "fieldFolders": [], "processorFolders": [],   // like typeFolders, without fields
   "processors": [{ "id": "…", "name": "Coin total", "op": "sum", // sum|count|avg|min|max|distinct
-                   "fieldId": "…", "targets": [] }],       // type/level ids to include, [] = all
+                   "fieldId": "…", "targets": [],           // type/level ids to include, [] = all
+                   "where": "", "folderId": null }],        // optional rule an entry must satisfy
   "types":    [{ "id": "…", "name": "Death opportunity", "icon": "Skull",
                  "color": "#ef4444", "defaultLayerId": "…",
                  "folderId": null,       // sidebar folder, null = top level
@@ -120,10 +136,11 @@ by stable random ids; positions are floats on an unbounded abstract axis.
                  "images": ["data:image/…"],
                  "fieldValues": { "<fieldId>": "…" } }], // string | number | id[] by field kind
   "views":    [{ "id": "…", "name": "Story beats",
-                 "filters": { "offTypes": ["…"], "offLayers": [],
-                              "tags": [], "text": "" } }],
+                 "filters": { "offTypes": ["…"], "offLayers": [], "tags": [], "text": "",
+                              "rules": "Implemented = no",  // funnel expression
+                              "offFields": [], "offProcessors": [] } }], // hidden ids
   "camera":   { "x": 0, "s": 14 },       // world-at-left-edge, px per unit
-  "filters":  { "offTypes": [], "offLayers": [], "tags": [], "text": "" },
+  "filters":  { "offTypes": [], "offLayers": [], "tags": [], "text": "", "rules": "", "offFields": [], "offProcessors": [] },
   "activeViewId": null
 }
 ```
