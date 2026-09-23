@@ -4,7 +4,7 @@ import { attachmentsFor, effectiveValue, fieldLabel, levelOf, type Owner } from 
 import { iconByName } from '../model/icons'
 import { typeOf } from '../model/layout'
 import { processorResults, type ProcessorResult } from '../model/processors'
-import { useActiveProject, useCanEdit, useStore } from '../model/store'
+import { useActiveProject, useActiveWhole, useCanEdit, useStore } from '../model/store'
 import type { Item, Project, Section } from '../model/types'
 import { formatUnit, uid, unitSuffix } from '../model/util'
 import { requestDelete } from './deletion'
@@ -86,13 +86,13 @@ function Head(props: { title: string; children?: React.ReactNode }) {
 
 /** Opens the printable outline of one section (headings + items) for saving as PDF. */
 function SectionDocButton({ section }: { section: Section }) {
-  const proj = useActiveProject()
+  const whole = useActiveWhole()
   const showToast = useStore(s => s.showToast)
   return (
     <button
       className="ghost-btn" title="Export this section as a document (PDF)"
       onClick={() => {
-        if (!exportDocPDF(proj, [section.id])) showToast('Pop-up blocked — allow pop-ups for this site to export the document.')
+        if (!exportDocPDF(whole, [section.id], [section.timelineId])) showToast('Pop-up blocked — allow pop-ups for this site to export the document.')
       }}
     ><FileText width={14} height={14} /></button>
   )

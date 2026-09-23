@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import ReactDOM from 'react-dom/client'
 import { useStore } from './model/store'
-import { bootSync, openShared, parseShareHash, startSync } from './sync/share'
+import { bootSync, openShared, parseShareRoute, startSync } from './sync/share'
 import { App } from './ui/App'
 import { Viewer } from './ui/Viewer'
 import './styles.css'
@@ -9,8 +9,21 @@ import './styles.css'
 // Handy for debugging and automated checks.
 ;(window as unknown as { tp: typeof useStore }).tp = useStore
 
-const token = parseShareHash()
+const route = parseShareRoute()
+const token = route?.token ?? null
 bootSync({ startExisting: !token })
+
+/** A link's `/<timelineId>` suffix opens that timeline (when the project still has it). */
+function openLinkedTimeline(projectId: string) {
+  const st = useStore.getState()
+  const tid = route?.timelineId
+  if (!tid) return
+  const proj = st.projects.find(p => p.id === projectId)
+  if (proj?.timelines.some(t => t.id === tid)) {
+    if (st.drafts[projectId]) st.enterSuggest(projectId)
+    st.setActiveTimeline(tid)
+  }
+}
 
 function Root() {
   const [mode, setMode] = useState<'boot' | 'app' | 'viewer' | { error: string }>(token ? 'boot' : 'app')
@@ -25,6 +38,7 @@ function Root() {
         const st = useStore.getState()
         if (info.role === 'view') {
           st.openViewer(project, info)
+          openLinkedTimeline(project.id)
           void startSync(project.id)
           setMode('viewer')
           return
@@ -39,6 +53,7 @@ function Root() {
         }
         // A suggest link is always in suggest mode: edits become proposals.
         if (info.role === 'suggest') st.enterSuggest(existing ?? project.id)
+        openLinkedTimeline(existing ?? project.id)
         history.replaceState(null, '', `${location.pathname}${location.search}`)
         bootSync({ startExisting: true })
         void startSync(existing ?? project.id)

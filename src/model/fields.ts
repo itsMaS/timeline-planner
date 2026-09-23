@@ -1,7 +1,8 @@
 import type {
-  FieldAttachment, FieldDef, FieldKind, FieldValue, HierarchyLevel, Id, Item, ItemType, Project, Section, TypeFolder,
+  FieldAttachment, FieldDef, FieldKind, FieldValue, HierarchyLevel, Id, Item, ItemType, Project, Section, TimelineSettings, TypeFolder,
 } from './types'
 import { folderChain } from './folders'
+import { wholeOf } from './timelines'
 import { formatUnit, unitSuffix } from './util'
 
 /**
@@ -52,12 +53,14 @@ export const levelById = (p: Project, id: Id) => p.hierarchyLevels.find(l => l.i
 
 export type Owner = { kind: 'item'; entity: Item } | { kind: 'section'; entity: Section }
 
+/** The item or section with this id; on a timeline view, entries of the other timelines resolve too. */
 export function ownerOf(p: Project, id: Id): Owner | null {
   const it = p.items.find(i => i.id === id)
   if (it) return { kind: 'item', entity: it }
   const sc = p.sections.find(s => s.id === id)
   if (sc) return { kind: 'section', entity: sc }
-  return null
+  const whole = wholeOf(p)
+  return whole === p ? null : ownerOf(whole, id)
 }
 
 /** An attachment resolved for a type: `from` is the folder it is inherited from, null for the type's own. */
@@ -332,30 +335,42 @@ export function allowsTarget(p: Project, field: FieldDef, o: Owner): boolean {
   return !!key && field.refTargets.includes(key)
 }
 
-/** Sections enclosing a position, outermost first. */
-export function sectionsAt(p: Project, pos: number, exclude?: Id): Section[] {
+/** Sections enclosing a position on one timeline, outermost first. */
+export function sectionsAt(p: Project, pos: number, exclude?: Id, timelineId?: Id): Section[] {
   const eps = 1e-9
   return p.sections
-    .filter(s => s.id !== exclude && s.start <= pos + eps && s.end >= pos - eps)
+    .filter(s => s.id !== exclude && (!timelineId || s.timelineId === timelineId) && s.start <= pos + eps && s.end >= pos - eps)
     .sort((a, b) => a.depth - b.depth)
 }
 
-/** Enclosing-section breadcrumb + position, e.g. "Chapter 1 › The drop · 12". */
+/** Settings of the timeline an entity lives on (falls back to the project's view). */
+function settingsFor(p: Project, timelineId: Id): TimelineSettings {
+  return p.timelines?.find(t => t.id === timelineId)?.settings ?? p.settings
+}
+
+/**
+ * Enclosing-section breadcrumb + position, e.g. "Chapter 1 › The drop · 12".
+ * With several timelines the entity's timeline leads: "Level 2 › Chapter 1 · 12".
+ */
 export function locationOf(p: Project, o: Owner): string {
-  const suffix = unitSuffix(p.settings.unit.preset, p.settings.unit.custom)
-  const fmt = (v: number) => formatUnit(v, Math.max(Math.abs(v), 0.01), suffix, p.settings.unit.preset)
+  const tid = o.entity.timelineId
+  const st = settingsFor(p, tid)
+  const suffix = unitSuffix(st.unit.preset, st.unit.custom)
+  const fmt = (v: number) => formatUnit(v, Math.max(Math.abs(v), 0.01), suffix, st.unit.preset)
+  const tl = (p.timelines?.length ?? 0) > 1 ? [p.timelines.find(t => t.id === tid)?.name ?? 'Timeline'] : []
   if (o.kind === 'item') {
-    const chain = sectionsAt(p, o.entity.pos).map(s => s.name || '…')
+    const chain = [...tl, ...sectionsAt(p, o.entity.pos, undefined, tid).map(s => s.name || '…')]
     return `${chain.length ? chain.join(' › ') + ' · ' : ''}${fmt(o.entity.pos)}`
   }
   const s = o.entity
   const eps = 1e-9
   const parents = p.sections
-    .filter(t => t.id !== s.id && t.depth < s.depth && t.start <= s.start + eps && t.end >= s.end - eps)
+    .filter(t => t.id !== s.id && t.timelineId === tid && t.depth < s.depth && t.start <= s.start + eps && t.end >= s.end - eps)
     .sort((a, b) => a.depth - b.depth)
     .map(t => t.name || '…')
+  const where = [...tl, ...parents]
   const level = levelOf(p, s)?.name ?? 'Section'
-  return `${level}${parents.length ? ' in ' + parents.join(' › ') : ''} · ${fmt(s.start)} – ${fmt(s.end)}`
+  return `${level}${where.length ? ' in ' + where.join(' › ') : ''} · ${fmt(s.start)} – ${fmt(s.end)}`
 }
 
 export interface RefCandidate {
@@ -370,9 +385,17 @@ export interface RefCandidate {
   sortKey: number
 }
 
-/** Everything a reference field may point at, in timeline order. */
+/**
+ * Everything a reference field may point at, across every timeline of the
+ * project: the active timeline's entries first (in timeline order), then the
+ * other timelines in tab order.
+ */
 export function refCandidates(p: Project, field: FieldDef, excludeId?: Id): RefCandidate[] {
   const out: RefCandidate[] = []
+  const order = new Map<Id, number>()
+  const active = p.activeTimelineId ?? p.timelines?.[0]?.id
+  ;(p.timelines ?? []).forEach((t, i) => order.set(t.id, t.id === active ? -1 : i))
+  const rank = (tid: Id) => (order.get(tid) ?? p.timelines.length) * 1e9
   for (const it of p.items) {
     if (it.id === excludeId) continue
     const o: Owner = { kind: 'item', entity: it }
@@ -381,7 +404,7 @@ export function refCandidates(p: Project, field: FieldDef, excludeId?: Id): RefC
     out.push({
       id: it.id, owner: o, title: it.title || 'Untitled', typeName: t?.name ?? 'Item',
       color: t?.color ?? '#888', icon: t?.icon ?? 'Circle', location: locationOf(p, o),
-      description: it.description, sortKey: it.pos,
+      description: it.description, sortKey: rank(it.timelineId) + it.pos,
     })
   }
   for (const sc of p.sections) {
@@ -391,7 +414,7 @@ export function refCandidates(p: Project, field: FieldDef, excludeId?: Id): RefC
     out.push({
       id: sc.id, owner: o, title: sc.name || 'Untitled section', typeName: levelOf(p, sc)?.name ?? 'Section',
       color: '#8b91a0', icon: 'RectangleHorizontal', location: locationOf(p, o),
-      description: sc.description ?? '', sortKey: sc.start - 1e-6,
+      description: sc.description ?? '', sortKey: rank(sc.timelineId) + sc.start - 1e-6,
     })
   }
   return out.sort((a, b) => a.sortKey - b.sortKey || a.title.localeCompare(b.title))

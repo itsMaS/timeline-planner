@@ -3,7 +3,7 @@ import { Settings2, Trash2, X } from 'lucide-react'
 import { formatValue, kindGlyph, kindLabel, typeAttachments } from '../model/fields'
 import { folderTree } from '../model/folders'
 import { iconByName } from '../model/icons'
-import { useActiveProject, useStore } from '../model/store'
+import { useActiveProject, useActiveWhole, useStore } from '../model/store'
 import type { ItemType } from '../model/types'
 import { PALETTE } from '../model/util'
 import { IconPicker } from './IconPicker'
@@ -12,6 +12,7 @@ import { FieldAttachList } from './SchemaEditors'
 
 export function TypeEditor() {
   const proj = useActiveProject()
+  const whole = useActiveWhole()
   const ui = useStore(s => s.ui)
   const setUI = useStore(s => s.setUI)
   const mutate = useStore(s => s.mutate)
@@ -129,7 +130,7 @@ export function TypeEditor() {
             onClick={() => {
               const others = proj.types.filter(t => t.id !== type.id)
               if (!others.length) { showToast('A project needs at least one type.'); return }
-              const count = proj.items.filter(i => i.typeId === type.id).length
+              const count = whole.items.filter(i => i.typeId === type.id).length
               mutate(p => {
                 p.types = p.types.filter(t => t.id !== type.id)
                 for (const it of p.items) if (it.typeId === type.id) it.typeId = others[0].id

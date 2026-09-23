@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { Check, Cloud, CloudOff, Copy, HelpCircle, KeyRound, Link2, RefreshCw, Trash2, X } from 'lucide-react'
-import { useActiveProject, useActiveShare, useActiveSync, useStore, type SyncStatus } from '../model/store'
+import { useActiveProject, useActiveShare, useActiveSync, useActiveWhole, useStore, type SyncStatus } from '../model/store'
+import { timelineName } from '../model/timelines'
 import { getIdentity, setIdentity } from '../sync/client'
 import { manageApiToken, refreshPresence, regenerateLink, shareLink, shareProject, stopSharing } from '../sync/share'
 
@@ -88,6 +89,7 @@ function CopyField({ label, value, hint, onRegenerate, onRevoke, onHelp, regener
 
 export function ShareModal() {
   const proj = useActiveProject()
+  const whole = useActiveWhole()
   const share = useActiveShare()
   const sync = useActiveSync()
   const setUI = useStore(s => s.setUI)
@@ -95,6 +97,11 @@ export function ShareModal() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [me, setMe] = useState(() => getIdentity())
+  // Links can carry the timeline (subtab) on screen so they open right there.
+  const [linkTimeline, setLinkTimeline] = useState(false)
+  const multi = whole.timelines.length > 1
+  const tid = multi && linkTimeline ? (whole.activeTimelineId ?? whole.timelines[0].id) : null
+  const link = (token: string) => shareLink(token, tid)
 
   useEffect(() => { setError(null) }, [proj.id])
 
@@ -119,15 +126,15 @@ export function ShareModal() {
         {!share ? (
           <>
             <p className="muted">
-              Sharing publishes this timeline online and gives you three links: one that lets people edit together in
-              real time, one that only lets them suggest changes for you to review, and one that only shows the timeline.
+              Sharing publishes this project online and gives you three links: one that lets people edit together in
+              real time, one that only lets them suggest changes for you to review, and one that only shows the project.
             </p>
             <p className="muted small">
-              Pasted images are moved to online storage. Your camera, filters and selection stay private to you.
+              Pasted images are moved to online storage. Your camera, filters, selection and the timeline you have open stay private to you.
             </p>
             <div className="modal-foot">
               <button className="primary-btn" disabled={busy} onClick={() => run(async () => { await shareProject(proj.id) })}>
-                {busy ? 'Publishing…' : 'Share this timeline'}
+                {busy ? 'Publishing…' : 'Share this project'}
               </button>
             </div>
           </>
@@ -137,7 +144,7 @@ export function ShareModal() {
               <span className="status-dot" />
               <span>{STATUS_LABEL[status]}{sync?.pending ? ' · saving…' : ''}</span>
               <span className="grow" />
-              <span className="muted small">{share.owner ? 'You own this timeline' : share.role === 'edit' ? 'You can edit' : share.role === 'suggest' ? 'You can suggest changes' : 'View only'}</span>
+              <span className="muted small">{share.owner ? 'You own this project' : share.role === 'edit' ? 'You can edit' : share.role === 'suggest' ? 'You can suggest changes' : 'View only'}</span>
             </div>
             {status === 'polling' && (
               <p className="muted small">
@@ -145,10 +152,16 @@ export function ShareModal() {
                 edits still save and refresh every few seconds.
               </p>
             )}
+            {multi && (
+              <label className="check-row" title="The links below open on this timeline instead of the first one">
+                <input type="checkbox" checked={linkTimeline} onChange={e => setLinkTimeline(e.target.checked)} />
+                Links open on “{timelineName(whole, whole.activeTimelineId)}”
+              </label>
+            )}
 
             {share.editToken && (
               <CopyField
-                label="Edit link" value={shareLink(share.editToken)} hint="anyone with it can edit"
+                label="Edit link" value={link(share.editToken)} hint="anyone with it can edit"
                 onRegenerate={share.owner ? () => {
                   if (window.confirm('Regenerate the edit link? Everyone using the old one loses edit access.'))
                     run(() => regenerateLink(proj.id, 'edit'))
@@ -157,7 +170,7 @@ export function ShareModal() {
             )}
             {share.suggestToken && (
               <CopyField
-                label="Suggest link" value={shareLink(share.suggestToken)} hint="can propose changes for you to review, not edit"
+                label="Suggest link" value={link(share.suggestToken)} hint="can propose changes for you to review, not edit"
                 onRegenerate={share.owner ? () => {
                   if (window.confirm('Regenerate the suggest link? Everyone using the old one loses access.'))
                     run(() => regenerateLink(proj.id, 'suggest'))
@@ -165,7 +178,7 @@ export function ShareModal() {
               />
             )}
             <CopyField
-              label="View link" value={shareLink(share.viewToken)} hint="read-only preview"
+              label="View link" value={link(share.viewToken)} hint="read-only preview"
               onRegenerate={share.owner ? () => {
                 if (window.confirm('Regenerate the view link? The old one stops working.'))
                   run(() => regenerateLink(proj.id, 'view'))
@@ -191,7 +204,7 @@ export function ShareModal() {
               ) : (
                 <div className="field">
                   <label>
-                    API token <span className="muted">— lets tools such as a Unity plugin read and update this timeline</span>
+                    API token <span className="muted">— lets tools such as a Unity plugin read and update this project</span>
                     <button className="help-btn" title="How to use the API" onClick={() => setUI({ overlay: 'apihelp' })}><HelpCircle width={13} height={13} /></button>
                   </label>
                   <div className="row gap">

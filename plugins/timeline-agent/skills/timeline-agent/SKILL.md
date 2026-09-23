@@ -39,7 +39,7 @@ replies, proposal titles/summaries/notes, file names or commits.
 
 ```bash
 $TL read --link "$LINK" --out /tmp/tl.json      # {version, timelineId, name, doc}
-$TL outline --in /tmp/tl.json                   # sections → items with ids, quick orientation
+$TL outline --in /tmp/tl.json                   # timelines → sections → items with ids, quick orientation
 cp /tmp/tl.json /tmp/tl-edited.json             # edit the "doc" object in the copy
 $TL propose --link "$LINK" --base /tmp/tl.json --edited /tmp/tl-edited.json \
   --title "Fix typos in descriptions" --summary "12 spelling fixes, no wording changes" \
@@ -48,11 +48,20 @@ $TL propose --link "$LINK" --base /tmp/tl.json --edited /tmp/tl-edited.json \
 
 Rules for editing `doc`:
 
+- A project holds one or more **timelines** (subtabs sharing the schema):
+  `doc.timelines = [{id, name, settings}]`. Every item and section carries
+  `timelineId`; positions on different timelines are unrelated, and a section
+  only contains items of its own timeline. `outline` shows one block per
+  timeline. Put new entries on the timeline the user means (by name in the
+  outline); an entry without `timelineId` lands on the first timeline. Don't
+  add, rename or delete timelines unless asked; the per-timeline `settings`
+  (unit, grid, spine) live on each timeline, and the top-level `settings` is
+  only the legacy copy.
 - Keep entity ids. A proposal is diffed per entity (items, types, typeFolders,
-  layers, sections, views, hierarchyLevels, fields, processors) plus
+  layers, timelines, sections, views, hierarchyLevels, fields, processors) plus
   the scalars `name` and `settings`. Changing an id looks like remove + add.
 - New entities need a fresh id: any short random string (e.g. 12 chars of
-  `[a-z0-9]`). Fill every field. An item is `{id, typeId, layerId: null,
+  `[a-z0-9]`). Fill every field. An item is `{id, typeId, timelineId, layerId: null,
   pos, duration: 0, title, description: '', tags: [], link: '',
   images: [], fieldValues: {}}`; a type is `{id, name, icon, color, defaultLayerId,
   fields: [{fieldId, defaultValue: null}], folderId: null}` (a type also
@@ -60,13 +69,14 @@ Rules for editing `doc`:
   `doc.fields` holds `{id, name, kind: 'text'|'int'|'float'|'toggle'|'select'|'ref', …}`,
   a select field lists its `options`, and `fieldValues` are strings, numbers,
   booleans, arrays of chosen options or arrays of referenced ids by kind); a
-  section is `{id, name, depth, start, end, description: '', fieldValues: {}}`
+  section is `{id, name, timelineId, depth, start, end, description: '', fieldValues: {}}`
   where `depth` indexes `hierarchyLevels` (`{id, name, fields, processors}`).
-- `pos`/`start`/`end` are in the project's world units (`settings.unit`). Put new
-  items inside the section they belong to (`section.start ≤ pos ≤ end`).
+- `pos`/`start`/`end` are in the timeline's world units (its `settings.unit`).
+  Put new items inside the section they belong to (`section.start ≤ pos ≤ end`,
+  same `timelineId`).
 - Descriptions and field values are minimal markdown (paragraphs, `**bold**`,
   `- lists`, `[links](url)`). Icons are Lucide icon names (`Coins`, `Skull`…).
-- Don't touch `camera`, `filters`, `activeViewId` — per-user, ignored.
+- Don't touch `camera`, `cameras`, `filters`, `activeViewId`, `activeTimelineId` — per-user, ignored.
 - Collection order is not part of a proposal; reordering needs `apply`.
 - One proposal per task, with a clear title and a summary saying what and why.
   Add a per-entity note in `--notes` when the reason isn't obvious from the diff
@@ -88,11 +98,13 @@ overrides):
 $TL export --link "$LINK" --out /tmp/chapter1-coins-enemies.pdf --sections "Chapter 1" --types "Coin,Enemy"
 ```
 
-Filters mirror the app's: `--sections` (names or ids; only those sub-trees),
-`--types` and `--layers` (only those; others hidden), `--tags` (any of),
-`--text` (substring in title/description/tags). Names match case-insensitively,
-then by substring — run `outline` first to learn the exact names. `--html
-file.html` also keeps the HTML. Then hand the PDF to the user (send the file).
+Filters mirror the app's: `--timeline` (names or ids; default every timeline,
+each under its own heading), `--sections` (names or ids; only those sub-trees,
+all on one timeline), `--types` and `--layers` (only those; others hidden),
+`--tags` (any of), `--text` (substring in title/description/tags). Names match
+case-insensitively, then by substring — run `outline` first to learn the exact
+names. `--html file.html` also keeps the HTML. Then hand the PDF to the user
+(send the file).
 
 ## Reference
 

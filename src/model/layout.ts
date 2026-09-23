@@ -43,13 +43,14 @@ export interface LayoutResult {
  * Derive each section's depth from geometric containment: a section nests one
  * level under every strictly larger section that fully encloses it, so the
  * hierarchy follows the actual bounds and updates as edges are dragged.
+ * Sections only ever nest inside sections of the same timeline.
  */
 export function refreshSectionDepths(p: Project) {
   const eps = 1e-9
   for (const s of p.sections) {
     let depth = 0
     for (const t of p.sections) {
-      if (t === s) continue
+      if (t === s || t.timelineId !== s.timelineId) continue
       const larger = t.end - t.start > s.end - s.start + eps
       if (larger && t.start <= s.start + eps && t.end >= s.end - eps) depth++
     }

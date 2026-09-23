@@ -4,11 +4,12 @@ import type { Project } from './types'
  * Entity-level patches between two versions of a Project.
  *
  * Collections keyed by id are diffed per entity (upsert / remove / order),
- * scalar fields are replaced wholesale. Per-user state (camera, filters,
- * activeViewId) is deliberately excluded so it never syncs between people.
+ * scalar fields are replaced wholesale. Per-user state (camera, cameras,
+ * filters, activeViewId, activeTimelineId) is deliberately excluded so it
+ * never syncs between people.
  */
 
-export const SYNC_COLLECTIONS = ['hierarchyLevels', 'fields', 'processors', 'types', 'typeFolders', 'layers', 'sections', 'items', 'views'] as const
+export const SYNC_COLLECTIONS = ['hierarchyLevels', 'fields', 'processors', 'types', 'typeFolders', 'layers', 'timelines', 'sections', 'items', 'views'] as const
 export const SYNC_SCALARS = ['name', 'settings'] as const
 
 export type ColKey = typeof SYNC_COLLECTIONS[number]
@@ -57,7 +58,7 @@ function diffCollection(a: Entity[], b: Entity[]): CollectionPatch | null {
 export function diffProject(a: Project, b: Project): Patch | null {
   const patch: Patch = {}
   for (const k of SYNC_COLLECTIONS) {
-    const d = diffCollection(a[k] as Entity[], b[k] as Entity[])
+    const d = diffCollection((a[k] ?? []) as Entity[], (b[k] ?? []) as Entity[])
     if (d) (patch.cols ??= {})[k] = d
   }
   for (const k of SYNC_SCALARS) {
@@ -72,7 +73,7 @@ export function applyPatch(p: Project, patch: Patch): void {
     for (const k of SYNC_COLLECTIONS) {
       const cp = patch.cols[k]
       if (!cp) continue
-      let list = (p[k] as Entity[]).slice()
+      let list = ((p[k] ?? []) as Entity[]).slice()
       if (cp.remove?.length) {
         const rm = new Set(cp.remove)
         list = list.filter(e => !rm.has(e.id))

@@ -11,7 +11,8 @@ import {
 } from '../model/layout'
 import { bandBadge } from '../model/processors'
 import { diffToChanges, pendingChanges, previewProject, type ChangeKind, type ProposalChange } from '../model/proposal'
-import { useActiveProject, useStore } from '../model/store'
+import { useActiveProject, useActiveWhole, useStore } from '../model/store'
+import { derived, timelineName, timelineView } from '../model/timelines'
 import type { Camera, Item, Section } from '../model/types'
 import { hideNewTypeInFilters } from '../model/views'
 import { PALETTE, clamp, formatUnit, rulerStepFor, sectionHue, snapPos, timeBaseFor, uid, unitSuffix } from '../model/util'
@@ -103,13 +104,18 @@ interface CtxMenu {
 }
 
 export function CanvasView() {
+  // `proj` is the project scoped to the timeline on screen: only its items and
+  // sections, its settings and camera. `whole` sees every timeline (for
+  // cross-timeline jumps and labels).
   const proj = useActiveProject()
+  const whole = useActiveWhole()
   const ui = useStore(s => s.ui)
   const setUI = useStore(s => s.setUI)
   const select = useStore(s => s.select)
   const mutate = useStore(s => s.mutate)
   const tweak = useStore(s => s.tweak)
   const setCamera = useStore(s => s.setCamera)
+  const setActiveTimeline = useStore(s => s.setActiveTimeline)
   const showToast = useStore(s => s.showToast)
 
   const wrapRef = useRef<HTMLDivElement>(null)
@@ -151,10 +157,18 @@ export function CanvasView() {
   // stays the document every edit goes to. `review` maps item id → its
   // pending change, so touched items can be styled and kept out of drags.
   const reviewProposal = useStore(s => (s.ui.reviewProposalId ? s.proposals[s.activeId]?.find(p => p.id === s.ui.reviewProposalId) : undefined))
-  const view = useMemo(() => (reviewProposal ? previewProject(proj, reviewProposal) : proj), [proj, reviewProposal])
+  const timelineId = proj.activeTimelineId ?? proj.timelines[0]?.id
+  const view = useMemo(() => {
+    if (!reviewProposal) return proj
+    const pv = previewProject(proj, reviewProposal)
+    if (pv === proj) return proj
+    // Proposed additions on other timelines stay off this canvas.
+    return derived(pv, { items: pv.items.filter(it => (it.timelineId ?? timelineId) === timelineId) })
+  }, [proj, reviewProposal, timelineId])
   const review = useMemo(() => (reviewProposal ? pendingChanges(reviewProposal, 'items') : new Map<string, ProposalChange>()), [reviewProposal])
   // In suggest mode, items that differ from the saved document get the same dashed ring.
-  const baseProj = useStore(s => s.projects.find(p => p.id === s.activeId) ?? s.projects[0])
+  const baseWhole = useStore(s => s.projects.find(p => p.id === s.activeId) ?? s.projects[0])
+  const baseProj = useMemo(() => (baseWhole === whole ? proj : timelineView(baseWhole, timelineId)), [baseWhole, whole, proj, timelineId])
   const proposed = useMemo(() => {
     const ids = new Set(review.keys())
     if (proj !== baseProj) for (const c of diffToChanges(baseProj, proj)) if (c.col === 'items') ids.add(c.entityId)
@@ -186,7 +200,7 @@ export function CanvasView() {
   // ---- effective project (ephemeral drag overrides applied)
   const effective = useMemo(() => {
     if (!posOverride && !durOverride && !sectionOverride) return view
-    const p = { ...view }
+    const p = derived(view, {})
     if (posOverride || durOverride) {
       p.items = view.items.map(it => {
         let out = it
@@ -270,6 +284,35 @@ export function CanvasView() {
     flyCamera(cam, target, c => setCamera(c), undefined, animate)
   }
 
+  /**
+   * An entity that lives on another timeline: switch to it and leave a note
+   * (`ui.jumpTo`) that the next render of that timeline flies to it.
+   */
+  const jumpAcross = (id: string) => {
+    const e = whole.items.find(i => i.id === id) ?? whole.sections.find(s0 => s0.id === id)
+    if (!e || e.timelineId === timelineId) return
+    setActiveTimeline(e.timelineId)
+    setUI({ jumpTo: id })
+  }
+  useEffect(() => {
+    const id = ui.jumpTo
+    if (!id) return
+    const it = view.items.find(i => i.id === id)
+    const sc = it ? null : proj.sections.find(s0 => s0.id === id)
+    if (!it && !sc) return // still on the way, or gone
+    setUI({ jumpTo: null })
+    if (it) {
+      const s = Math.max(cam.s, 30)
+      flyTo({ x: it.pos - size.w / 2 / s, s })
+      select([id])
+    } else if (sc) {
+      const span = Math.max(sc.end - sc.start, 0.5)
+      const s = clamp((size.w * 0.86) / span, minS, maxS)
+      flyTo({ x: sc.start - (size.w - span * s) / 2 / s, s })
+      select([`S:${id}`])
+    }
+  }, [ui.jumpTo, view, proj.sections])
+
   useEffect(() => {
     nav.current = {
       flyTo: c => flyTo(c),
@@ -281,14 +324,14 @@ export function CanvasView() {
       },
       flyToItem: id => {
         const it = view.items.find(i => i.id === id)
-        if (!it) return
+        if (!it) { jumpAcross(id); return }
         const s = Math.max(cam.s, 30)
         flyTo({ x: it.pos - size.w / 2 / s, s })
         select([id])
       },
       flyToSection: id => {
         const sc = proj.sections.find(s0 => s0.id === id)
-        if (!sc) return
+        if (!sc) { jumpAcross(id); return }
         const span = Math.max(sc.end - sc.start, 0.5)
         const s = clamp((size.w * 0.86) / span, minS, maxS)
         flyTo({ x: sc.start - (size.w - span * s) / 2 / s, s })
@@ -325,7 +368,7 @@ export function CanvasView() {
       e.preventDefault()
       cancelFlight()
       const st = useStore.getState()
-      const p0 = st.projects.find(p => p.id === st.activeId) ?? st.projects[0]
+      const p0 = st.activeView()
       const c = p0.camera
       const base = timeBaseFor(p0.settings.unit.preset)
       const wheelMaxS = base ? Math.max(MAX_S, base * 400) : MAX_S
@@ -366,7 +409,7 @@ export function CanvasView() {
     const id = uid()
     mutate(p => {
       p.items.push({
-        id, typeId: type.id, layerId: null, pos, duration: 0,
+        id, typeId: type.id, timelineId: p.activeTimelineId ?? p.timelines[0].id, layerId: null, pos, duration: 0,
         title: type.name, description: '', tags: [], link: '', images: [], fieldValues: {},
         createdBy: creatorStamp(),
       })
@@ -1128,12 +1171,9 @@ export function CanvasView() {
         if (it2) orig.set(id, it2.pos)
       }
     }
+    // Ripple moves everything on this timeline (never the other timelines).
     const allOrig = new Map<string, number>()
-    {
-      const state = useStore.getState()
-      const cur = state.projects.find(p => p.id === state.activeId) ?? proj
-      for (const it of cur.items) allOrig.set(it.id, it.pos)
-    }
+    for (const it of useStore.getState().activeView().items) allOrig.set(it.id, it.pos)
     const type = typeOf(proj, item)
     setDragBoth({
       kind: 'item', ids, grabId: ids.includes(item.id) ? item.id : ids[0], startClientX: e.clientX,
@@ -1323,6 +1363,8 @@ export function CanvasView() {
         const cp = structuredClone(src)
         cp.id = uid()
         cp.pos = pos + (src.pos - base)
+        // Pasting lands on the timeline on screen, wherever the copy came from.
+        cp.timelineId = p.activeTimelineId ?? p.timelines[0].id
         cp.createdBy = creatorStamp()
         nids.push(cp.id)
         p.items.push(cp)
@@ -1768,12 +1810,14 @@ export function CanvasView() {
 
       <canvas ref={fxRef} className="fx-canvas" />
 
-      {/* breadcrumb */}
+      {/* breadcrumb: timeline (when there are several) › enclosing sections */}
       <div className="crumbs">
-        {crumbs.length === 0 && <span className="crumb muted">{proj.name}</span>}
+        {whole.timelines.length > 1
+          ? <span className="crumb muted">{timelineName(whole, timelineId)}</span>
+          : crumbs.length === 0 && <span className="crumb muted">{proj.name}</span>}
         {crumbs.map((sc, i) => (
           <React.Fragment key={sc.id}>
-            {i > 0 && <span className="crumb-sep">›</span>}
+            {(i > 0 || whole.timelines.length > 1) && <span className="crumb-sep">›</span>}
             <button className="crumb" onClick={() => nav.current?.flyToSection(sc.id)}>{sc.name}</button>
           </React.Fragment>
         ))}
@@ -1866,7 +1910,8 @@ export function CanvasView() {
                   const span = (size.w * 0.25) / cam.s
                   const id = uid()
                   mutate(p => p.sections.push({
-                    id, name: `New ${levelName.toLowerCase()}`, depth: 0, start: pos, end: pos + span, fieldValues: {},
+                    id, name: `New ${levelName.toLowerCase()}`, timelineId: p.activeTimelineId ?? p.timelines[0].id,
+                    depth: 0, start: pos, end: pos + span, fieldValues: {},
                   }))
                   select([`S:${id}`])
                   setMenu(null)

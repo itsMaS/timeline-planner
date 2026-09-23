@@ -1,35 +1,32 @@
 import { create } from 'zustand'
 import { repairFolders } from './folders'
 import { newFieldDef, normalizeFieldDef, repairSchema } from './fields'
-import { refreshSectionDepths } from './layout'
+import { fitCamera, refreshSectionDepths } from './layout'
 import { applyPatch, diffProject, type Patch } from './patch'
 import { applyChanges, diffToChanges, type Proposal, type ProposalChange } from './proposal'
-import type { Camera, FieldAttachment, FieldDef, FieldValue, Filters, HierarchyLevel, Id, Item, Project, TimelineSettings } from './types'
+import {
+  activeTimeline, defaultSettings, duplicateTimeline as copyTimeline, FIRST_TIMELINE_ID, FIRST_TIMELINE_NAME, newTimeline, nextTimelineName,
+  normalizeSettings, normalizeTimeline, removeTimeline, repairTimelines, timelineView,
+} from './timelines'
+import type { Camera, FieldAttachment, FieldDef, FieldValue, Filters, HierarchyLevel, Id, Item, Project, Timeline } from './types'
 import { isMobile, uid } from './util'
+
+export { defaultSettings }
 
 export const emptyFilters = (): Filters => ({ offTypes: [], offLayers: [], tags: [], text: '' })
 
-export const defaultSettings = (): TimelineSettings => ({
-  placement: 'above',
-  unit: { preset: 'none', custom: '', showRuler: false },
-  grid: { show: false, style: 'solid', opacity: 0.35 },
-  spine: { width: 2, opacity: 1 },
-  bandStrength: 1,
-  sectionStyle: { labelSize: 14, edgeStrength: 0.5, showDuration: false },
-})
-
 /** Fill in fields missing from projects saved by older versions. */
 export function normalizeProject(p: Project): Project {
-  const d = defaultSettings()
-  const s = (p.settings ?? {}) as Partial<TimelineSettings>
-  p.settings = {
-    placement: s.placement ?? d.placement,
-    unit: { ...d.unit, ...s.unit },
-    grid: { ...d.grid, ...s.grid },
-    spine: { ...d.spine, ...s.spine },
-    bandStrength: s.bandStrength ?? d.bandStrength,
-    sectionStyle: { ...d.sectionStyle, ...s.sectionStyle },
-  }
+  p.settings = normalizeSettings(p.settings)
+  // Timelines (subtabs) came later: an older document becomes one timeline
+  // carrying the project-level settings, with a fixed id so every
+  // collaborator migrates a shared document identically.
+  p.timelines = Array.isArray(p.timelines)
+    ? p.timelines.filter(t => t && typeof t.id === 'string').map(t => normalizeTimeline(t))
+    : []
+  if (!p.timelines.length) p.timelines = [newTimeline(FIRST_TIMELINE_NAME, p.settings, FIRST_TIMELINE_ID)]
+  p.cameras = p.cameras && typeof p.cameras === 'object' ? p.cameras : {}
+  p.activeTimelineId ??= null
   p.hierarchyLevels = normalizeLevels(p.hierarchyLevels)
   p.fields = Array.isArray(p.fields) ? p.fields.map(f => normalizeFieldDef(f)) : []
   p.processors = Array.isArray(p.processors) ? p.processors : []
@@ -59,10 +56,21 @@ export function normalizeProject(p: Project): Project {
   // item that lived on a path comes back onto the main line.
   delete (p as Project & { branches?: unknown }).branches
   for (const it of p.items) delete (it as Item & { pathId?: unknown }).pathId
+  repairTimelines(p)
   repairFolders(p)
   refreshSectionDepths(p)
   repairSchema(p)
   return p
+}
+
+/** Everything a tab keeps to itself: never synced, survives a remote document replace. */
+function keepUserState(next: Project, from: Project): Project {
+  next.camera = from.camera
+  next.cameras = from.cameras
+  next.filters = from.filters
+  next.activeViewId = from.activeViewId
+  next.activeTimelineId = from.activeTimelineId
+  return next
 }
 
 export const DEFAULT_LEVEL_NAMES = ['Chapter', 'Level', 'Section']
@@ -126,6 +134,7 @@ export function blankProject(name: string): Project {
     { id: uid(), name: 'Minor', eye: false, pin: false, size: 1, minZoom: 0 },
     { id: uid(), name: 'Detail', eye: false, pin: false, size: 1, minZoom: 0 },
   ]
+  const settings = defaultSettings()
   return {
     schemaVersion: 1,
     id: uid(),
@@ -138,13 +147,16 @@ export function blankProject(name: string): Project {
     ],
     typeFolders: [],
     layers,
+    timelines: [newTimeline(FIRST_TIMELINE_NAME, settings, FIRST_TIMELINE_ID)],
     sections: [],
     items: [],
     views: [],
     camera: { x: -8, s: 14 },
+    cameras: {},
     filters: emptyFilters(),
     activeViewId: null,
-    settings: defaultSettings(),
+    activeTimelineId: FIRST_TIMELINE_ID,
+    settings,
   }
 }
 
@@ -258,6 +270,11 @@ interface UIState {
   showTitles: boolean
   /** Proposal currently open in the review panel; its pending items are highlighted on the canvas. */
   reviewProposalId: Id | null
+  /**
+   * Item or section the canvas should fly to once its timeline is on screen
+   * (set when a jump crosses timelines; the canvas clears it after flying).
+   */
+  jumpTo: Id | null
 }
 
 interface Store {
@@ -280,7 +297,10 @@ interface Store {
   viewer: boolean
   setUI: (patch: Partial<UIState>) => void
   select: (ids: string[]) => void
+  /** The whole active project (draft in suggest mode): every timeline. */
   active: () => Project
+  /** The active project scoped to its active timeline (what the canvas shows). */
+  activeView: () => Project
   /** Undoable structural mutation of the active project (or of its draft in suggest mode). */
   mutate: (recipe: (p: Project) => void, meta?: { source?: string }) => void
   /** Non-undoable, lightly persisted (camera, filters, settings). */
@@ -294,6 +314,18 @@ interface Store {
   renameProject: (id: Id, name: string) => void
   importProject: (json: string) => string | null
   showToast: (msg: string, undo?: boolean) => void
+  // -- timelines (subtabs)
+  /** Show another timeline of the active project (per user; parks the camera of the one left). */
+  setActiveTimeline: (id: Id) => void
+  /** New empty timeline (settings copied from the active one); returns its id, null when the tab cannot edit. */
+  addTimeline: (name?: string) => Id | null
+  renameTimeline: (id: Id, name: string) => void
+  /** Move a timeline one place left or right in the tab order. */
+  moveTimeline: (id: Id, dir: -1 | 1) => void
+  /** Copy a timeline with all its sections and items; returns the copy's id. */
+  duplicateTimeline: (id: Id) => Id | null
+  /** Delete a timeline with everything on it (never the last one). */
+  deleteTimeline: (id: Id) => void
   // -- sharing
   setShare: (projectId: Id, info: ShareInfo | null) => void
   setSync: (projectId: Id, patch: Partial<SyncState> | null) => void
@@ -411,13 +443,20 @@ function rebaseDraft(oldBase: Project, newBase: Project, draft: Project): Projec
   const changes = diffToChanges(oldBase, draft)
   const next = structuredClone(newBase)
   applyChanges(next, changes)
-  next.camera = draft.camera
-  next.filters = draft.filters
-  next.activeViewId = draft.activeViewId
+  keepUserState(next, draft)
+  repairTimelines(next)
   repairFolders(next)
   refreshSectionDepths(next)
   repairSchema(next)
   return next
+}
+
+/** Consistency passes after any change; new entities without a timeline land on `fallback`. */
+function repairAll(p: Project, fallback?: Id | null) {
+  repairTimelines(p, fallback)
+  repairFolders(p)
+  refreshSectionDepths(p)
+  repairSchema(p)
 }
 
 function withDraft(s: Store, projectId: Id, draft: Project | null): Record<Id, Project> {
@@ -464,6 +503,7 @@ export const useStore = create<Store>((set, get) => ({
     showFields: init.prefs.showFields ?? true,
     showTitles: init.prefs.showTitles ?? true,
     reviewProposalId: null,
+    jumpTo: null,
   } as UIState,
 
   setUI: patch => { set(s => ({ ui: { ...s.ui, ...patch } })); persistSoon(get) },
@@ -473,6 +513,7 @@ export const useStore = create<Store>((set, get) => ({
     const s = get()
     return s.drafts[s.activeId] ?? s.projects.find(p => p.id === s.activeId) ?? s.projects[0]
   },
+  activeView: () => timelineView(get().active()),
 
   mutate: (recipe, meta) => {
     const s = get()
@@ -481,9 +522,8 @@ export const useStore = create<Store>((set, get) => ({
     const base = s.drafts[cur.id] ?? cur
     const next = structuredClone(base)
     recipe(next)
-    repairFolders(next)
-    refreshSectionDepths(next)
-    repairSchema(next)
+    // Entities the recipe created without a timeline belong to the one on screen.
+    repairAll(next, base.activeTimelineId)
     const fwd = diffProject(base, next)
     if (fwd) {
       const inv = diffProject(next, base)!
@@ -513,8 +553,9 @@ export const useStore = create<Store>((set, get) => ({
     const base = s.drafts[cur.id] ?? cur
     const next = structuredClone(base)
     recipe(next)
+    repairTimelines(next, base.activeTimelineId)
     refreshSectionDepths(next)
-    // Only synced fields (settings, name…) travel; camera/filters stay per user.
+    // Only synced fields (timeline settings, name…) travel; camera/filters stay per user.
     const fwd = diffProject(base, next)
     if (fwd && !canEdit(s, cur.id)) return
     if (s.drafts[cur.id]) {
@@ -550,8 +591,7 @@ export const useStore = create<Store>((set, get) => ({
     const base = draft ?? cur
     const next = structuredClone(base)
     applyPatch(next, entry.inv)
-    refreshSectionDepths(next)
-    repairSchema(next)
+    repairAll(next)
     if (draft) {
       set({ drafts: withDraft(s, cur.id, next), ui: { ...s.ui, selection: [] } })
       persistSoon(get)
@@ -575,8 +615,7 @@ export const useStore = create<Store>((set, get) => ({
     const base = draft ?? cur
     const next = structuredClone(base)
     applyPatch(next, entry.fwd)
-    refreshSectionDepths(next)
-    repairSchema(next)
+    repairAll(next)
     if (draft) {
       set({ drafts: withDraft(s, cur.id, next), ui: { ...s.ui, selection: [] } })
       persistSoon(get)
@@ -614,7 +653,72 @@ export const useStore = create<Store>((set, get) => ({
     persistSoon(get)
   },
 
-  setActive: id => { set(s => ({ activeId: id, ui: { ...s.ui, selection: [], reviewProposalId: null } })); persistSoon(get) },
+  setActive: id => { set(s => ({ activeId: id, ui: { ...s.ui, selection: [], reviewProposalId: null, jumpTo: null } })); persistSoon(get) },
+
+  // ---------------------------------------------------------------- timelines (subtabs)
+
+  setActiveTimeline: id => {
+    const s = get()
+    const cur = s.active()
+    if (!cur.timelines.some(t => t.id === id) || cur.activeTimelineId === id) return
+    // Park the camera of the timeline being left; restore the target's (or fit it on first visit).
+    const cameras = { ...cur.cameras }
+    if (cur.activeTimelineId) cameras[cur.activeTimelineId] = cur.camera
+    const camera = cameras[id] ?? fitCamera(timelineView({ ...cur, activeTimelineId: id, cameras }, id), Math.max(window.innerWidth - 300, 400))
+    const next: Project = { ...cur, activeTimelineId: id, cameras, camera }
+    if (s.drafts[cur.id]) set({ drafts: withDraft(s, cur.id, next), ui: { ...s.ui, selection: [], pickRef: null, highlightId: null } })
+    else set({ projects: s.projects.map(p => (p.id === cur.id ? next : p)), ui: { ...s.ui, selection: [], pickRef: null, highlightId: null } })
+    persistSoon(get)
+  },
+
+  addTimeline: name => {
+    const s = get()
+    const cur = s.active()
+    if (!canEdit(s, cur.id)) return null
+    const tl = newTimeline(name?.trim() || nextTimelineName(cur), activeTimeline(cur).settings)
+    s.mutate(p => { p.timelines.push(tl) })
+    get().setActiveTimeline(tl.id)
+    return tl.id
+  },
+
+  renameTimeline: (id, name) => {
+    const s = get()
+    if (!name.trim()) return
+    s.mutate(p => { const t = p.timelines.find(x => x.id === id); if (t) t.name = name.trim() })
+  },
+
+  moveTimeline: (id, dir) => {
+    get().mutate(p => {
+      const i = p.timelines.findIndex(t => t.id === id)
+      const j = i + dir
+      if (i < 0 || j < 0 || j >= p.timelines.length) return
+      ;[p.timelines[i], p.timelines[j]] = [p.timelines[j], p.timelines[i]]
+    })
+  },
+
+  duplicateTimeline: id => {
+    const s = get()
+    const cur = s.active()
+    if (!canEdit(s, cur.id)) return null
+    const src = cur.timelines.find(t => t.id === id)
+    if (!src) return null
+    let newId: Id | null = null
+    s.mutate(p => { newId = copyTimeline(p, id, `${src.name} copy`)?.id ?? null })
+    if (newId) get().setActiveTimeline(newId)
+    return newId
+  },
+
+  deleteTimeline: id => {
+    const s = get()
+    const cur = s.active()
+    if (cur.timelines.length <= 1) return
+    if (cur.activeTimelineId === id) {
+      const i = cur.timelines.findIndex(t => t.id === id)
+      const neighbour = cur.timelines[i + 1] ?? cur.timelines[i - 1]
+      if (neighbour) get().setActiveTimeline(neighbour.id)
+    }
+    get().mutate(p => { removeTimeline(p, id) })
+  },
 
   renameProject: (id, name) => {
     const s = get()
@@ -681,9 +785,7 @@ export const useStore = create<Store>((set, get) => ({
     if (!cur) return
     const next = structuredClone(cur)
     applyPatch(next, patch)
-    repairFolders(next)
-    refreshSectionDepths(next)
-    repairSchema(next)
+    repairAll(next)
     const draft = s.drafts[projectId]
     set({
       projects: s.projects.map(p => (p.id === projectId ? next : p)),
@@ -698,12 +800,9 @@ export const useStore = create<Store>((set, get) => ({
     if (!cur) return
     const next = normalizeProject(structuredClone(doc))
     next.id = projectId
-    next.camera = cur.camera
-    next.filters = cur.filters
-    next.activeViewId = cur.activeViewId
+    keepUserState(next, cur)
     for (const p of reapply) applyPatch(next, p)
-    refreshSectionDepths(next)
-    repairSchema(next)
+    repairAll(next)
     const share = s.shares[projectId]
     const draft = s.drafts[projectId]
     set({
@@ -731,7 +830,7 @@ export const useStore = create<Store>((set, get) => ({
     if (!draft) return
     delete histories[`d:${projectId}`]
     set({
-      projects: s.projects.map(p => (p.id === projectId ? { ...p, camera: draft.camera, filters: draft.filters, activeViewId: draft.activeViewId } : p)),
+      projects: s.projects.map(p => (p.id === projectId ? keepUserState({ ...p }, draft) : p)),
       drafts: withDraft(s, projectId, null),
       ui: { ...s.ui, selection: [] },
     })
@@ -745,12 +844,8 @@ export const useStore = create<Store>((set, get) => ({
     if (!cur || !draft) return
     const next = structuredClone(cur)
     applyChanges(next, keep)
-    next.camera = draft.camera
-    next.filters = draft.filters
-    next.activeViewId = draft.activeViewId
-    repairFolders(next)
-    refreshSectionDepths(next)
-    repairSchema(next)
+    keepUserState(next, draft)
+    repairAll(next)
     delete histories[`d:${projectId}`]
     set({ drafts: withDraft(s, projectId, next), ui: { ...s.ui, selection: [] } })
     persistSoon(get)
@@ -776,14 +871,29 @@ export const useStore = create<Store>((set, get) => ({
   },
 }))
 
-/** The project as the tab sees it: the suggest-mode draft when there is one. */
+/**
+ * The project as the tab sees it: the suggest-mode draft when there is one,
+ * scoped to the active timeline (only its items and sections, its settings and
+ * camera). Anything that must see every timeline (references, exports of the
+ * whole project, proposal conflicts) uses `useActiveWhole()` instead.
+ */
 export function useActiveProject(): Project {
+  return useStore(s => timelineView(s.drafts[s.activeId] ?? s.projects.find(p => p.id === s.activeId) ?? s.projects[0]))
+}
+
+/** The whole active project (draft in suggest mode): every timeline. */
+export function useActiveWhole(): Project {
   return useStore(s => s.drafts[s.activeId] ?? s.projects.find(p => p.id === s.activeId) ?? s.projects[0])
 }
 
-/** The saved document (never the draft). */
+/** The saved document (never the draft), every timeline. */
 export function useActiveBase(): Project {
   return useStore(s => s.projects.find(p => p.id === s.activeId) ?? s.projects[0])
+}
+
+/** The timeline the active tab shows. */
+export function useActiveTimeline(): Timeline {
+  return useStore(s => activeTimeline(s.drafts[s.activeId] ?? s.projects.find(p => p.id === s.activeId) ?? s.projects[0]))
 }
 
 /** True while the active tab collects edits into a draft instead of the document. */
