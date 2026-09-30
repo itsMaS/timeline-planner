@@ -123,7 +123,7 @@ export function itemFieldText(p: Project, it: Item): string {
     .join(FIELD_SEP)
 }
 
-/** ✓ / ✗ badges to draw on an entity: its badged toggle fields (not hidden), with the effective state. */
+/** Toggle badges to draw on an entity: its badged toggle fields (not hidden), with the effective state. */
 export function toggleBadges(p: Project, owner: Owner): { field: FieldDef; on: boolean | null }[] {
   return attachmentsFor(p, owner)
     .filter(({ field }) => field.kind === 'toggle' && field.badge && !(p.filters?.offFields ?? []).includes(field.id))

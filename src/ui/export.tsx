@@ -7,7 +7,7 @@ import {
   attachmentsFor, childrenOf, fieldDisplayName, formatValue, groupText, levelOf, orderedFields, parentOf, readValue, type Owner,
 } from '../model/fields'
 import { bandBadge, shownProcessorResults } from '../model/processors'
-import { ToggleBadges } from './Canvas'
+import { SectionChecks, ToggleBadges, sectionChecksW, textWidth } from './Canvas'
 import { scopedProject, type ExportScope } from './exportScope'
 
 interface Colors { bg: string; text: string; line: string; muted: string }
@@ -77,8 +77,9 @@ function ExportScene(props: { proj: Project; cam: Camera; w: number; h: number }
             const labelPx = sizeAt(sc.depth)
             const barTop = -spineY + barTopFor(sc.depth)
             const avail = x2 - (Math.max(x1, 0) + 8)
-            const marks = toggleBadges(proj, { kind: 'section', entity: sc }).filter(b => b.on).map(() => ' ✓').join('')
-            const nameW = (sc.name.length + marks.length) * labelPx * 0.62
+            const marks = toggleBadges(proj, { kind: 'section', entity: sc }).filter(b => b.on).length
+            const textW = textWidth(sc.name, labelPx, sc.depth === 0 ? 700 : 600, font)
+            const nameW = textW + sectionChecksW(marks, labelPx)
             const showText = avail >= nameW + 8
             const dur = sc.end - sc.start
             const durText = st.sectionStyle.showDuration
@@ -97,8 +98,9 @@ function ExportScene(props: { proj: Project; cam: Camera; w: number; h: number }
                 {showText && (
                   <text x={Math.max(x1, 0) + 8} y={barTop + labelPx + 3} fontFamily={font} fontSize={labelPx}
                     fontWeight={sc.depth === 0 ? 700 : 600}
-                    fill={`hsl(${hue} 50% ${theme === 'dark' ? '70%' : '38%'})`}>{sc.name}{marks && <tspan fill="#22c55e">{marks}</tspan>}</text>
+                    fill={`hsl(${hue} 50% ${theme === 'dark' ? '70%' : '38%'})`}>{sc.name}</text>
                 )}
+                {showText && <SectionChecks count={marks} x={Math.max(x1, 0) + 8 + textW} y={barTop + labelPx + 3} px={labelPx} />}
                 {showDur && (
                   <text x={Math.max(x1, 0) + 8 + nameW + 8} y={barTop + labelPx + 3} fontFamily={font} fontSize={durPx}
                     fill={`hsl(${hue} 45% ${theme === 'dark' ? '70%' : '38%'} / 0.55)`}>{durText}</text>
@@ -161,7 +163,7 @@ function ExportScene(props: { proj: Project; cam: Camera; w: number; h: number }
               )}
               <circle r={14 * z} fill={C.bg} stroke={t?.color} strokeWidth={1.5} />
               <Icon x={-8 * z} y={-8 * z} width={16 * z} height={16 * z} color={t?.color} strokeWidth={2} />
-              <ToggleBadges badges={toggleBadges(proj, { kind: 'item', entity: pl.item })} z={z} plain />
+              <ToggleBadges badges={toggleBadges(proj, { kind: 'item', entity: pl.item })} z={z} bg={C.bg} />
               {pl.labelShown && (() => {
                 const label = splitLabel(proj, pl.item, showFields, showTitles)
                 return (

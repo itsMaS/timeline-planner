@@ -870,8 +870,9 @@ body.col-resizing .inspector { animation: none; }
 .schema-row:hover .row-act, .schema-row .row-act.on, .schema-row.off .row-act { display: inline-flex; }
 .badge-demo { display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; border-radius: 50%; font-size: 10px; font-weight: 700; background: var(--panel2); color: var(--muted); margin: 0 2px; }
 .badge-demo.on { background: #22c55e; color: #fff; }
-/* Toggle badges on item icons: ✓ green when on, ✗ muted when off. */
-.tbadge-bg { stroke-width: 1.2; }
+.badge-demo.ring { position: relative; width: 18px; height: 18px; vertical-align: middle; background: var(--panel2); border: 2.5px solid #22c55e; margin: 0 6px 0 2px; }
+.badge-demo.ring .badge-demo { position: absolute; right: -7px; bottom: -6px; width: 11px; height: 11px; font-size: 8px; margin: 0; box-shadow: 0 0 0 1.5px var(--panel); }
+/* Toggle badges on item icons: a green ring (one arc per badged toggle) and a ✓ disc per toggle that is on. */
 .tbadge { pointer-events: none; }
 .schema-tree.dragging .schema-row { cursor: grabbing; }
 .schema-row.lifting { opacity: .35; }

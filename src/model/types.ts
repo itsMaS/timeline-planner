@@ -47,8 +47,9 @@ export interface FieldDef {
   /** Sidebar folder (Project.fieldFolders); null/undefined = root. Groups the field in the inspector and exports too. */
   folderId?: Id | null
   /**
-   * toggle: draw a ✓ / ✗ badge on the item's icon (and a ✓ after a section's
-   * name) so the state reads at a glance. Off by default.
+   * toggle: while on, draw a green ring and ✓ on the item's icon (a green ✓
+   * chip after a section's name) so the state reads at a glance; nothing
+   * while off. Off by default.
    */
   badge?: boolean
   /**

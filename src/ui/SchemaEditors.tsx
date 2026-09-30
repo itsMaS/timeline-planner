@@ -550,7 +550,7 @@ export function FieldEditor() {
       {field.kind === 'toggle' && (
         <label className="check-row">
           <input type="checkbox" checked={!!field.badge} onChange={e => edit(f => { f.badge = e.target.checked })} />
-          Badge on the item icon: <span className="badge-demo on">✓</span> when on, <span className="badge-demo">✗</span> when off (a ✓ after a section's name)
+          Badge when on: <span className="badge-demo ring"><span className="badge-demo on">✓</span></span> a green ring around the item icon, a <span className="badge-demo on">✓</span> after a section's name; nothing when off
         </label>
       )}
       <div className="sb-hint" style={{ marginTop: -4 }}>

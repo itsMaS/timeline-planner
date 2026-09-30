@@ -28,6 +28,8 @@ import { TypeSearch } from './TypeSearch'
 
 const MIN_S = 0.4
 const MAX_S = 700
+/** The body font, for measuring canvas text (see styles.css). */
+const CANVAS_FONT = "ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif"
 
 type Drag =
   | { kind: 'pan'; button: number; startClientX: number; startClientY: number; camX: number; moved: boolean; touch?: boolean }
@@ -1398,9 +1400,9 @@ export function CanvasView() {
     () => new Map(proj.sections.map(sc => [sc.id, bandBadge(proj, sc)])),
     [proj.sections, proj.items, proj.fields, proj.processors, proj.hierarchyLevels, proj.types, proj.filters.offProcessors],
   )
-  // " ✓" per badged toggle that is on, appended to the section name.
+  // How many badged toggles are on per section: a green ✓ chip each after its name.
   const sectionMarks = useMemo(
-    () => new Map(proj.sections.map(sc => [sc.id, toggleBadges(proj, { kind: 'section', entity: sc }).filter(b => b.on).map(() => ' ✓').join('')])),
+    () => new Map(proj.sections.map(sc => [sc.id, toggleBadges(proj, { kind: 'section', entity: sc }).filter(b => b.on).length])),
     [proj.sections, proj.fields, proj.hierarchyLevels, proj.filters.offFields],
   )
 
@@ -1445,13 +1447,14 @@ export function CanvasView() {
     if (x2 < -40 || x1 > size.w + 40 || w < 2) return []
     const sel = selection.has(`S:${sc.id}`)
     const labelPx = sizeAtDepth(sc.depth)
-    // Badged toggles that are on append a ✓ each to the section's name.
-    const marks = sectionMarks.get(sc.id) ?? ''
+    // Badged toggles that are on add a ✓ chip each after the section's name.
+    const marks = sectionMarks.get(sc.id) ?? 0
     // The label renders only when it fits fully inside the (visible part of
     // the) bar — otherwise the colored bar alone marks the section. The faint
     // duration follows only if it fits too.
     const avail = x2 - (Math.max(x1, 0) + 8)
-    const nameW = (sc.name.length + marks.length) * labelPx * 0.62
+    const textW = textWidth(sc.name, labelPx, sc.depth === 0 ? 700 : 600, CANVAS_FONT)
+    const nameW = textW + sectionChecksW(marks, labelPx)
     const dur = sc.end - sc.start
     const durText = st.sectionStyle.showDuration
       ? formatUnit(dur, dur, unitSuffix(st.unit.preset, st.unit.custom), st.unit.preset)
@@ -1465,7 +1468,7 @@ export function CanvasView() {
     const badgeX = Math.min(x2, size.w) - 8
     const showBadge = !!badge && avail >= nameW + 8 && badgeX - badge.length * durPx * 0.62 >= textEnd + 14
     return [{
-      sc, x1, x2, w, sel, labelPx, hl: highlightId === sc.id, badge, badgeX, showBadge, marks,
+      sc, x1, x2, w, sel, labelPx, hl: highlightId === sc.id, badge, badgeX, showBadge, marks, textW,
       hue: sectionHue(depthIndex.get(sc.id) ?? 0),
       barTop: -spineY + barTopFor(sc.depth),
       barH: labelPx + 10,
@@ -1548,7 +1551,7 @@ export function CanvasView() {
           {/* section header bars — a padding-free, fully opaque strip spanning
               the whole section at its depth row, drawn above everything else in
               the band so nothing cuts through it. Also the section's drag target. */}
-          {bandGeo.map(({ sc, x1, w, hue, sel, hl, labelPx, barTop, barH, showText, showDur, durText, durX, durPx, badge, badgeX, showBadge, marks }) => (
+          {bandGeo.map(({ sc, x1, w, hue, sel, hl, labelPx, barTop, barH, showText, showDur, durText, durX, durPx, badge, badgeX, showBadge, marks, textW }) => (
             <g
               key={`hdr-${sc.id}`}
               className="band-label-g"
@@ -1573,9 +1576,9 @@ export function CanvasView() {
                   }}
                 >
                   {sc.name}
-                  {marks && <tspan fill="#22c55e">{marks}</tspan>}
                 </text>
               )}
+              {showText && <SectionChecks count={marks} x={Math.max(x1, 0) + 8 + textW} y={barTop + labelPx + 3} px={labelPx} />}
               {showDur && (
                 <text
                   x={durX} y={barTop + labelPx + 3}
@@ -1959,38 +1962,85 @@ export function CanvasView() {
 
 // ------------------------------------------------------------------ ToggleBadges
 
+const BADGE_ON = '#22c55e'
+
 /**
- * ✓ / ✗ badges on the corner of an item icon, one per badged toggle field:
- * green when on, faint when off, dashed outline when unset. Several shrink
- * and line up along the bottom-right edge; each carries its field name as a
- * tooltip. Shared by the canvas and the PNG / SVG export scene.
+ * Badged toggles on an item icon: a thick green ring around the icon disc,
+ * split into one arc per badged toggle field (a full ring for a single one),
+ * each arc lit only while its toggle is on. Every toggle that is on also gets
+ * a green ✓ disc on the ring's bottom-right, fanning downward when there are
+ * several. Off and unset toggles draw nothing. Shared by the canvas and the
+ * PNG / SVG export scene; `bg` is the colour the ✓ discs cut out of.
  */
-export function ToggleBadges({ badges, z, plain }: { badges: { field: FieldDef; on: boolean | null }[]; z: number; plain?: boolean }) {
-  if (!badges.length) return null
-  const r = (badges.length === 1 ? 5.5 : badges.length === 2 ? 4.8 : 4.2) * z
-  const step = r * 2 + 1
-  const cx0 = 10 * z
-  const cy = 10 * z
+export function ToggleBadges({ badges, z, bg = 'var(--bg)' }: { badges: { field: FieldDef; on: boolean | null }[]; z: number; bg?: string }) {
+  const on = badges.filter(b => b.on === true)
+  if (!on.length) return null
+  const n = badges.length
+  // Between the icon disc (14) and the selection ring (19).
+  const R = 16.5 * z
+  const sw = 3 * z
+  const seg = (Math.PI * 2) / n
+  const gap = n > 1 ? Math.min(0.3, seg * 0.25) : 0
+  const pt = (a: number) => `${(R * Math.cos(a)).toFixed(2)} ${(R * Math.sin(a)).toFixed(2)}`
+  const r = (on.length === 1 ? 6.5 : on.length === 2 ? 5.8 : 5.2) * z
+  const step = (r * 2 + 1.5 * z) / R
+  const k = r / 5.5
+  const tip = (b: { field: FieldDef }) => <title>{`${b.field.name}: yes`}</title>
   return (
     <g className="tbadge">
-      {badges.map((b, i) => {
-        const cx = cx0 - i * step
-        const bg = b.on === true ? '#22c55e' : plain ? '#8b91a0' : 'var(--panel2)'
-        const stroke = b.on === true ? '#16a34a' : plain ? '#8b91a0' : 'var(--line)'
-        const fg = b.on === true ? '#fff' : plain ? '#fff' : 'var(--muted)'
-        const k = r / 5.5
+      {n === 1
+        ? <circle r={R} fill="none" stroke={BADGE_ON} strokeWidth={sw}>{tip(on[0])}</circle>
+        : badges.map((b, i) => {
+            if (b.on !== true) return null
+            const a1 = -Math.PI / 2 + i * seg + gap / 2
+            const a2 = a1 + seg - gap
+            return (
+              <path key={b.field.id} d={`M ${pt(a1)} A ${R} ${R} 0 ${seg - gap > Math.PI ? 1 : 0} 1 ${pt(a2)}`}
+                fill="none" stroke={BADGE_ON} strokeWidth={sw} strokeLinecap="round">{tip(b)}</path>
+            )
+          })}
+      {on.map((b, i) => {
+        const a = Math.PI / 4 + i * step
         return (
-          <g key={b.field.id} transform={`translate(${cx}, ${cy})`}>
-            <title>{`${b.field.name}: ${b.on === null ? 'not set' : b.on ? 'yes' : 'no'}`}</title>
-            <circle r={r} fill={bg} stroke={stroke} strokeDasharray={b.on === null ? '1.5 1.5' : undefined} className="tbadge-bg" />
-            {b.on === true
-              ? <path d={`M ${-2.6 * k} ${0.2 * k} L ${-0.8 * k} ${2 * k} L ${2.8 * k} ${-2 * k}`} fill="none" stroke={fg} strokeWidth={1.6 * k} strokeLinecap="round" strokeLinejoin="round" />
-              : b.on === false
-                ? <path d={`M ${-2.2 * k} ${-2.2 * k} L ${2.2 * k} ${2.2 * k} M ${2.2 * k} ${-2.2 * k} L ${-2.2 * k} ${2.2 * k}`} fill="none" stroke={fg} strokeWidth={1.4 * k} strokeLinecap="round" opacity={0.75} />
-                : null}
+          <g key={b.field.id} transform={`translate(${(R * Math.cos(a)).toFixed(2)}, ${(R * Math.sin(a)).toFixed(2)})`}>
+            {tip(b)}
+            <circle r={r} fill={BADGE_ON} stroke={bg} strokeWidth={1.8 * z} className="tbadge-bg" />
+            <path d={`M ${-2.6 * k} ${0.2 * k} L ${-0.8 * k} ${2 * k} L ${2.8 * k} ${-2 * k}`} fill="none" stroke="#fff" strokeWidth={1.7 * k} strokeLinecap="round" strokeLinejoin="round" />
           </g>
         )
       })}
+    </g>
+  )
+}
+
+/** Width of `text` in px, measured with a shared offscreen canvas (0.62 em per char without one). */
+let measureCtx: CanvasRenderingContext2D | null | undefined
+export function textWidth(text: string, px: number, weight: number, family: string): number {
+  if (measureCtx === undefined) measureCtx = typeof document !== 'undefined' ? document.createElement('canvas').getContext('2d') : null
+  if (!measureCtx) return text.length * px * 0.62
+  measureCtx.font = `${weight} ${px}px ${family}`
+  return measureCtx.measureText(text).width
+}
+
+/** Room taken by `count` section check chips at label size `px`, gap before them included. */
+export const sectionChecksW = (count: number, px: number) => (count ? count * (px * 0.9 + 3) + 3 : 0)
+
+/**
+ * Green ✓ chips after a section's name, one per badged toggle that is on
+ * (the section counterpart of the item icon ring). `x` is where the name ends.
+ */
+export function SectionChecks({ count, x, y, px }: { count: number; x: number; y: number; px: number }) {
+  if (!count) return null
+  const r = px * 0.45
+  const k = r / 5.5
+  return (
+    <g className="tbadge">
+      {Array.from({ length: count }, (_, i) => (
+        <g key={i} transform={`translate(${(x + 6 + r + i * (2 * r + 3)).toFixed(2)}, ${(y - px * 0.34).toFixed(2)})`}>
+          <circle r={r} fill={BADGE_ON} />
+          <path d={`M ${-2.6 * k} ${0.2 * k} L ${-0.8 * k} ${2 * k} L ${2.8 * k} ${-2 * k}`} fill="none" stroke="#fff" strokeWidth={1.7 * k} strokeLinecap="round" strokeLinejoin="round" />
+        </g>
+      ))}
     </g>
   )
 }

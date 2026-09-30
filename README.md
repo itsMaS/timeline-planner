@@ -59,7 +59,7 @@ To ship an update: `npm run build`, commit the regenerated
   Double-click (or the pencil) renames a view. A newly created type stays
   hidden in every view that already filters by type.
 - **Fields** — global, attached to types, type folders and hierarchy levels,
-  organised in folders. Toggles can show as ✓ / ✗ badges on the icon; a
+  organised in folders. Toggles can show as a green ring and ✓ on the icon while on; a
   *composite* field groups several fields under one label with a display
   template; a *derived* field is a formula (`total - done`) computed on read.
   The funnel next to the search box filters items by rule
@@ -110,7 +110,7 @@ by stable random ids; positions are floats on an unbounded abstract axis.
                    "refTargets": [], "refMultiple": false, "refShowLinks": false,
                    "defaultValue": null, "help": "", "required": false, "showInTooltip": false,
                    "folderId": null,       // sidebar folder (fieldFolders)
-                   "badge": false,         // toggle: show as ✓ / ✗ on the icon
+                   "badge": false,         // toggle: green ring + ✓ on the icon while on
                    "children": [], "template": "", "parentId": null, // composites (kind "group")
                    "formula": "" }],       // derived field: computed on read, never stored
   "fieldFolders": [], "processorFolders": [],   // like typeFolders, without fields

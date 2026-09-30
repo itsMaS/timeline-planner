@@ -190,9 +190,10 @@
   refused by the API writes.
 - **Visibility and badges**: `Filters.offFields` / `offProcessors` hide ids
   everywhere but the inspector (`isFieldShown` in `layout.ts`,
-  `shownProcessorResults`); `FieldDef.badge` on a toggle draws ✓ / ✗ on the
-  icon (`toggleBadges`, `ToggleBadges` in `Canvas.tsx`) and after section
-  names, and drops the field from the label.
+  `shownProcessorResults`); `FieldDef.badge` on a toggle draws, while on, a
+  green ring (one arc per badged toggle) and ✓ on the icon (`toggleBadges`,
+  `ToggleBadges` in `Canvas.tsx`) and a ✓ chip after section names
+  (`SectionChecks`); nothing while off. It drops the field from the label.
   Item types, type folders and hierarchy levels attach them via
   `FieldAttachment` (with an optional per-attachment default that overrides
   the field's default); items and sections store explicit values in

@@ -14,10 +14,11 @@ Decisions were taken with the owner in a series of clickable rounds; the
 
 ### Fields on the canvas
 
-- **Toggle badges.** A toggle field can be shown as a ✓ (green) / ✗ (muted)
-  badge on the item's icon corner instead of in the label; several badges
-  shrink and stack. Sections show a ✓ after the band name for their own
-  toggles. Off by default, switched on per field (*Show as badge* in the field
+- **Toggle badges.** A toggle field can be shown on the item's icon instead
+  of in the label: while on, a thick green ring around the icon and a green ✓
+  on its corner; nothing while off. Several badged toggles split the ring into
+  one arc each and fan their ✓s along it. Sections show a green ✓ chip after
+  the band name for their own toggles. Off by default, switched on per field (*Show as badge* in the field
   editor). Hidden fields do not badge.
 - **Visibility.** Every field and processor has an eye in the sidebar. A
   hidden field disappears from labels, tooltips, badges and exports but stays
@@ -103,8 +104,9 @@ Decisions were taken with the owner in a series of clickable rounds; the
 
 ## Decisions
 
-- Toggle badges sit on the icon corner, ✓ green and ✗ muted, shrink and stack
-  when there are several; also in section band labels. Off by default per
+- Toggle badges show only while on (a green ring round the icon plus a ✓,
+  one ring arc per toggle when there are several) - a grey ✗ for off read
+  as noise and was too small to spot; sections get a ✓ chip after the name. Off by default per
   field.
 - A hidden field is hidden everywhere except the inspector. Visibility is part
   of the filters, so it saves with views and viewers can use it.
