@@ -41,22 +41,29 @@ export interface LayoutResult {
 }
 
 /**
- * Derive each section's depth from geometric containment: a section nests one
- * level under every strictly larger section that fully encloses it, so the
- * hierarchy follows the actual bounds and updates as edges are dragged.
- * Sections only ever nest inside sections of the same timeline.
+ * A section's level (`depth`) is chosen by the user and never follows its
+ * bounds; this only keeps it a whole number inside the hierarchy levels.
  */
-export function refreshSectionDepths(p: Project) {
-  const eps = 1e-9
+export function clampSectionDepths(p: Project) {
+  const max = Math.max(p.hierarchyLevels.length - 1, 0)
   for (const s of p.sections) {
-    let depth = 0
-    for (const t of p.sections) {
-      if (t === s || t.timelineId !== s.timelineId) continue
-      const larger = t.end - t.start > s.end - s.start + eps
-      if (larger && t.start <= s.start + eps && t.end >= s.end - eps) depth++
-    }
-    s.depth = depth
+    const d = Math.round(Number(s.depth))
+    s.depth = Number.isFinite(d) ? Math.min(Math.max(d, 0), max) : 0
   }
+}
+
+/**
+ * Starting level for a new section at [start, end]: one below the deepest
+ * section of the same timeline that encloses it. Only used on creation.
+ */
+export function initialSectionDepth(p: Project, timelineId: string | undefined, start: number, end: number): number {
+  const eps = 1e-9
+  let depth = 0
+  for (const t of p.sections) {
+    if (timelineId && t.timelineId !== timelineId) continue
+    if (t.start <= start + eps && t.end >= end - eps && t.end - t.start > end - start + eps) depth = Math.max(depth, t.depth + 1)
+  }
+  return Math.min(depth, Math.max(p.hierarchyLevels.length - 1, 0))
 }
 
 export function layerIndexOf(p: Project, it: Item): number {

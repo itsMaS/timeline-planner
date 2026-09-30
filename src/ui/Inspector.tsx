@@ -603,7 +603,7 @@ function SectionPanel({ section }: { section: Section }) {
             searchPlaceholder="Search levels…"
             onChange={v => edit(s => { s.depth = Number(v) })}
           />
-          <div className="sb-hint">nesting is geometric — a section inside another sits one level deeper</div>
+          <div className="sb-hint">set by hand - moving or resizing the section keeps its level</div>
         </div>
         <FieldGroups list={attachmentsFor(proj, { kind: 'section', entity: section })} owner={{ kind: 'section', entity: section }} render={({ att, field }) => (
           <FieldRow

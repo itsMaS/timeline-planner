@@ -9,7 +9,7 @@ type Drop = { id: string; side: 'before' | 'after' }
  * The hierarchy levels list in the sidebar's Structure section. Levels name
  * the nesting depths (index 0 is the outermost), so dragging a level to a
  * new position moves its name, fields and processors to that depth; the
- * sections themselves keep their geometric nesting.
+ * sections themselves keep their depth.
  */
 export function HierarchyLevels() {
   const proj = useActiveProject()

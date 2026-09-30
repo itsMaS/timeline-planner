@@ -1,6 +1,6 @@
 import { repairFolders } from './folders'
 import { newFieldDef, normalizeFieldDef, repairSchema } from './fields'
-import { refreshSectionDepths } from './layout'
+import { clampSectionDepths } from './layout'
 import { defaultSettings, FIRST_TIMELINE_ID, FIRST_TIMELINE_NAME, newTimeline, normalizeSettings, normalizeTimeline, repairTimelines } from './timelines'
 import type { FieldAttachment, FieldDef, FieldValue, Filters, HierarchyLevel, Id, Item, Project } from './types'
 import { uid } from './util'
@@ -78,7 +78,7 @@ export function normalizeProject(p: Project): Project {
   for (const it of p.items) delete (it as Item & { pathId?: unknown }).pathId
   repairTimelines(p)
   repairFolders(p)
-  refreshSectionDepths(p)
+  clampSectionDepths(p)
   repairSchema(p)
   return p
 }

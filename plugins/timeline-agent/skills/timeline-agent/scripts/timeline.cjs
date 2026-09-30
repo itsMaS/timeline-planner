@@ -4954,16 +4954,11 @@ function shownProcessorResults(p, section) {
 }
 
 // src/model/layout.ts
-function refreshSectionDepths(p) {
-  const eps = 1e-9;
+function clampSectionDepths(p) {
+  const max = Math.max(p.hierarchyLevels.length - 1, 0);
   for (const s of p.sections) {
-    let depth = 0;
-    for (const t of p.sections) {
-      if (t === s || t.timelineId !== s.timelineId) continue;
-      const larger = t.end - t.start > s.end - s.start + eps;
-      if (larger && t.start <= s.start + eps && t.end >= s.end - eps) depth++;
-    }
-    s.depth = depth;
+    const d = Math.round(Number(s.depth));
+    s.depth = Number.isFinite(d) ? Math.min(Math.max(d, 0), max) : 0;
   }
 }
 function typeOf(p, it) {
@@ -5047,7 +5042,7 @@ function normalizeProject(p) {
   for (const it of p.items) delete it.pathId;
   repairTimelines(p);
   repairFolders(p);
-  refreshSectionDepths(p);
+  clampSectionDepths(p);
   repairSchema(p);
   return p;
 }

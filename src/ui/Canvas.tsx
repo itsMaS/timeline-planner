@@ -7,7 +7,7 @@ import { allowsTarget, attachmentsFor, backlinks, displayEntries, effectiveValue
 import { iconByName } from '../model/icons'
 import {
   PlacedItem, ROW_H, contentExtent, fitCamera, itemMatchesFilters, splitLabel, toggleBadges,
-  layoutTimeline, minZoomFor, refreshSectionDepths, rowY, spineYFor, typeOf,
+  initialSectionDepth, layoutTimeline, minZoomFor, rowY, spineYFor, typeOf,
 } from '../model/layout'
 import { bandBadge } from '../model/processors'
 import { diffToChanges, pendingChanges, previewProject, type ChangeKind, type ProposalChange } from '../model/proposal'
@@ -211,13 +211,10 @@ export function CanvasView() {
       })
     }
     if (sectionOverride) {
-      // Clone every section (depths are recomputed in place) so the live
-      // hierarchy follows the drag without touching the stored project.
       p.sections = proj.sections.map(s => {
         const o = sectionOverride.find(x => x.id === s.id)
-        return o ? { ...s, start: o.start, end: o.end } : { ...s }
+        return o ? { ...s, start: o.start, end: o.end } : s
       })
-      refreshSectionDepths(p)
     }
     return p
   }, [view, posOverride, durOverride, sectionOverride])
@@ -1914,13 +1911,17 @@ export function CanvasView() {
                   <Plus width={13} height={13} /> New item here…
                 </button>
                 <button onClick={() => {
-                  const levelName = proj.hierarchyLevels[0]?.name ?? 'Section'
                   const span = (size.w * 0.25) / cam.s
                   const id = uid()
-                  mutate(p => p.sections.push({
-                    id, name: `New ${levelName.toLowerCase()}`, timelineId: p.activeTimelineId ?? p.timelines[0].id,
-                    depth: 0, start: pos, end: pos + span, fieldValues: {},
-                  }))
+                  mutate(p => {
+                    const timelineId = p.activeTimelineId ?? p.timelines[0].id
+                    const depth = initialSectionDepth(p, timelineId, pos, pos + span)
+                    const levelName = p.hierarchyLevels[depth]?.name ?? 'Section'
+                    p.sections.push({
+                      id, name: `New ${levelName.toLowerCase()}`, timelineId,
+                      depth, start: pos, end: pos + span, fieldValues: {},
+                    })
+                  })
                   select([`S:${id}`])
                   setMenu(null)
                 }}><RectangleHorizontal width={13} height={13} /> New section here</button>

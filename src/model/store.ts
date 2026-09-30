@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { repairFolders } from './folders'
 import { repairSchema } from './fields'
-import { fitCamera, refreshSectionDepths } from './layout'
+import { fitCamera, clampSectionDepths } from './layout'
 import { applyPatch, diffProject, type Patch } from './patch'
 import { applyChanges, diffToChanges, type Proposal, type ProposalChange } from './proposal'
 import {
@@ -312,7 +312,7 @@ function rebaseDraft(oldBase: Project, newBase: Project, draft: Project): Projec
   keepUserState(next, draft)
   repairTimelines(next)
   repairFolders(next)
-  refreshSectionDepths(next)
+  clampSectionDepths(next)
   repairSchema(next)
   return next
 }
@@ -321,7 +321,7 @@ function rebaseDraft(oldBase: Project, newBase: Project, draft: Project): Projec
 function repairAll(p: Project, fallback?: Id | null) {
   repairTimelines(p, fallback)
   repairFolders(p)
-  refreshSectionDepths(p)
+  clampSectionDepths(p)
   repairSchema(p)
 }
 
@@ -420,7 +420,7 @@ export const useStore = create<Store>((set, get) => ({
     const next = structuredClone(base)
     recipe(next)
     repairTimelines(next, base.activeTimelineId)
-    refreshSectionDepths(next)
+    clampSectionDepths(next)
     // Only synced fields (timeline settings, name…) travel; camera/filters stay per user.
     const fwd = diffProject(base, next)
     if (fwd && !canEdit(s, cur.id)) return
