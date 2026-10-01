@@ -36,7 +36,8 @@ function ExportScene(props: { proj: Project; cam: Camera; w: number; h: number }
   const maxDepth = proj.sections.length ? Math.max(...proj.sections.map(s => s.depth)) : -1
   const headerH = maxDepth >= 0 ? barTopFor(maxDepth + 1) : 0
   const maxUpRows = Math.max(1, Math.floor((spineY - headerH - 76) / 46) + 1)
-  const layout = layoutTimeline(proj, cam, w, proj.filters, density, true, new Set(), new Set(), st.placement, maxUpRows, showFields, showTitles)
+  const maxDownRows = Math.max(1, Math.floor((h - spineY - 112) / 46) + 1)
+  const layout = layoutTimeline(proj, cam, w, proj.filters, density, true, new Set(), new Set(), st.placement, maxUpRows, showFields, showTitles, maxDownRows)
   const toX = (pos: number) => (pos - cam.x) * cam.s
   const font = 'ui-sans-serif, system-ui, sans-serif'
 

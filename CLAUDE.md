@@ -245,6 +245,10 @@
   type in the live filters afterwards.
 - `ui.showTitles` / `ui.showFields` (per browser) drive canvas labels via
   `layoutTimeline(..., showFields, showTitles)` and `splitLabel`.
+- Row caps follow the room on screen: the canvas and PNG/SVG export pass
+  `maxUpRows` (down to the section header bars, so more levels = fewer rows)
+  and `maxDownRows` (placement 'both', above the ruler / status bar); from mid
+  detail up the layout uses every row that fits, below it shrinks toward 3.
 - **Stacks**: items sharing a position (`stackKey`) form a stack ordered by
   the optional `Item.stack` rank, lowest first, unranked after by layer
   (`src/model/stacks.ts`: `compareStack`, `sortByPosition`, `stackRuns`).

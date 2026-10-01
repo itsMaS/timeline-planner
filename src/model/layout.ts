@@ -223,11 +223,23 @@ export function layoutTimeline(
   showFields = false,
   /** Titles hidden: labels hold only the fields (or nothing), so items pack tighter. */
   showTitles = true,
+  /** Hard cap on rows below the spine (placement 'both') so items stay above the ruler and status bar. */
+  maxDownRows = Infinity,
 ): LayoutResult {
   const toX = (pos: number) => (pos - cam.x) * cam.s
   const margin = 220
   const minGap = lerp(46, 10, density)
-  const maxRows = Math.round(lerp(3, 7, density))
+  // Rows per side follow the room on screen: from mid detail up every row
+  // that fits is used, below it the cap shrinks toward 3 so low detail still
+  // declutters. Without a known room (Infinity) the old 3..7 scale applies.
+  const fill = clamp(density * 2, 0, 1)
+  const capFor = (room: number) => Number.isFinite(room)
+    ? Math.max(1, Math.round(lerp(Math.min(3, room), room, fill)))
+    : Math.round(lerp(3, 7, density))
+  const upCap = capFor(maxUpRows)
+  const downCap = capFor(maxDownRows)
+  // Pinned and selected items may use every row there is room for.
+  const pinCap = (room: number, cap: number) => (Number.isFinite(room) ? room : cap + 4)
 
   const eyeHidden = new Set(p.layers.filter(l => l.eye).map(l => l.id))
   const pinned = new Set(p.layers.filter(l => l.pin).map(l => l.id))
@@ -280,7 +292,7 @@ export function layoutTimeline(
   const packLine = (
     cands: Cand[],
     rows: Map<number, Interval[]>,
-    candidateRows: (cap: number) => number[],
+    candidateRows: (pin: boolean) => number[],
     xOf: (it: Item) => number,
   ): Item[] => {
     const overflow: Item[] = []
@@ -321,7 +333,7 @@ export function layoutTimeline(
       let from = 0
       const got: { c: Cand; pl: PlacedItem; a: number; b: number }[] = []
       for (const c of members) {
-        const cand = candidateRows(c.pin ? maxRows + 4 : maxRows)
+        const cand = candidateRows(c.pin)
         let hit: (typeof got)[number] | null = null
         for (const withLabel of [true, false]) {
           const m = measure(c, withLabel)
@@ -372,11 +384,13 @@ export function layoutTimeline(
 
   // Candidate rows in preference order: 0, -1, 1, -2, … when both sides are
   // allowed (alternating keeps the timeline vertically balanced).
-  const candidateRows = (cap: number): number[] => {
+  const candidateRows = (pin: boolean): number[] => {
+    const up = pin ? pinCap(maxUpRows, upCap) : upCap
+    const down = placement === 'both' ? (pin ? pinCap(maxDownRows, downCap) : downCap) : 0
     const out: number[] = []
-    for (let r = 0; r < cap; r++) {
-      if (r < maxUpRows) out.push(r)
-      if (placement === 'both') out.push(-(r + 1))
+    for (let r = 0; r < Math.max(up, down); r++) {
+      if (r < up) out.push(r)
+      if (r < down) out.push(-(r + 1))
     }
     return out
   }

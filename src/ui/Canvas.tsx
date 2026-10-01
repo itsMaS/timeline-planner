@@ -245,10 +245,12 @@ export function CanvasView() {
   const maxSectionDepth = proj.sections.length ? Math.max(...proj.sections.map(s => s.depth)) : -1
   const headerH = maxSectionDepth >= 0 ? barTopFor(maxSectionDepth + 1) : 0
   const maxUpRows = Math.max(1, Math.floor((spineY - headerH - 76) / ROW_H) + 1)
+  // Below the spine (placement 'both'): keep clear of the ruler labels and the status bar.
+  const maxDownRows = Math.max(1, Math.floor((size.h - spineY - 112) / ROW_H) + 1)
 
   const layout = useMemo(
-    () => layoutTimeline(effective, cam, size.w, proj.filters, ui.density, ui.ghostHidden, stickyRef.current, selection, st.placement, maxUpRows, ui.showFields, ui.showTitles),
-    [effective, cam, size.w, proj.filters, ui.density, ui.ghostHidden, selection, st.placement, maxUpRows, ui.showFields, ui.showTitles],
+    () => layoutTimeline(effective, cam, size.w, proj.filters, ui.density, ui.ghostHidden, stickyRef.current, selection, st.placement, maxUpRows, ui.showFields, ui.showTitles, maxDownRows),
+    [effective, cam, size.w, proj.filters, ui.density, ui.ghostHidden, selection, st.placement, maxUpRows, ui.showFields, ui.showTitles, maxDownRows],
   )
   useEffect(() => {
     stickyRef.current = new Set(layout.placed.map(pl => pl.item.id))
