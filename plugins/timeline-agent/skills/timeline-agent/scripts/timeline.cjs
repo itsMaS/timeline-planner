@@ -4953,6 +4953,35 @@ function shownProcessorResults(p, section) {
   return processorResults(p, section).filter((r) => !r.error && !off.includes(r.proc.id));
 }
 
+// src/model/stacks.ts
+var stackKey = (pos) => Math.round(pos * 1e6);
+var layerOf = (p, it) => {
+  const layerId = it.layerId ?? p.types.find((t) => t.id === it.typeId)?.defaultLayerId ?? null;
+  const idx = p.layers.findIndex((l) => l.id === layerId);
+  return { idx: idx < 0 ? p.layers.length : idx, pin: idx >= 0 && p.layers[idx].pin };
+};
+function compareStack(p, a, b) {
+  const sa = a.stack ?? Infinity;
+  const sb = b.stack ?? Infinity;
+  if (sa !== sb) return sa < sb ? -1 : 1;
+  const la = layerOf(p, a);
+  const lb = layerOf(p, b);
+  if (la.pin !== lb.pin) return la.pin ? -1 : 1;
+  return la.idx - lb.idx;
+}
+function sortByPosition(p, items) {
+  return [...items].sort((a, b) => stackKey(a.pos) - stackKey(b.pos) || compareStack(p, a, b));
+}
+function stackRuns(items) {
+  const runs = [];
+  for (const it of items) {
+    const last = runs[runs.length - 1];
+    if (last && stackKey(last[0].pos) === stackKey(it.pos)) last.push(it);
+    else runs.push([it]);
+  }
+  return runs;
+}
+
 // src/model/layout.ts
 function clampSectionDepths(p) {
   const max = Math.max(p.hierarchyLevels.length - 1, 0);
@@ -24410,14 +24439,13 @@ function buildTree(proj, rootIds) {
     if (best) nodes.get(best.id).items.push(it);
     else loose.push(it);
   }
-  const byPos = (a, b) => a.pos - b.pos || a.title.localeCompare(b.title);
   for (const n of nodes.values()) {
-    n.items.sort(byPos);
+    n.items = sortByPosition(proj, n.items);
     n.children.sort((a, b) => a.section.start - b.section.start || a.section.depth - b.section.depth);
   }
-  loose.sort(byPos);
+  const looseSorted = sortByPosition(proj, loose);
   const roots = rootIds ? rootIds.map((id) => nodes.get(id)).filter((n) => !!n) : proj.sections.filter((sc) => parentOf2.get(sc.id) === null).sort((a, b) => a.start - b.start || a.depth - b.depth).map((sc) => nodes.get(sc.id));
-  return { roots, loose: rootIds ? [] : loose };
+  return { roots, loose: rootIds ? [] : looseSorted };
 }
 function countItems(n) {
   return n.items.length + n.children.reduce((s, c) => s + countItems(c), 0);
@@ -24443,7 +24471,7 @@ function DocBody({ proj, roots, loose, base = 1 }) {
   const st = proj.settings;
   const suffix = unitSuffix(st.unit.preset, st.unit.custom);
   const fmt = (v) => formatUnit(v, 0.05, suffix, st.unit.preset);
-  const renderItem = (it, level) => {
+  const renderItem = (it, level, rank) => {
     const t = typeOf(proj, it);
     const Icon2 = iconByName(t?.icon ?? "Circle");
     const layer = proj.layers.find((l) => l.id === (it.layerId ?? t?.defaultLayerId));
@@ -24456,6 +24484,7 @@ function DocBody({ proj, roots, loose, base = 1 }) {
     if (it.createdBy?.name) meta.push(`Created by: ${it.createdBy.name}`);
     return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("article", { className: "item", style: { "--c": t?.color ?? "#888" }, children: [
       /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(Heading7, { level, className: "item-h", children: [
+        rank !== void 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "rank", title: "Priority within the stack", children: rank + 1 }),
         /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "icon", children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Icon2, { width: "1em", height: "1em", color: t?.color, strokeWidth: 2 }) }),
         /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "title", children: it.title || "Untitled" }),
         /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "type", children: t?.name ?? "Unknown type" })
@@ -24470,10 +24499,24 @@ function DocBody({ proj, roots, loose, base = 1 }) {
       it.images.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { className: "images", children: it.images.map((src, i) => /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("img", { src, alt: "" }, i)) })
     ] }, it.id);
   };
+  const renderRun = (run, level) => {
+    if (run.length === 1) return renderItem(run[0], level);
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "stack", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("p", { className: "stack-h", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "stack-mark", children: "\u2261" }),
+        " ",
+        run.length,
+        " items at ",
+        fmt(run[0].pos),
+        " \xB7 same position, in priority order"
+      ] }),
+      run.map((it, i) => renderItem(it, level, i))
+    ] }, `stack:${run[0].id}`);
+  };
   const renderSection = (n, level) => {
     const sc = n.section;
     const entries = [
-      ...n.items.map((it) => ({ pos: it.pos, node: renderItem(it, level + 1) })),
+      ...stackRuns(n.items).map((run) => ({ pos: run[0].pos, node: renderRun(run, level + 1) })),
       ...n.children.map((c) => ({ pos: c.section.start, node: renderSection(c, level + 1) }))
     ].sort((a, b) => a.pos - b.pos);
     const secFields = displayEntries(proj, { kind: "section", entity: sc }, { skip: (f) => (proj.filters.offFields ?? []).includes(f.id) });
@@ -24509,7 +24552,7 @@ function DocBody({ proj, roots, loose, base = 1 }) {
     roots.map((r) => renderSection(r, base)),
     loose.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("section", { className: `sec l${base}`, children: [
       roots.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Heading7, { level: base, className: "sec-h", children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "title", children: "Outside any section" }) }),
-      loose.map((it) => renderItem(it, roots.length > 0 ? base + 1 : base))
+      stackRuns(loose).map((run) => renderRun(run, roots.length > 0 ? base + 1 : base))
     ] })
   ] });
 }
@@ -24550,6 +24593,15 @@ h1.item-h { font-size: 19pt; } h2.item-h { font-size: 15.5pt; } h3.item-h { font
 .item-h .icon { display: inline-flex; color: var(--c); flex: none; }
 .item-h .icon svg { width: 1em; height: 1em; }
 .item-h .type { color: var(--c); border-color: color-mix(in srgb, var(--c) 45%, #fff); }
+.item-h .rank {
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  min-width: 1.5em; height: 1.5em; padding: 0 4px; border-radius: 999px;
+  font-size: 0.62em; font-weight: 700; font-variant-numeric: tabular-nums; color: #fff; background: #4b5162;
+}
+.stack { margin: 14px 0 10px; padding: 2px 10px 4px 10px; border: 1.5px dashed #b9c0cf; border-radius: 8px; background: #f7f8fb; }
+.stack-h { margin: 6px 0 0; font-size: 9.5pt; font-weight: 600; color: #4b5162; page-break-after: avoid; break-after: avoid; }
+.stack-mark { color: #8a91a1; }
+.stack > .item { margin: 8px 0 6px; }
 .meta { margin: 1px 0 6px; font-size: 9.5pt; color: #6b7180; }
 .procs { margin: 0 0 6px; font-size: 10.5pt; color: #4b5162; }
 .procs .proc-name { font-weight: 600; }
@@ -24776,7 +24828,10 @@ function outlineOf(d) {
     if (multi) lines.push(`## Timeline: ${tl.name} [${tl.id}]  (unit: ${tl.settings.unit.preset}${tl.settings.unit.preset === "custom" ? ` ${tl.settings.unit.custom}` : ""})`);
     const base = multi ? 3 : 2;
     const secs = [...v.sections].sort((a, b) => a.start - b.start || a.depth - b.depth);
-    const items = [...v.items].sort((a, b) => a.pos - b.pos);
+    const items = sortByPosition(v, v.items);
+    const stackOf = /* @__PURE__ */ new Map();
+    for (const run of stackRuns(items)) if (run.length > 1) run.forEach((it, i) => stackOf.set(it.id, `${i + 1} of ${run.length}`));
+    const lineOf = (it) => itemLine(d, it, fmt) + (stackOf.has(it.id) ? `  (stack ${stackOf.get(it.id)} at this position)` : "");
     const placed = /* @__PURE__ */ new Set();
     for (const sc of secs) {
       lines.push(`${"#".repeat(sc.depth + base)} ${sc.name || "Untitled"} [${sc.id}]  (${fmt(sc.start)} \u2192 ${fmt(sc.end)})`);
@@ -24786,13 +24841,13 @@ function outlineOf(d) {
         const deeper = secs.some((o) => o.depth > sc.depth && it.pos >= o.start && it.pos <= o.end);
         if (deeper) continue;
         placed.add(it.id);
-        lines.push(itemLine(d, it, fmt));
+        lines.push(lineOf(it));
       }
     }
     const loose = items.filter((it) => !placed.has(it.id));
     if (loose.length) {
       lines.push(secs.length ? `${"#".repeat(base)} (outside any section)` : "");
-      for (const it of loose) lines.push(itemLine(d, it, fmt));
+      for (const it of loose) lines.push(lineOf(it));
     }
     if (!secs.length && !loose.length) lines.push("(empty)");
   }

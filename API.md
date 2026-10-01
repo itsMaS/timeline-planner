@@ -114,7 +114,9 @@ Things a Unity tool typically needs from `doc`:
   tags, link, fieldValues }`. An item belongs to a section when they share a
   `timelineId` and `section.start <= item.pos < section.end` (sections nest,
   so an item is in one section per depth). Positions on different timelines
-  are unrelated.
+  are unrelated. Items sharing a `pos` may carry an optional `stack` (0, 1,
+  2…): their priority order at that position, lowest first, set in the
+  planner by dragging a stacked item up or down; items without it come after.
 - `doc.types`: `{ id, name, icon, color, folderId, fields: [{ fieldId, defaultValue }] }`.
   Resolve `item.typeId` here to know that an item is a *Checkpoint*.
 - `doc.typeFolders`: `{ id, name, parentId, fields: [{ fieldId, defaultValue }] }`.

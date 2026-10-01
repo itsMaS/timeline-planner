@@ -292,7 +292,7 @@ function ProposalReview(props: { proj: Project; projectId: string; proposal: Pro
 
 export const FIELD_LABEL: Record<string, string> = {
   title: 'title', description: 'description', tags: 'tags', link: 'link', images: 'images', fieldValues: 'fields',
-  pos: 'position', duration: 'duration', typeId: 'type', layerId: 'layer',
+  pos: 'position', duration: 'duration', stack: 'stack order', typeId: 'type', layerId: 'layer',
   name: 'name', icon: 'icon', color: 'color', defaultLayerId: 'default layer', fields: 'fields', folderId: 'folder',
   kind: 'kind', help: 'help text', required: 'required', showInTooltip: 'show in tooltip', defaultValue: 'default',
   maxLength: 'max length', min: 'min', max: 'max', decimals: 'decimals', unit: 'unit', refTargets: 'can reference',

@@ -1,6 +1,7 @@
 import type { Camera, FieldDef, Filters, Item, Project } from './types'
 import { attachmentsFor, displayEntries, readValue, type Owner } from './fields'
 import { matchesRule } from './scope'
+import { compareStack, stackKey } from './stacks'
 import { clamp, lerp } from './util'
 
 export interface PlacedItem {
@@ -278,28 +279,50 @@ export function layoutTimeline(
   ): Item[] => {
     const overflow: Item[] = []
     cands.sort(byPriority)
-    for (const { it, ghost, pin, size } of cands) {
-      const x = xOf(it)
-      const spanW = it.duration > 0 ? Math.max(it.duration * cam.s, 10) : 0
-      const rowCap = pin ? maxRows + 4 : maxRows
-      const iconW = ICON_W * size
-      const tryPlace = (withLabel: boolean): PlacedItem | null => {
-        const lbl = itemLabel(p, it, showFields, showTitles)
-        const lw = withLabel && lbl.text ? (labelWidth(lbl.text, lbl.max) + 8) * size : 0
-        const w = Math.max(iconW + lw, spanW)
-        const a = x - iconW / 2 - minGap / 2
-        const b = x - iconW / 2 + w + minGap / 2
-        for (const r of candidateRows(rowCap)) {
-          if (fits(rows, r, a, b)) {
-            occupy(rows, r, a, b)
-            return { item: it, x, ny: rowY(r), w, row: r, labelShown: withLabel && !!lbl.text, ghost, spanW, size }
+    // Items sharing a position are placed together, when the first of them
+    // comes up, in their stack order: each one on a later candidate row than
+    // the one before, so the canvas reads the order off from the spine out.
+    const stacks = new Map<number, Cand[]>()
+    for (const c of cands) {
+      const k = stackKey(c.it.pos)
+      const s = stacks.get(k)
+      if (s) s.push(c)
+      else stacks.set(k, [c])
+    }
+    const done = new Set<number>()
+    for (const first of cands) {
+      const key = stackKey(first.it.pos)
+      if (done.has(key)) continue
+      done.add(key)
+      const members = stacks.get(key)!
+      if (members.length > 1) members.sort((a, b) => compareStack(p, a.it, b.it))
+      let from = 0
+      for (const { it, ghost, pin, size } of members) {
+        const x = xOf(it)
+        const spanW = it.duration > 0 ? Math.max(it.duration * cam.s, 10) : 0
+        const rowCap = pin ? maxRows + 4 : maxRows
+        const iconW = ICON_W * size
+        const tryPlace = (withLabel: boolean): PlacedItem | null => {
+          const lbl = itemLabel(p, it, showFields, showTitles)
+          const lw = withLabel && lbl.text ? (labelWidth(lbl.text, lbl.max) + 8) * size : 0
+          const w = Math.max(iconW + lw, spanW)
+          const a = x - iconW / 2 - minGap / 2
+          const b = x - iconW / 2 + w + minGap / 2
+          const cand = candidateRows(rowCap)
+          for (let i = from; i < cand.length; i++) {
+            const r = cand[i]
+            if (fits(rows, r, a, b)) {
+              occupy(rows, r, a, b)
+              from = i + 1
+              return { item: it, x, ny: rowY(r), w, row: r, labelShown: withLabel && !!lbl.text, ghost, spanW, size }
+            }
           }
+          return null
         }
-        return null
+        const pl = tryPlace(true) ?? tryPlace(false)
+        if (pl) placed.push(pl)
+        else if (!ghost) overflow.push(it)
       }
-      const pl = tryPlace(true) ?? tryPlace(false)
-      if (pl) placed.push(pl)
-      else if (!ghost) overflow.push(it)
     }
     return overflow
   }

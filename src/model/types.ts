@@ -205,6 +205,12 @@ export interface Item {
   images: string[]
   fieldValues: Record<Id, FieldValue>
   /**
+   * Rank among the items sharing this position (lower = higher priority:
+   * closer to the spine, first in exports). Unset = after the ranked ones,
+   * ordered by layer. Set by dragging a stacked item up or down; see stacks.ts.
+   */
+  stack?: number
+  /**
    * Collaborator who created the item: a snapshot of their display name and
    * colour (the identity shown to others in the Share dialog) taken when the
    * item was made. Absent on items from before this was recorded.

@@ -44,6 +44,7 @@ import { childrenOf, isDerived, rootFields } from '../src/model/fields'
 import { foldersOf } from '../src/model/folders'
 import { diffToChanges, type Proposal, type ProposalChange } from '../src/model/proposal'
 import { itemMatchesFilters, typeOf } from '../src/model/layout'
+import { sortByPosition, stackRuns } from '../src/model/stacks'
 import { repairTimelines, timelineView } from '../src/model/timelines'
 import type { FieldDef, Project } from '../src/model/types'
 import { buildDocHTML } from '../src/ui/exportDoc'
@@ -173,7 +174,12 @@ function outlineOf(d: Project): string {
     if (multi) lines.push(`## Timeline: ${tl.name} [${tl.id}]  (unit: ${tl.settings.unit.preset}${tl.settings.unit.preset === 'custom' ? ` ${tl.settings.unit.custom}` : ''})`)
     const base = multi ? 3 : 2
     const secs = [...v.sections].sort((a, b) => a.start - b.start || a.depth - b.depth)
-    const items = [...v.items].sort((a, b) => a.pos - b.pos)
+    const items = sortByPosition(v, v.items)
+    // Items sharing a position: their place in the stack (priority order).
+    const stackOf = new Map<string, string>()
+    for (const run of stackRuns(items)) if (run.length > 1) run.forEach((it, i) => stackOf.set(it.id, `${i + 1} of ${run.length}`))
+    const lineOf = (it: Project['items'][number]) =>
+      itemLine(d, it, fmt) + (stackOf.has(it.id) ? `  (stack ${stackOf.get(it.id)} at this position)` : '')
     const placed = new Set<string>()
     for (const sc of secs) {
       lines.push(`${'#'.repeat(sc.depth + base)} ${sc.name || 'Untitled'} [${sc.id}]  (${fmt(sc.start)} → ${fmt(sc.end)})`)
@@ -184,13 +190,13 @@ function outlineOf(d: Project): string {
         const deeper = secs.some(o => o.depth > sc.depth && it.pos >= o.start && it.pos <= o.end)
         if (deeper) continue
         placed.add(it.id)
-        lines.push(itemLine(d, it, fmt))
+        lines.push(lineOf(it))
       }
     }
     const loose = items.filter(it => !placed.has(it.id))
     if (loose.length) {
       lines.push(secs.length ? `${'#'.repeat(base)} (outside any section)` : '')
-      for (const it of loose) lines.push(itemLine(d, it, fmt))
+      for (const it of loose) lines.push(lineOf(it))
     }
     if (!secs.length && !loose.length) lines.push('(empty)')
   }

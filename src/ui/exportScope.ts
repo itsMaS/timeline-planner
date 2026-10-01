@@ -1,4 +1,5 @@
 import { itemMatchesFilters, typeOf } from '../model/layout'
+import { sortByPosition } from '../model/stacks'
 import { derived } from '../model/timelines'
 import type { Item, Project, Section } from '../model/types'
 
@@ -16,7 +17,7 @@ export interface ExportScope {
   range: { min: number; max: number } | null
   /** Whether an item is part of the export. */
   includes: (it: Item) => boolean
-  /** Items in scope, in timeline order. */
+  /** Items in scope, in timeline order (items sharing a position in stack order). */
   items: Item[]
   /** Anything hidden by filters? (for labels) */
   filtered: boolean
@@ -44,7 +45,7 @@ export function exportScope(proj: Project, selection: string[]): ExportScope {
     : null
   const inSections = (it: Item) => !sections.length || sections.some(sc => it.pos >= sc.start - EPS && it.pos <= sc.end + EPS)
   const includes = (it: Item) => isItemVisible(proj, it) && inSections(it)
-  const items = proj.items.filter(includes).sort((a, b) => a.pos - b.pos)
+  const items = sortByPosition(proj, proj.items.filter(includes))
   const filtered = proj.items.some(it => !isItemVisible(proj, it))
   const describe = (what: string, whole = 'whole timeline') => sections.length === 0
     ? `${what} of ${filtered ? 'visible items' : whole}`

@@ -11,6 +11,7 @@ import {
 } from '../model/layout'
 import { bandBadge } from '../model/processors'
 import { diffToChanges, pendingChanges, previewProject, type ChangeKind, type ProposalChange } from '../model/proposal'
+import { sortByPosition, stackKey } from '../model/stacks'
 import { useActiveProject, useActiveWhole, useStore } from '../model/store'
 import { derived, timelineName, timelineView } from '../model/timelines'
 import type { Camera, FieldDef, Item, Section } from '../model/types'
@@ -37,7 +38,7 @@ type Drag =
   | { kind: 'pinch'; startDist: number; startMidX: number; camX: number; camS: number }
   | { kind: 'marquee'; x0: number; y0: number; x1: number; y1: number }
   | {
-      kind: 'item'; ids: string[]; grabId: string; startClientX: number
+      kind: 'item'; ids: string[]; grabId: string; startClientX: number; startClientY: number
       orig: Map<string, number>
       /** Original positions of every item, for ripple (move-all) drags. */
       allOrig: Map<string, number>
@@ -48,6 +49,12 @@ type Drag =
           delta stretches their duration instead of moving them. */
       endOrig: Map<string, { pos: number; dur: number }>
       moved: boolean; color: string; cands: number[]
+      /** The grabbed item shares its position with others: its stack in the
+          order shown, and where each shown member sits on screen. */
+      stack?: { order: string[]; slots: { id: string; y: number }[] }
+      /** With a stack, the first clear movement decides: sideways moves the
+          item along the line, up or down reorders the stack. */
+      mode?: 'move' | 'reorder'
     }
   | { kind: 'handle'; id: string; side: 'L' | 'R'; origPos: number; origDur: number; startClientX: number; cands: number[] }
   | {
@@ -128,6 +135,8 @@ export function CanvasView() {
   const [posOverride, setPosOverride] = useState<Map<string, number> | null>(null)
   const [durOverride, setDurOverride] = useState<{ id: string; pos: number; duration: number }[] | null>(null)
   const [sectionOverride, setSectionOverride] = useState<{ id: string; start: number; end: number }[] | null>(null)
+  /** Stack ranks while a stacked item is dragged up or down (item id → rank). */
+  const [stackOverride, setStackOverride] = useState<Map<string, number> | null>(null)
   const [hover, setHover] = useState<{ id: string; x: number; y: number } | null>(null)
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const [expandedCluster, setExpandedCluster] = useState<string | null>(null)
@@ -201,14 +210,16 @@ export function CanvasView() {
 
   // ---- effective project (ephemeral drag overrides applied)
   const effective = useMemo(() => {
-    if (!posOverride && !durOverride && !sectionOverride) return view
+    if (!posOverride && !durOverride && !sectionOverride && !stackOverride) return view
     const p = derived(view, {})
-    if (posOverride || durOverride) {
+    if (posOverride || durOverride || stackOverride) {
       p.items = view.items.map(it => {
         let out = it
         if (posOverride?.has(it.id)) out = { ...out, pos: posOverride.get(it.id)! }
         const dv = durOverride?.find(x => x.id === it.id)
         if (dv) out = { ...out, pos: dv.pos, duration: dv.duration }
+        const sv = stackOverride?.get(it.id)
+        if (sv !== undefined) out = { ...out, stack: sv }
         return out
       })
     }
@@ -219,7 +230,7 @@ export function CanvasView() {
       })
     }
     return p
-  }, [view, posOverride, durOverride, sectionOverride])
+  }, [view, posOverride, durOverride, sectionOverride, stackOverride])
 
   // Depth-graded emphasis: top-level sections get bigger labels and stronger
   // borders; each level down shrinks. Header bars stack flush from the very
@@ -860,8 +871,25 @@ export function CanvasView() {
       d.x1 = x; d.y1 = y
       setDrag({ ...d })
     } else if (d.kind === 'item') {
-      const du = (e.clientX - d.startClientX) / cam.s
-      if (Math.abs(e.clientX - d.startClientX) > 3) d.moved = true
+      const dx = e.clientX - d.startClientX
+      const dy = e.clientY - d.startClientY
+      if (d.stack && !d.mode) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) <= 6) return
+        d.mode = Math.abs(dy) > Math.abs(dx) ? 'reorder' : 'move'
+      }
+      if (d.mode === 'reorder') {
+        // The item takes the rank of the slot nearest the pointer; the rest
+        // of the stack closes up around it. The layout reflows live.
+        const { order, slots } = d.stack!
+        let best = slots[0]
+        for (const sl of slots) if (Math.abs(sl.y - y) < Math.abs(best.y - y)) best = sl
+        const next = order.filter(id => id !== d.grabId)
+        next.splice(order.indexOf(best.id), 0, d.grabId)
+        setStackOverride(new Map(next.map((id, i) => [id, i])))
+        return
+      }
+      const du = dx / cam.s
+      if (Math.abs(dx) > 3) d.moved = true
       const next = new Map<string, number>()
       const rippleOn = d.ripple || e.shiftKey
       // Snap the grabbed item (magnet is pointless in ripple mode — everything
@@ -1044,8 +1072,19 @@ export function CanvasView() {
     } else if (d.kind === 'item') {
       const ov = posOverride
       const dv = durOverride
+      const so = stackOverride
       setPosOverride(null)
       setDurOverride(null)
+      setStackOverride(null)
+      if (d.mode === 'reorder') {
+        // Rank the whole stack 0..n-1 so the order no longer depends on layers.
+        if (so && d.stack!.order.some((id, i) => so.get(id) !== i)) {
+          mutate(p => { for (const it of p.items) { const r = so.get(it.id); if (r !== undefined) it.stack = r } })
+          puff(e.clientX - rect.left, e.clientY - rect.top, d.color)
+          sfx.snap()
+        }
+        return
+      }
       if (d.moved && (ov || dv)) {
         mutate(p => {
           if (ov) for (const it of p.items) if (ov.has(it.id)) it.pos = ov.get(it.id)!
@@ -1175,10 +1214,31 @@ export function CanvasView() {
     for (const it of useStore.getState().activeView().items) allOrig.set(it.id, it.pos)
     const type = typeOf(proj, item)
     setDragBoth({
-      kind: 'item', ids, grabId: ids.includes(item.id) ? item.id : ids[0], startClientX: e.clientX,
+      kind: 'item', ids, grabId: ids.includes(item.id) ? item.id : ids[0], startClientX: e.clientX, startClientY: e.clientY,
       orig, allOrig, endOrig: new Map(), ripple: ui.ripple || e.shiftKey, moved: false, color: type?.color ?? '#888',
       cands: magnetCands({ items: new Set(ids) }),
+      // A lone stacked item (no clone) can also be dragged up or down to reorder its stack.
+      stack: !e.altKey && ids.length === 1 && ids[0] === item.id ? stackAt(item) : undefined,
     })
+  }
+
+  /**
+   * The stack an item sits in, in the order the canvas shows it (spine out),
+   * with each shown member's screen y; undefined when fewer than two of its
+   * members are on screen. Members hidden in a cluster keep their place.
+   */
+  const stackAt = (item: Item): { order: string[]; slots: { id: string; y: number }[] } | undefined => {
+    const key = stackKey(item.pos)
+    const members = sortByPosition(proj, proj.items.filter(i => stackKey(i.pos) === key))
+    const shownAt = new Map(layout.placed.map(pl => [pl.item.id, pl]))
+    // Candidate rows go 0, -1, 1, -2, … from the spine out.
+    const reach = (row: number) => (row >= 0 ? 2 * row : -2 * row - 1)
+    const shown = members.filter(m => shownAt.has(m.id))
+      .sort((a, b) => reach(shownAt.get(a.id)!.row) - reach(shownAt.get(b.id)!.row))
+    if (shown.length < 2) return undefined
+    let k = 0
+    const order = members.map(m => (shownAt.has(m.id) ? shown[k++] : m).id)
+    return { order, slots: shown.map(m => ({ id: m.id, y: spineY + shownAt.get(m.id)!.ny })) }
   }
 
   const itemHoverStart = (e: React.PointerEvent, id: string) => {
@@ -1239,7 +1299,7 @@ export function CanvasView() {
     const allOrig = new Map<string, number>()
     for (const it of proj.items) allOrig.set(it.id, it.pos)
     setDragBoth({
-      kind: 'item', ids: col.ids, grabId: col.ids[0], startClientX: e.clientX,
+      kind: 'item', ids: col.ids, grabId: col.ids[0], startClientX: e.clientX, startClientY: e.clientY,
       orig, allOrig, endOrig, ripple: ui.ripple || e.shiftKey, moved: false, color: col.color,
       cands: magnetCands({ items: new Set(col.ids), itemEnds: new Set(col.endIds) }),
     })
@@ -1484,7 +1544,7 @@ export function CanvasView() {
   return (
     <div
       ref={wrapRef}
-      className={`canvas-wrap ${drag?.kind === 'pan' ? 'panning' : ''} ${ui.pickRef ? 'picking' : ''}`}
+      className={`canvas-wrap ${drag?.kind === 'pan' ? 'panning' : ''} ${stackOverride ? 'reordering' : ''} ${ui.pickRef ? 'picking' : ''}`}
       onPointerDownCapture={onPointerDownCapture}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}

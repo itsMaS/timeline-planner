@@ -245,6 +245,14 @@
   type in the live filters afterwards.
 - `ui.showTitles` / `ui.showFields` (per browser) drive canvas labels via
   `layoutTimeline(..., showFields, showTitles)` and `splitLabel`.
+- **Stacks**: items sharing a position (`stackKey`) form a stack ordered by
+  the optional `Item.stack` rank, lowest first, unranked after by layer
+  (`src/model/stacks.ts`: `compareStack`, `sortByPosition`, `stackRuns`).
+  `layoutTimeline` places a stack together, rank 0 closest to the spine; a
+  mostly vertical drag on a stacked item reorders it (`stackAt` in
+  `Canvas.tsx`, renumbers the whole stack 0..n-1). The document PDF frames
+  each stack under an "N items at X" caption with numbered items;
+  `exportScope`, the CSV and the CLI `outline` use the same order.
 - `exportScope()` (`src/ui/exportScope.ts`) is the single rule for what an
   export contains (visible items, optionally only inside the selected
   sections); PNG, SVG, CSV and the document PDF all take it. Project JSON is
