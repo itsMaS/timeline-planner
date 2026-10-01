@@ -20,7 +20,7 @@ import { Markdown } from './Markdown'
  * (same minimal markdown as the inspector), followed by custom fields, link
  * and images. Everything is real text so the result reads well for both
  * people and AI agents. Items sharing a position are framed together and
- * numbered in their stack order (see src/model/stacks.ts).
+ * listed in their stack order (see src/model/stacks.ts).
  *
  * Only items currently visible on the canvas are included: items on a layer
  * hidden with the eye toggle and items filtered out (types, layers, tags,
@@ -124,15 +124,13 @@ function DocBody({ proj, roots, loose, base = 1 }: { proj: Project; roots: Secti
   const suffix = unitSuffix(st.unit.preset, st.unit.custom)
   const fmt = (v: number) => formatUnit(v, 0.05, suffix, st.unit.preset)
 
-  /** `rank`: the item's place in a stack of items sharing its position (0 = first). */
-  const renderItem = (it: Item, level: number, rank?: number) => {
+  const renderItem = (it: Item, level: number) => {
     const t = typeOf(proj, it)
     const Icon = iconByName(t?.icon ?? 'Circle')
     const fields = displayEntries(proj, { kind: 'item', entity: it }, { skip: f => (proj.filters.offFields ?? []).includes(f.id) })
     return (
       <article className="item" key={it.id} style={{ '--c': t?.color ?? '#888' } as React.CSSProperties}>
         <Heading level={level} className="item-h">
-          {rank !== undefined && <span className="rank" title="Priority within the stack">{rank + 1}</span>}
           <span className="icon"><Icon width="1em" height="1em" color={t?.color} strokeWidth={2} /></span>
           <span className="title">{it.title || 'Untitled'}</span>
           <span className="type">{t?.name ?? 'Unknown type'}</span>
@@ -148,14 +146,14 @@ function DocBody({ proj, roots, loose, base = 1 }: { proj: Project; roots: Secti
   }
 
   /**
-   * Items sharing a position, framed together and numbered in their stack
+   * Items sharing a position, framed together and listed in their stack
    * order (the order set by dragging them on the canvas).
    */
   const renderRun = (run: Item[], level: number) => {
     if (run.length === 1) return renderItem(run[0], level)
     return (
       <div className="stack" key={`stack:${run[0].id}`}>
-        {run.map((it, i) => renderItem(it, level, i))}
+        {run.map(it => renderItem(it, level))}
       </div>
     )
   }
@@ -245,11 +243,6 @@ h1.item-h { font-size: 19pt; } h2.item-h { font-size: 15.5pt; } h3.item-h { font
 .item-h .icon { display: inline-flex; color: var(--c); flex: none; }
 .item-h .icon svg { width: 1em; height: 1em; }
 .item-h .type { color: var(--c); border-color: color-mix(in srgb, var(--c) 45%, #fff); }
-.item-h .rank {
-  display: inline-flex; align-items: center; justify-content: center; flex: none;
-  min-width: 1.5em; height: 1.5em; padding: 0 4px; border-radius: 999px;
-  font-size: 0.62em; font-weight: 700; font-variant-numeric: tabular-nums; color: #fff; background: #4b5162;
-}
 .stack { margin: 14px 0 10px; padding: 2px 10px 2px 10px; border: 1.5px dashed #b9c0cf; border-radius: 8px; background: #f7f8fb; }
 .stack > .item { margin: 8px 0 6px; }
 .meta { margin: 1px 0 6px; font-size: 9.5pt; color: #6b7180; }

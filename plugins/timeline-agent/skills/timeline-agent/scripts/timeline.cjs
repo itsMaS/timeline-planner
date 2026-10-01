@@ -24471,13 +24471,12 @@ function DocBody({ proj, roots, loose, base = 1 }) {
   const st = proj.settings;
   const suffix = unitSuffix(st.unit.preset, st.unit.custom);
   const fmt = (v) => formatUnit(v, 0.05, suffix, st.unit.preset);
-  const renderItem = (it, level, rank) => {
+  const renderItem = (it, level) => {
     const t = typeOf(proj, it);
     const Icon2 = iconByName(t?.icon ?? "Circle");
     const fields = displayEntries(proj, { kind: "item", entity: it }, { skip: (f) => (proj.filters.offFields ?? []).includes(f.id) });
     return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("article", { className: "item", style: { "--c": t?.color ?? "#888" }, children: [
       /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(Heading7, { level, className: "item-h", children: [
-        rank !== void 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "rank", title: "Priority within the stack", children: rank + 1 }),
         /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "icon", children: /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Icon2, { width: "1em", height: "1em", color: t?.color, strokeWidth: 2 }) }),
         /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "title", children: it.title || "Untitled" }),
         /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "type", children: t?.name ?? "Unknown type" })
@@ -24493,7 +24492,7 @@ function DocBody({ proj, roots, loose, base = 1 }) {
   };
   const renderRun = (run, level) => {
     if (run.length === 1) return renderItem(run[0], level);
-    return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { className: "stack", children: run.map((it, i) => renderItem(it, level, i)) }, `stack:${run[0].id}`);
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { className: "stack", children: run.map((it) => renderItem(it, level)) }, `stack:${run[0].id}`);
   };
   const renderSection = (n, level) => {
     const sc = n.section;
@@ -24575,11 +24574,6 @@ h1.item-h { font-size: 19pt; } h2.item-h { font-size: 15.5pt; } h3.item-h { font
 .item-h .icon { display: inline-flex; color: var(--c); flex: none; }
 .item-h .icon svg { width: 1em; height: 1em; }
 .item-h .type { color: var(--c); border-color: color-mix(in srgb, var(--c) 45%, #fff); }
-.item-h .rank {
-  display: inline-flex; align-items: center; justify-content: center; flex: none;
-  min-width: 1.5em; height: 1.5em; padding: 0 4px; border-radius: 999px;
-  font-size: 0.62em; font-weight: 700; font-variant-numeric: tabular-nums; color: #fff; background: #4b5162;
-}
 .stack { margin: 14px 0 10px; padding: 2px 10px 2px 10px; border: 1.5px dashed #b9c0cf; border-radius: 8px; background: #f7f8fb; }
 .stack > .item { margin: 8px 0 6px; }
 .meta { margin: 1px 0 6px; font-size: 9.5pt; color: #6b7180; }
