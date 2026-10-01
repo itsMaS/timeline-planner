@@ -764,7 +764,7 @@ function Cheatsheet() {
     ['N', 'New item at the view center'],
     ['Space', 'Search for a type and add an item under the cursor'],
     ['Drag item', 'Move (Alt = no snap · Alt at start = clone)'],
-    ['Drag a stacked item up / down', 'Reorder items sharing a position (closest to the line = first, also in the PDF)'],
+    ['Drag a stacked item up / down', 'Reorder items sharing a position (top = first, also in the PDF)'],
     ['Shift+drag item', 'Move ALL items together (or toggle the link button)'],
     ['Drag span edge circles', 'Stretch an item into a span'],
     ['Drag a section edge', 'Resize — contents rescale with it (Shift = leave them in place)'],

@@ -248,7 +248,8 @@
 - **Stacks**: items sharing a position (`stackKey`) form a stack ordered by
   the optional `Item.stack` rank, lowest first, unranked after by layer
   (`src/model/stacks.ts`: `compareStack`, `sortByPosition`, `stackRuns`).
-  `layoutTimeline` places a stack together, rank 0 closest to the spine; a
+  `layoutTimeline` places a stack together, rank 0 on top (rows are claimed
+  in rank order, then dealt out top-down, so low ranks survive density); a
   mostly vertical drag on a stacked item reorders it (`stackAt` in
   `Canvas.tsx`, renumbers the whole stack 0..n-1). The document PDF frames
   each stack under an "N items at X" caption with numbered items;

@@ -196,6 +196,12 @@ function occupy(rows: Map<number, Interval[]>, row: number, a: number, b: number
   else rows.set(row, [{ a, b }])
 }
 
+function release(rows: Map<number, Interval[]>, row: number, a: number, b: number) {
+  const list = rows.get(row)
+  const i = list ? list.findIndex(iv => iv.a === a && iv.b === b) : -1
+  if (i >= 0) list!.splice(i, 1)
+}
+
 /**
  * Density-driven layout: items compete for rows by significance; those that
  * lose collapse into clusters. `sticky` is the set of item ids visible on the
@@ -279,9 +285,25 @@ export function layoutTimeline(
   ): Item[] => {
     const overflow: Item[] = []
     cands.sort(byPriority)
+    /** Where an item would sit and the interval it claims on its row. */
+    const measure = (c: Cand, withLabel: boolean) => {
+      const x = xOf(c.it)
+      const spanW = c.it.duration > 0 ? Math.max(c.it.duration * cam.s, 10) : 0
+      const iconW = ICON_W * c.size
+      const lbl = itemLabel(p, c.it, showFields, showTitles)
+      const lw = withLabel && lbl.text ? (labelWidth(lbl.text, lbl.max) + 8) * c.size : 0
+      const w = Math.max(iconW + lw, spanW)
+      const a = x - iconW / 2 - minGap / 2
+      return { x, spanW, w, labelShown: withLabel && !!lbl.text, a, b: a + w + minGap }
+    }
+    const put = (c: Cand, r: number, m: ReturnType<typeof measure>): PlacedItem => {
+      occupy(rows, r, m.a, m.b)
+      return { item: c.it, x: m.x, ny: rowY(r), w: m.w, row: r, labelShown: m.labelShown, ghost: c.ghost, spanW: m.spanW, size: c.size }
+    }
     // Items sharing a position are placed together, when the first of them
-    // comes up, in their stack order: each one on a later candidate row than
-    // the one before, so the canvas reads the order off from the spine out.
+    // comes up. Rows go to them in stack order (each on a later candidate row
+    // than the one before), so the first ranks stay when space runs out; the
+    // rows are then dealt out again top-down, so rank 0 sits on top.
     const stacks = new Map<number, Cand[]>()
     for (const c of cands) {
       const k = stackKey(c.it.pos)
@@ -297,32 +319,33 @@ export function layoutTimeline(
       const members = stacks.get(key)!
       if (members.length > 1) members.sort((a, b) => compareStack(p, a.it, b.it))
       let from = 0
-      for (const { it, ghost, pin, size } of members) {
-        const x = xOf(it)
-        const spanW = it.duration > 0 ? Math.max(it.duration * cam.s, 10) : 0
-        const rowCap = pin ? maxRows + 4 : maxRows
-        const iconW = ICON_W * size
-        const tryPlace = (withLabel: boolean): PlacedItem | null => {
-          const lbl = itemLabel(p, it, showFields, showTitles)
-          const lw = withLabel && lbl.text ? (labelWidth(lbl.text, lbl.max) + 8) * size : 0
-          const w = Math.max(iconW + lw, spanW)
-          const a = x - iconW / 2 - minGap / 2
-          const b = x - iconW / 2 + w + minGap / 2
-          const cand = candidateRows(rowCap)
-          for (let i = from; i < cand.length; i++) {
-            const r = cand[i]
-            if (fits(rows, r, a, b)) {
-              occupy(rows, r, a, b)
-              from = i + 1
-              return { item: it, x, ny: rowY(r), w, row: r, labelShown: withLabel && !!lbl.text, ghost, spanW, size }
-            }
+      const got: { c: Cand; pl: PlacedItem; a: number; b: number }[] = []
+      for (const c of members) {
+        const cand = candidateRows(c.pin ? maxRows + 4 : maxRows)
+        let hit: (typeof got)[number] | null = null
+        for (const withLabel of [true, false]) {
+          const m = measure(c, withLabel)
+          for (let i = from; i < cand.length && !hit; i++) {
+            if (!fits(rows, cand[i], m.a, m.b)) continue
+            hit = { c, pl: put(c, cand[i], m), a: m.a, b: m.b }
+            from = i + 1
           }
-          return null
+          if (hit) break
         }
-        const pl = tryPlace(true) ?? tryPlace(false)
-        if (pl) placed.push(pl)
-        else if (!ghost) overflow.push(it)
+        if (hit) got.push(hit)
+        else if (!c.ghost) overflow.push(c.it)
       }
+      if (got.length < 2) {
+        for (const g of got) placed.push(g.pl)
+        continue
+      }
+      for (const g of got) release(rows, g.pl.row, g.a, g.b)
+      const slots = got.map(g => g.pl.row).sort((r1, r2) => rowY(r1) - rowY(r2))
+      got.forEach(({ c }, k) => {
+        const m = [measure(c, true), measure(c, false)].find(m0 => fits(rows, slots[k], m0.a, m0.b))
+        if (m) placed.push(put(c, slots[k], m))
+        else if (!c.ghost) overflow.push(c.it)
+      })
     }
     return overflow
   }

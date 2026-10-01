@@ -206,7 +206,7 @@ export interface Item {
   fieldValues: Record<Id, FieldValue>
   /**
    * Rank among the items sharing this position (lower = higher priority:
-   * closer to the spine, first in exports). Unset = after the ranked ones,
+   * higher up the stack on the canvas, first in exports). Unset = after the ranked ones,
    * ordered by layer. Set by dragging a stacked item up or down; see stacks.ts.
    */
   stack?: number

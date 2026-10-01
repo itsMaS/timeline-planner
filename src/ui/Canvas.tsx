@@ -1223,7 +1223,7 @@ export function CanvasView() {
   }
 
   /**
-   * The stack an item sits in, in the order the canvas shows it (spine out),
+   * The stack an item sits in, in the order the canvas shows it (top down),
    * with each shown member's screen y; undefined when fewer than two of its
    * members are on screen. Members hidden in a cluster keep their place.
    */
@@ -1231,10 +1231,7 @@ export function CanvasView() {
     const key = stackKey(item.pos)
     const members = sortByPosition(proj, proj.items.filter(i => stackKey(i.pos) === key))
     const shownAt = new Map(layout.placed.map(pl => [pl.item.id, pl]))
-    // Candidate rows go 0, -1, 1, -2, … from the spine out.
-    const reach = (row: number) => (row >= 0 ? 2 * row : -2 * row - 1)
-    const shown = members.filter(m => shownAt.has(m.id))
-      .sort((a, b) => reach(shownAt.get(a.id)!.row) - reach(shownAt.get(b.id)!.row))
+    const shown = members.filter(m => shownAt.has(m.id)).sort((a, b) => shownAt.get(a.id)!.ny - shownAt.get(b.id)!.ny)
     if (shown.length < 2) return undefined
     let k = 0
     const order = members.map(m => (shownAt.has(m.id) ? shown[k++] : m).id)

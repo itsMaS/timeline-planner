@@ -2,7 +2,7 @@ import type { Item, Project } from './types'
 
 /**
  * Items sharing a position form a stack. Their order (`Item.stack`, lower
- * first) is the priority within it: first sits closest to the spine on the
+ * first) is the priority within it: first sits on top of the stack on the
  * canvas, is the last to collapse into a cluster, and comes first in the
  * document export. Vertical drags on the canvas rewrite it.
  */

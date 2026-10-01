@@ -89,8 +89,8 @@ Rules for editing `doc`:
   Put new items inside the section they belong to (`section.start ≤ pos ≤ end`,
   same `timelineId`).
 - Items sharing a `pos` form a **stack**; the optional `item.stack` (0, 1, 2…)
-  is their priority order (lowest first: closest to the line, first in the
-  PDF export; items without it come after, by layer). `outline` marks them
+  is their priority order (lowest first: top of the stack on the canvas, first
+  in the PDF export; items without it come after, by layer). `outline` marks them
   `(stack 2 of 3 at this position)`. To reorder a stack, renumber all its
   items.
 - Descriptions and field values are minimal markdown (paragraphs, `**bold**`,
