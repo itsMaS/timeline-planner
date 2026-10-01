@@ -17,8 +17,8 @@ import { Markdown } from './Markdown'
  * Sections become headings (the outermost exported level is H1, the next H2,
  * …) and items are sub-headings one level below their section, with the
  * type's icon and name next to the title. Descriptions render as body text
- * (same minimal markdown as the inspector), followed by custom fields, tags,
- * link and images. Everything is real text so the result reads well for both
+ * (same minimal markdown as the inspector), followed by custom fields, link
+ * and images. Everything is real text so the result reads well for both
  * people and AI agents. Items sharing a position are framed together and
  * numbered in their stack order (see src/model/stacks.ts).
  *
@@ -128,14 +128,7 @@ function DocBody({ proj, roots, loose, base = 1 }: { proj: Project; roots: Secti
   const renderItem = (it: Item, level: number, rank?: number) => {
     const t = typeOf(proj, it)
     const Icon = iconByName(t?.icon ?? 'Circle')
-    const layer = proj.layers.find(l => l.id === (it.layerId ?? t?.defaultLayerId))
     const fields = displayEntries(proj, { kind: 'item', entity: it }, { skip: f => (proj.filters.offFields ?? []).includes(f.id) })
-    const meta: string[] = [
-      it.duration > 0 ? `${fmt(it.pos)} → ${fmt(it.pos + it.duration)} (${fmt(it.duration)})` : fmt(it.pos),
-    ]
-    if (layer) meta.push(`Layer: ${layer.name}`)
-    if (it.tags.length) meta.push(`Tags: ${it.tags.join(', ')}`)
-    if (it.createdBy?.name) meta.push(`Created by: ${it.createdBy.name}`)
     return (
       <article className="item" key={it.id} style={{ '--c': t?.color ?? '#888' } as React.CSSProperties}>
         <Heading level={level} className="item-h">
@@ -144,7 +137,6 @@ function DocBody({ proj, roots, loose, base = 1 }: { proj: Project; roots: Secti
           <span className="title">{it.title || 'Untitled'}</span>
           <span className="type">{t?.name ?? 'Unknown type'}</span>
         </Heading>
-        <p className="meta">{meta.join(' · ')}</p>
         {it.description.trim() && <Markdown text={it.description} />}
         <FieldList proj={proj} fields={fields} />
         {it.link && <p className="link">Link: <a href={it.link}>{it.link}</a></p>}
@@ -156,16 +148,13 @@ function DocBody({ proj, roots, loose, base = 1 }: { proj: Project; roots: Secti
   }
 
   /**
-   * Items sharing a position, framed together under one caption and numbered
-   * in their stack order (the order set by dragging them on the canvas).
+   * Items sharing a position, framed together and numbered in their stack
+   * order (the order set by dragging them on the canvas).
    */
   const renderRun = (run: Item[], level: number) => {
     if (run.length === 1) return renderItem(run[0], level)
     return (
       <div className="stack" key={`stack:${run[0].id}`}>
-        <p className="stack-h">
-          <span className="stack-mark">≡</span> {run.length} items at {fmt(run[0].pos)} · same position, in priority order
-        </p>
         {run.map((it, i) => renderItem(it, level, i))}
       </div>
     )
@@ -251,7 +240,7 @@ h1, h2, h3, h4, h5, h6 { line-height: 1.25; margin: 0; page-break-after: avoid; 
 .sec > .sec-h + .meta { margin-top: 2px; }
 .type { font-size: 0.6em; font-weight: 500; color: #6b7180; white-space: nowrap; padding: 1px 7px; border-radius: 999px; border: 1px solid #d8dce6; }
 .item { margin: 14px 0 10px; padding-left: 12px; border-left: 3px solid var(--c, #888); page-break-inside: avoid; break-inside: avoid; }
-.item-h { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12.5pt; }
+.item-h { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12.5pt; margin-bottom: 4px; }
 h1.item-h { font-size: 19pt; } h2.item-h { font-size: 15.5pt; } h3.item-h { font-size: 13.5pt; }
 .item-h .icon { display: inline-flex; color: var(--c); flex: none; }
 .item-h .icon svg { width: 1em; height: 1em; }
@@ -261,9 +250,7 @@ h1.item-h { font-size: 19pt; } h2.item-h { font-size: 15.5pt; } h3.item-h { font
   min-width: 1.5em; height: 1.5em; padding: 0 4px; border-radius: 999px;
   font-size: 0.62em; font-weight: 700; font-variant-numeric: tabular-nums; color: #fff; background: #4b5162;
 }
-.stack { margin: 14px 0 10px; padding: 2px 10px 4px 10px; border: 1.5px dashed #b9c0cf; border-radius: 8px; background: #f7f8fb; }
-.stack-h { margin: 6px 0 0; font-size: 9.5pt; font-weight: 600; color: #4b5162; page-break-after: avoid; break-after: avoid; }
-.stack-mark { color: #8a91a1; }
+.stack { margin: 14px 0 10px; padding: 2px 10px 2px 10px; border: 1.5px dashed #b9c0cf; border-radius: 8px; background: #f7f8fb; }
 .stack > .item { margin: 8px 0 6px; }
 .meta { margin: 1px 0 6px; font-size: 9.5pt; color: #6b7180; }
 .procs { margin: 0 0 6px; font-size: 10.5pt; color: #4b5162; }

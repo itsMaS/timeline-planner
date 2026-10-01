@@ -24474,14 +24474,7 @@ function DocBody({ proj, roots, loose, base = 1 }) {
   const renderItem = (it, level, rank) => {
     const t = typeOf(proj, it);
     const Icon2 = iconByName(t?.icon ?? "Circle");
-    const layer = proj.layers.find((l) => l.id === (it.layerId ?? t?.defaultLayerId));
     const fields = displayEntries(proj, { kind: "item", entity: it }, { skip: (f) => (proj.filters.offFields ?? []).includes(f.id) });
-    const meta = [
-      it.duration > 0 ? `${fmt(it.pos)} \u2192 ${fmt(it.pos + it.duration)} (${fmt(it.duration)})` : fmt(it.pos)
-    ];
-    if (layer) meta.push(`Layer: ${layer.name}`);
-    if (it.tags.length) meta.push(`Tags: ${it.tags.join(", ")}`);
-    if (it.createdBy?.name) meta.push(`Created by: ${it.createdBy.name}`);
     return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("article", { className: "item", style: { "--c": t?.color ?? "#888" }, children: [
       /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(Heading7, { level, className: "item-h", children: [
         rank !== void 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "rank", title: "Priority within the stack", children: rank + 1 }),
@@ -24489,7 +24482,6 @@ function DocBody({ proj, roots, loose, base = 1 }) {
         /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "title", children: it.title || "Untitled" }),
         /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "type", children: t?.name ?? "Unknown type" })
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { className: "meta", children: meta.join(" \xB7 ") }),
       it.description.trim() && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Markdown, { text: it.description }),
       /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(FieldList, { proj, fields }),
       it.link && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("p", { className: "link", children: [
@@ -24501,17 +24493,7 @@ function DocBody({ proj, roots, loose, base = 1 }) {
   };
   const renderRun = (run, level) => {
     if (run.length === 1) return renderItem(run[0], level);
-    return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "stack", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("p", { className: "stack-h", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "stack-mark", children: "\u2261" }),
-        " ",
-        run.length,
-        " items at ",
-        fmt(run[0].pos),
-        " \xB7 same position, in priority order"
-      ] }),
-      run.map((it, i) => renderItem(it, level, i))
-    ] }, `stack:${run[0].id}`);
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { className: "stack", children: run.map((it, i) => renderItem(it, level, i)) }, `stack:${run[0].id}`);
   };
   const renderSection = (n, level) => {
     const sc = n.section;
@@ -24588,7 +24570,7 @@ h1, h2, h3, h4, h5, h6 { line-height: 1.25; margin: 0; page-break-after: avoid; 
 .sec > .sec-h + .meta { margin-top: 2px; }
 .type { font-size: 0.6em; font-weight: 500; color: #6b7180; white-space: nowrap; padding: 1px 7px; border-radius: 999px; border: 1px solid #d8dce6; }
 .item { margin: 14px 0 10px; padding-left: 12px; border-left: 3px solid var(--c, #888); page-break-inside: avoid; break-inside: avoid; }
-.item-h { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12.5pt; }
+.item-h { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12.5pt; margin-bottom: 4px; }
 h1.item-h { font-size: 19pt; } h2.item-h { font-size: 15.5pt; } h3.item-h { font-size: 13.5pt; }
 .item-h .icon { display: inline-flex; color: var(--c); flex: none; }
 .item-h .icon svg { width: 1em; height: 1em; }
@@ -24598,9 +24580,7 @@ h1.item-h { font-size: 19pt; } h2.item-h { font-size: 15.5pt; } h3.item-h { font
   min-width: 1.5em; height: 1.5em; padding: 0 4px; border-radius: 999px;
   font-size: 0.62em; font-weight: 700; font-variant-numeric: tabular-nums; color: #fff; background: #4b5162;
 }
-.stack { margin: 14px 0 10px; padding: 2px 10px 4px 10px; border: 1.5px dashed #b9c0cf; border-radius: 8px; background: #f7f8fb; }
-.stack-h { margin: 6px 0 0; font-size: 9.5pt; font-weight: 600; color: #4b5162; page-break-after: avoid; break-after: avoid; }
-.stack-mark { color: #8a91a1; }
+.stack { margin: 14px 0 10px; padding: 2px 10px 2px 10px; border: 1.5px dashed #b9c0cf; border-radius: 8px; background: #f7f8fb; }
 .stack > .item { margin: 8px 0 6px; }
 .meta { margin: 1px 0 6px; font-size: 9.5pt; color: #6b7180; }
 .procs { margin: 0 0 6px; font-size: 10.5pt; color: #4b5162; }

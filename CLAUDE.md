@@ -252,7 +252,8 @@
   in rank order, then dealt out top-down, so low ranks survive density); a
   mostly vertical drag on a stacked item reorders it (`stackAt` in
   `Canvas.tsx`, renumbers the whole stack 0..n-1). The document PDF frames
-  each stack under an "N items at X" caption with numbered items;
+  each stack in a dashed box with numbered items (no caption; item
+  headings carry no position / layer / creator line, by the owner's call);
   `exportScope`, the CSV and the CLI `outline` use the same order.
 - `exportScope()` (`src/ui/exportScope.ts`) is the single rule for what an
   export contains (visible items, optionally only inside the selected
