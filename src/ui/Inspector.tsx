@@ -6,7 +6,8 @@ import { typeOf } from '../model/layout'
 import { processorResults, type ProcessorResult } from '../model/processors'
 import { useActiveProject, useActiveWhole, useCanEdit, useStore } from '../model/store'
 import type { FieldDef, Item, Project, Section } from '../model/types'
-import { formatUnit, uid, unitSuffix } from '../model/util'
+import { isoOfPos, posOfISO } from '../model/calendar'
+import { formatPos, formatSpan, uid } from '../model/util'
 import { requestDelete } from './deletion'
 import { entityLook, FieldRow, jumpTo, ReadFieldValue, ReferencedBy } from './FieldInputs'
 import { exportDocPDF } from './exportDoc'
@@ -190,14 +191,11 @@ function ItemJumpRow({ item }: { item: Item }) {
   const proj = useActiveProject()
   const t = typeOf(proj, item)
   const Icon = iconByName(t?.icon ?? 'Circle')
-  const suffix = unitSuffix(proj.settings.unit.preset, proj.settings.unit.custom)
   return (
     <button className="insp-item-row" title="Jump to item" onClick={() => nav.current?.flyToItem(item.id)}>
       <Icon width={13} height={13} color={t?.color} strokeWidth={2} />
       <span className="insp-item-title">{item.title || '…'}</span>
-      <span className="insp-item-pos">
-        {formatUnit(item.pos, Math.max(Math.abs(item.pos), 0.01), suffix, proj.settings.unit.preset)}
-      </span>
+      <span className="insp-item-pos">{formatPos(item.pos, proj.settings)}</span>
     </button>
   )
 }
@@ -209,8 +207,7 @@ function ReadItemPanel({ id }: { id: string }) {
   const type = typeOf(proj, item)
   const Icon = iconByName(type?.icon ?? 'Circle')
   const layer = proj.layers.find(l => l.id === (item.layerId ?? type?.defaultLayerId))
-  const suffix = unitSuffix(proj.settings.unit.preset, proj.settings.unit.custom)
-  const fmt = (v: number) => formatUnit(v, Math.max(Math.abs(v), 0.01), suffix, proj.settings.unit.preset)
+  const at = (v: number) => formatPos(v, proj.settings)
   const owner: Owner = { kind: 'item', entity: item }
   const fields = attachmentsFor(proj, owner)
     .map(a => ({ ...a, value: readValue(proj, owner, a.field, a.att) }))
@@ -226,8 +223,8 @@ function ReadItemPanel({ id }: { id: string }) {
           <h3>{item.title || <span className="muted">Untitled</span>}</h3>
         </div>
         <div className="row gap">
-          <ReadField label="Position">{fmt(item.pos)}</ReadField>
-          <ReadField label="Span">{item.duration > 0 ? `${fmt(item.duration)} → ${fmt(item.pos + item.duration)}` : 'point'}</ReadField>
+          <ReadField label={proj.settings.unit.preset === 'calendar' ? 'Date' : 'Position'}>{at(item.pos)}</ReadField>
+          <ReadField label="Span">{item.duration > 0 ? `${formatSpan(item.duration, proj.settings)} → ${at(item.pos + item.duration)}` : 'point'}</ReadField>
         </div>
         <ReadField label="Layer">{layer?.name ?? <span className="muted">none</span>}</ReadField>
         {item.tags.length > 0 && (
@@ -294,8 +291,6 @@ function ReadSectionPanel({ section }: { section: Section }) {
       .sort((a, b) => a.pos - b.pos || a.title.localeCompare(b.title)),
     [proj.items, section.start, section.end],
   )
-  const suffix = unitSuffix(proj.settings.unit.preset, proj.settings.unit.custom)
-  const fmt = (v: number) => formatUnit(v, Math.max(Math.abs(v), 0.01), suffix, proj.settings.unit.preset)
   const owner: Owner = { kind: 'section', entity: section }
   const fields = attachmentsFor(proj, owner)
     .map(a => ({ ...a, value: readValue(proj, owner, a.field, a.att) }))
@@ -308,9 +303,9 @@ function ReadSectionPanel({ section }: { section: Section }) {
       <div className="insp-body">
         <div className="read-title"><h3>{section.name || <span className="muted">Untitled</span>}</h3></div>
         <div className="row gap">
-          <ReadField label="Starts">{fmt(section.start)}</ReadField>
-          <ReadField label="Ends">{fmt(section.end)}</ReadField>
-          <ReadField label="Length">{fmt(section.end - section.start)}</ReadField>
+          <ReadField label="Starts">{formatPos(section.start, proj.settings)}</ReadField>
+          <ReadField label="Ends">{formatPos(section.end, proj.settings)}</ReadField>
+          <ReadField label="Length">{formatSpan(section.end - section.start, proj.settings)}</ReadField>
         </div>
         <FieldGroups list={fields} owner={owner} render={f => (
           <ReadField key={f.field.id} label={fieldLabel(f.field)} title={f.field.showName ? undefined : f.field.name}><ReadFieldValue field={f.field} value={f.value} /></ReadField>
@@ -331,6 +326,31 @@ function ReadSectionPanel({ section }: { section: Section }) {
         <HistorySection col="sections" entityId={section.id} />
       </div>
     </>
+  )
+}
+
+/**
+ * Date picker for a position on a calendar timeline. Changing the day keeps
+ * any time of day the position had; `onClear` lets the box be emptied, e.g.
+ * an item's end date.
+ */
+function DateInput({ base, value, onChange, onClear }: {
+  base: string
+  value: number | null
+  onChange: (v: number) => void
+  onClear?: () => void
+}) {
+  return (
+    <input
+      className="input" type="date"
+      value={value === null ? '' : isoOfPos(value, base)}
+      onChange={e => {
+        if (!e.target.value) { onClear?.(); return }
+        const day = posOfISO(e.target.value, base)
+        if (day === null) return
+        onChange(day + (value === null ? 0 : value - Math.floor(value)))
+      }}
+    />
   )
 }
 
@@ -400,22 +420,39 @@ function ItemPanel({ id }: { id: string }) {
             />
           </div>
         </div>
-        <div className="row gap">
-          <div className="field grow">
-            <label>Position</label>
-            <input
-              className="input" type="number" step="0.5" value={round2(item.pos)}
-              onChange={e => edit(it => { it.pos = Number(e.target.value) })}
-            />
+        {proj.settings.unit.preset === 'calendar' ? (
+          <div className="row gap">
+            <div className="field grow">
+              <label>Date</label>
+              <DateInput base={proj.settings.unit.baseDate} value={item.pos} onChange={v => edit(it => { it.pos = v })} />
+            </div>
+            <div className="field grow">
+              <label>Until <span className="muted">(empty = one day)</span></label>
+              <DateInput
+                base={proj.settings.unit.baseDate} value={item.duration > 0 ? item.pos + item.duration : null}
+                onChange={v => edit(it => { it.duration = Math.max(0, v - it.pos) })}
+                onClear={() => edit(it => { it.duration = 0 })}
+              />
+            </div>
           </div>
-          <div className="field grow">
-            <label>Span (0 = point)</label>
-            <input
-              className="input" type="number" step="0.5" min={0} value={round2(item.duration)}
-              onChange={e => edit(it => { it.duration = Math.max(0, Number(e.target.value)) })}
-            />
+        ) : (
+          <div className="row gap">
+            <div className="field grow">
+              <label>Position</label>
+              <input
+                className="input" type="number" step="0.5" value={round2(item.pos)}
+                onChange={e => edit(it => { it.pos = Number(e.target.value) })}
+              />
+            </div>
+            <div className="field grow">
+              <label>Span (0 = point)</label>
+              <input
+                className="input" type="number" step="0.5" min={0} value={round2(item.duration)}
+                onChange={e => edit(it => { it.duration = Math.max(0, Number(e.target.value)) })}
+              />
+            </div>
           </div>
-        </div>
+        )}
         <div className="field">
           <label>Tags <span className="muted">(comma separated)</span></label>
           <input
@@ -570,7 +607,6 @@ function SectionPanel({ section }: { section: Section }) {
       .sort((a, b) => a.pos - b.pos || a.title.localeCompare(b.title)),
     [proj.items, section.start, section.end],
   )
-  const suffix = unitSuffix(proj.settings.unit.preset, proj.settings.unit.custom)
   return (
     <>
       <Head title={levelOf(proj, section)?.name ?? 'Section'}>
@@ -583,18 +619,33 @@ function SectionPanel({ section }: { section: Section }) {
       <div className="insp-body" onKeyDown={enterNav}>
         <ProposalSlot col="sections" id={section.id} />
         <input className="input title-input" value={section.name} onChange={e => edit(s => { s.name = e.target.value })} />
-        <div className="row gap">
-          <div className="field grow">
-            <label>Starts</label>
-            <input className="input" type="number" step="0.5" value={round2(section.start)}
-              onChange={e => edit(s => { s.start = Math.min(Number(e.target.value), s.end - 0.25) })} />
+        {proj.settings.unit.preset === 'calendar' ? (
+          <div className="row gap">
+            <div className="field grow">
+              <label>Starts</label>
+              <DateInput base={proj.settings.unit.baseDate} value={section.start}
+                onChange={v => edit(s => { s.start = Math.min(v, s.end - 0.25) })} />
+            </div>
+            <div className="field grow">
+              <label>Ends</label>
+              <DateInput base={proj.settings.unit.baseDate} value={section.end}
+                onChange={v => edit(s => { s.end = Math.max(v, s.start + 0.25) })} />
+            </div>
           </div>
-          <div className="field grow">
-            <label>Ends</label>
-            <input className="input" type="number" step="0.5" value={round2(section.end)}
-              onChange={e => edit(s => { s.end = Math.max(Number(e.target.value), s.start + 0.25) })} />
+        ) : (
+          <div className="row gap">
+            <div className="field grow">
+              <label>Starts</label>
+              <input className="input" type="number" step="0.5" value={round2(section.start)}
+                onChange={e => edit(s => { s.start = Math.min(Number(e.target.value), s.end - 0.25) })} />
+            </div>
+            <div className="field grow">
+              <label>Ends</label>
+              <input className="input" type="number" step="0.5" value={round2(section.end)}
+                onChange={e => edit(s => { s.end = Math.max(Number(e.target.value), s.start + 0.25) })} />
+            </div>
           </div>
-        </div>
+        )}
         <div className="field">
           <label>Level</label>
           <Select
@@ -645,9 +696,7 @@ function SectionPanel({ section }: { section: Section }) {
                 >
                   <Icon width={13} height={13} color={t?.color} strokeWidth={2} />
                   <span className="insp-item-title">{it.title || '…'}</span>
-                  <span className="insp-item-pos">
-                    {formatUnit(it.pos, Math.max(Math.abs(it.pos), 0.01), suffix, proj.settings.unit.preset)}
-                  </span>
+                  <span className="insp-item-pos">{formatPos(it.pos, proj.settings)}</span>
                 </button>
               )
             })}

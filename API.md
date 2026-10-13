@@ -104,7 +104,11 @@ Things a Unity tool typically needs from `doc`:
 - `doc.timelines`: `{ id, name, settings }`, in tab order. Every project has
   at least one (older projects were migrated to a single timeline named
   *Main*). `settings` holds the unit, grid and spine display settings of that
-  timeline.
+  timeline. A timeline with `settings.unit.preset = "calendar"` runs on
+  calendar dates: one unit is one day and position 0 is
+  `settings.unit.baseDate` (`YYYY-MM-DD`, UTC midnight), so an item's date is
+  `baseDate + pos days` and `pos`/`duration` you send are days from the base
+  date.
 - `doc.sections`: `{ id, name, timelineId, depth, start, end, fieldValues }`.
   `depth` indexes `doc.hierarchyLevels` (0 = Chapter, 1 = Level, … as named
   in the project). **Match a scene by section name**: the section at the

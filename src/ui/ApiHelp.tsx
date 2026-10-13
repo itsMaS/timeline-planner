@@ -378,6 +378,11 @@ await Rpc("api_set_field", new {
                 <code>types</code> to know that an item is, say, a Checkpoint.
               </li>
               <li>
+                <strong>Positions</strong> are in the timeline’s units (<code>timelines[].settings.unit</code>). On a
+                timeline whose <code>preset</code> is <code>calendar</code> one unit is one day and position 0 is
+                its <code>baseDate</code> (YYYY-MM-DD), so <code>pos</code> and <code>duration</code> are days from that date.
+              </li>
+              <li>
                 <strong>Field values</strong> live in <code>fieldValues</code>, keyed by field <em>id</em>, and only hold
                 explicitly set values. A missing key means the type’s or the field’s default applies. Dropdown values are
                 arrays even for single-choice fields: <code>["Done"]</code>.

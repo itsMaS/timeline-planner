@@ -86,6 +86,11 @@ Rules for editing `doc`:
   restricts what they aggregate. `outline` prints fields with their folder,
   composite children indented, and formulas.
 - `pos`/`start`/`end` are in the timeline's world units (its `settings.unit`).
+  A timeline whose `settings.unit.preset` is `calendar` runs on **calendar
+  dates**: one unit is one day and position 0 is `settings.unit.baseDate`
+  (YYYY-MM-DD, UTC), so 2024-03-12 on a timeline based on 2026-10-13 is
+  `pos: -945`; a span of a year is `duration: 365`. `outline` and `query`
+  print such positions with their date, e.g. `@-945 (2024-03-12)`.
   Put new items inside the section they belong to (`section.start ≤ pos ≤ end`,
   same `timelineId`).
 - Items sharing a `pos` form a **stack**; the optional `item.stack` (0, 1, 2…)

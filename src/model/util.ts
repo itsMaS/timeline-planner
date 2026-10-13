@@ -1,3 +1,6 @@
+import { calendarSnap, calendarTicks, formatDate, type Tick } from './calendar'
+import type { TimelineSettings } from './types'
+
 export const uid = () => Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 6)
 
 export const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v))
@@ -11,9 +14,23 @@ export function snapStepFor(s: number): number {
   return SNAP_STEPS[SNAP_STEPS.length - 1]
 }
 
-export function snapPos(pos: number, s: number): number {
+/** Snap a position to the grid at zoom s; calendar timelines snap to calendar boundaries. */
+export function snapPos(pos: number, s: number, settings?: TimelineSettings): number {
+  if (settings?.unit.preset === 'calendar') return calendarSnap(pos, s, settings.unit.baseDate)
   const st = snapStepFor(s)
   return Math.round(pos / st) * st
+}
+
+/**
+ * Where a pointer lands: on the grid while snapping is on. Calendar timelines
+ * always land on a whole day (an hour once an hour is ~24px wide), so dates
+ * never carry stray minutes.
+ */
+export function placePos(pos: number, s: number, settings: TimelineSettings, snap: boolean): number {
+  if (snap) return snapPos(pos, s, settings)
+  if (settings.unit.preset !== 'calendar') return pos
+  const unit = s >= 24 * 24 ? 1 / 24 : 1
+  return Math.round(pos / unit) * unit
 }
 
 const RULER_STEPS = [0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000]
@@ -32,6 +49,8 @@ const YEAR = 31557600
 
 const TIME_BASE: Record<string, number> = {
   minutes: MINUTE, hours: HOUR, days: DAY, weeks: WEEK, months: MONTH, years: YEAR,
+  // Calendar dates: a unit is a day, so lengths read like the days preset.
+  calendar: DAY,
 }
 
 /** Seconds per world unit for time presets, null for none/custom. */
@@ -67,7 +86,7 @@ export function rulerStepFor(s: number, preset = 'none'): number {
 }
 
 const UNIT_SUFFIX: Record<string, string> = {
-  none: '', minutes: 'min', hours: 'h', days: 'd', weeks: 'w', months: 'mo', years: 'y',
+  none: '', minutes: 'min', hours: 'h', days: 'd', weeks: 'w', months: 'mo', years: 'y', calendar: 'd',
 }
 
 export function unitSuffix(preset: string, custom: string): string {
@@ -106,6 +125,46 @@ export function formatUnit(v: number, step: number, suffix: string, preset = 'no
   const decimals = step < 0.1 ? 2 : step < 1 ? 1 : 0
   const n = v.toFixed(decimals).replace(/\.0+$/, '').replace(/(\.\d*?)0+$/, '$1')
   return suffix ? `${n} ${suffix}` : n
+}
+
+// ---- per-timeline formatting -------------------------------------------------
+// Positions and lengths read differently on a calendar timeline (a position is
+// a date, a length is "3y 2mo"), so callers go through these rather than
+// formatUnit directly.
+
+/** A position on the timeline: a date on calendar timelines, else "12.5 beats" / "3h 20m". */
+export function formatPos(v: number, st: TimelineSettings): string {
+  if (st.unit.preset === 'calendar') return formatDate(v, st.unit.baseDate)
+  return formatUnit(v, Math.max(Math.abs(v), 0.01), unitSuffix(st.unit.preset, st.unit.custom), st.unit.preset)
+}
+
+/** A length (an item's span, a section's duration). */
+export function formatSpan(v: number, st: TimelineSettings): string {
+  return formatUnit(v, Math.max(Math.abs(v), 0.01), unitSuffix(st.unit.preset, st.unit.custom), st.unit.preset)
+}
+
+/** Ruler ticks (and grid lines) for the visible range x0..x1 at zoom s. */
+export function rulerTicks(x0: number, x1: number, s: number, st: TimelineSettings): Tick[] {
+  if (st.unit.preset === 'calendar') return calendarTicks(x0, x1, s, st.unit.baseDate)
+  const step = rulerStepFor(s, st.unit.preset)
+  const suffix = unitSuffix(st.unit.preset, st.unit.custom)
+  const out: Tick[] = []
+  for (let n = Math.floor(x0 / step), n1 = Math.ceil(x1 / step); n <= n1; n++) {
+    out.push({ pos: n * step, label: formatUnit(n * step, step, suffix, st.unit.preset) })
+  }
+  return out
+}
+
+/** Zoom-in limit (px per unit): time presets reach seconds, calendar timelines hours. */
+export function maxZoomFor(preset: string, fallback: number): number {
+  if (preset === 'calendar') return 24 * 400
+  const base = TIME_BASE[preset]
+  return base ? Math.max(fallback, base * 400) : fallback
+}
+
+/** Extra zoom-out room: a calendar timeline can show a few centuries at once. */
+export function minZoomFloor(preset: string, width: number): number {
+  return preset === 'calendar' ? width / (365.25 * 300) : Infinity
 }
 
 export const PALETTE = [

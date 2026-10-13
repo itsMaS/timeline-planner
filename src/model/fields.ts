@@ -5,7 +5,7 @@ import { folderChain, groupedMembers, orderedMembers } from './folders'
 import { evalOn } from './scope'
 import type { Value } from './expr'
 import { wholeOf } from './timelines'
-import { formatUnit, unitSuffix } from './util'
+import { formatPos } from './util'
 
 /**
  * Project-wide fields: definitions live on `Project.fields`, item types and
@@ -612,8 +612,7 @@ function settingsFor(p: Project, timelineId: Id): TimelineSettings {
 export function locationOf(p: Project, o: Owner): string {
   const tid = o.entity.timelineId
   const st = settingsFor(p, tid)
-  const suffix = unitSuffix(st.unit.preset, st.unit.custom)
-  const fmt = (v: number) => formatUnit(v, Math.max(Math.abs(v), 0.01), suffix, st.unit.preset)
+  const fmt = (v: number) => formatPos(v, st)
   const tl = (p.timelines?.length ?? 0) > 1 ? [p.timelines.find(t => t.id === tid)?.name ?? 'Timeline'] : []
   if (o.kind === 'item') {
     const chain = [...tl, ...sectionsAt(p, o.entity.pos, undefined, tid).map(s => s.name || '…')]

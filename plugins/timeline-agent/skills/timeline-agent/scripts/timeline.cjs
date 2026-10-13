@@ -3616,6 +3616,50 @@ var import_node_os = require("node:os");
 var import_node_path = require("node:path");
 var import_node_url = require("node:url");
 
+// src/model/calendar.ts
+var DAY_MS = 864e5;
+var MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+var FALLBACK_BASE = "2000-01-01";
+function utc(y, m, d = 1) {
+  y += Math.floor(m / 12);
+  m -= Math.floor(m / 12) * 12;
+  const t = new Date(Date.UTC(2e3, m, d));
+  t.setUTCFullYear(y);
+  return t.getTime();
+}
+function parseISODate(iso) {
+  const m = /^(-?\d{1,6})-(\d{1,2})-(\d{1,2})$/.exec(iso.trim());
+  if (!m) return null;
+  const y = Number(m[1]), mo = Number(m[2]) - 1, d = Number(m[3]);
+  if (mo < 0 || mo > 11 || d < 1 || d > 31) return null;
+  return utc(y, mo, d);
+}
+function baseMs(baseDate) {
+  return parseISODate(baseDate) ?? parseISODate(FALLBACK_BASE);
+}
+var posToMs = (pos, baseDate) => baseMs(baseDate) + pos * DAY_MS;
+function isoOfPos(pos, baseDate) {
+  const d = new Date(Math.floor(posToMs(pos, baseDate) / DAY_MS) * DAY_MS);
+  const y = d.getUTCFullYear();
+  const ys = y < 0 ? "-" + String(-y).padStart(4, "0") : String(y).padStart(4, "0");
+  return `${ys}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
+}
+var yearLabel = (y) => y <= 0 ? `${1 - y} BC` : String(y);
+var hhmm = (d) => `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`;
+function formatDate(pos, baseDate) {
+  const ms = posToMs(pos, baseDate);
+  const d = new Date(Math.round(ms / 6e4) * 6e4);
+  const day = `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${yearLabel(d.getUTCFullYear())}`;
+  return d.getUTCHours() || d.getUTCMinutes() ? `${day} ${hhmm(d)}` : day;
+}
+var STEPS = [
+  ...[1, 3, 6, 12].map((n) => ({ kind: "hour", n, days: n / 24 })),
+  ...[1, 2].map((n) => ({ kind: "day", n, days: n })),
+  { kind: "half", n: 1, days: 15.2 },
+  ...[1, 3, 6].map((n) => ({ kind: "month", n, days: n * 30.44 })),
+  ...[1, 2, 5, 10, 25, 50, 100, 250, 500, 1e3, 2500, 5e3, 1e4].map((n) => ({ kind: "year", n, days: n * 365.25 }))
+];
+
 // src/model/folders.ts
 var foldersOf = (p, kind) => kind === "types" ? p.typeFolders : kind === "fields" ? p.fieldFolders : p.processorFolders;
 var membersOf = (p, kind) => kind === "types" ? p.types : kind === "fields" ? p.fields : p.processors;
@@ -3722,10 +3766,10 @@ function tokenize(src) {
       i = j + 1;
       continue;
     }
-    const num2 = /^(\d+\.?\d*|\.\d+)(e[+-]?\d+)?/i.exec(src.slice(i));
-    if (num2 && !/[A-Za-z_]/.test(src[i + num2[0].length] ?? "")) {
-      out.push({ k: "num", v: Number(num2[0]), pos: i });
-      i += num2[0].length;
+    const num3 = /^(\d+\.?\d*|\.\d+)(e[+-]?\d+)?/i.exec(src.slice(i));
+    if (num3 && !/[A-Za-z_]/.test(src[i + num3[0].length] ?? "")) {
+      out.push({ k: "num", v: Number(num3[0]), pos: i });
+      i += num3[0].length;
       continue;
     }
     const op = OPS.find((o) => src.startsWith(o, i));
@@ -4269,7 +4313,9 @@ var TIME_BASE = {
   days: DAY,
   weeks: WEEK,
   months: MONTH,
-  years: YEAR
+  years: YEAR,
+  // Calendar dates: a unit is a day, so lengths read like the days preset.
+  calendar: DAY
 };
 var TIME_STEPS = [
   1,
@@ -4312,7 +4358,8 @@ var UNIT_SUFFIX = {
   days: "d",
   weeks: "w",
   months: "mo",
-  years: "y"
+  years: "y",
+  calendar: "d"
 };
 function unitSuffix(preset, custom) {
   return preset === "custom" ? custom.trim() : UNIT_SUFFIX[preset] ?? "";
@@ -4350,13 +4397,17 @@ function formatUnit(v, step, suffix, preset = "none") {
   const n = v.toFixed(decimals).replace(/\.0+$/, "").replace(/(\.\d*?)0+$/, "$1");
   return suffix ? `${n} ${suffix}` : n;
 }
+function formatPos(v, st) {
+  if (st.unit.preset === "calendar") return formatDate(v, st.unit.baseDate);
+  return formatUnit(v, Math.max(Math.abs(v), 0.01), unitSuffix(st.unit.preset, st.unit.custom), st.unit.preset);
+}
 
 // src/model/timelines.ts
 var FIRST_TIMELINE_ID = "timeline-0";
 var FIRST_TIMELINE_NAME = "Main";
 var defaultSettings = () => ({
   placement: "above",
-  unit: { preset: "none", custom: "", showRuler: false },
+  unit: { preset: "none", custom: "", showRuler: false, baseDate: "" },
   grid: { show: false, style: "solid", opacity: 0.35 },
   spine: { width: 2, opacity: 1 },
   bandStrength: 1,
@@ -4367,7 +4418,7 @@ function normalizeSettings(raw) {
   const s = raw && typeof raw === "object" ? raw : {};
   return {
     placement: s.placement === "both" ? "both" : d.placement,
-    unit: { ...d.unit, ...s.unit ?? {} },
+    unit: { ...d.unit, ...s.unit ?? {}, baseDate: typeof s.unit?.baseDate === "string" ? s.unit.baseDate : "" },
     grid: { ...d.grid, ...s.grid ?? {} },
     spine: { ...d.spine, ...s.spine ?? {} },
     bandStrength: typeof s.bandStrength === "number" ? s.bandStrength : d.bandStrength,
@@ -24471,6 +24522,7 @@ function DocBody({ proj, roots, loose, base = 1 }) {
   const st = proj.settings;
   const suffix = unitSuffix(st.unit.preset, st.unit.custom);
   const fmt = (v) => formatUnit(v, 0.05, suffix, st.unit.preset);
+  const at = (v) => st.unit.preset === "calendar" ? formatPos(v, st) : fmt(v);
   const renderItem = (it, level) => {
     const t = typeOf(proj, it);
     const Icon2 = iconByName(t?.icon ?? "Circle");
@@ -24508,9 +24560,9 @@ function DocBody({ proj, roots, loose, base = 1 }) {
         /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "type", children: proj.hierarchyLevels[sc.depth]?.name ?? `Level ${sc.depth + 1}` })
       ] }),
       /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("p", { className: "meta", children: [
-        fmt(sc.start),
+        at(sc.start),
         " \u2192 ",
-        fmt(sc.end),
+        at(sc.end),
         " (",
         fmt(sc.end - sc.start),
         ") \xB7 ",
@@ -24767,9 +24819,19 @@ async function cmdRead() {
   console.log(`${plural(d.timelines.length, "timeline")} (${d.timelines.map((t) => t.name).join(", ")}), ${plural(d.items.length, "item")}, ${plural(d.types.length, "type")}, ${plural(d.sections.length, "section")}, ${plural(d.layers.length, "layer")}`);
   console.log(`edit the "doc" object in ${out}, then: propose --base ${out} --edited <edited.json> --title "\u2026"`);
 }
+var num2 = (n) => Number.isInteger(n) ? String(n) : n.toFixed(2);
+function posFmt(d, timelineId) {
+  const unit = d.timelines.find((t) => t.id === timelineId)?.settings.unit;
+  if (unit?.preset !== "calendar") return num2;
+  return (n) => `${num2(n)} (${isoOfPos(n, unit.baseDate)})`;
+}
+function unitLine(tl) {
+  const u = tl.settings.unit;
+  if (u.preset === "calendar") return `calendar dates: 1 unit = 1 day, position 0 = ${u.baseDate}`;
+  return `${u.preset}${u.preset === "custom" ? ` ${u.custom}` : ""}`;
+}
 function outlineOf(d) {
   const lines = [];
-  const fmt = (n) => Number.isInteger(n) ? String(n) : n.toFixed(2);
   lines.push(`# ${d.name}`);
   lines.push(`hierarchy: ${d.hierarchyLevels.map((l) => `${l.name} [${l.id}]`).join(" > ")}`);
   const folderName = (kind, id) => id ? foldersOf(d, kind).find((f) => f.id === id)?.name : void 0;
@@ -24796,10 +24858,12 @@ function outlineOf(d) {
   lines.push(`layers: ${d.layers.map((l) => `${l.name} [${l.id}]`).join(", ") || "(none)"}`);
   const multi = d.timelines.length > 1;
   if (multi) lines.push(`timelines: ${d.timelines.map((t) => `${t.name} [${t.id}]`).join(", ")}`);
+  else if (d.timelines[0]?.settings.unit.preset !== "none") lines.push(`unit: ${unitLine(d.timelines[0])}`);
   for (const tl of d.timelines) {
     const v = timelineView(d, tl.id);
     lines.push("");
-    if (multi) lines.push(`## Timeline: ${tl.name} [${tl.id}]  (unit: ${tl.settings.unit.preset}${tl.settings.unit.preset === "custom" ? ` ${tl.settings.unit.custom}` : ""})`);
+    if (multi) lines.push(`## Timeline: ${tl.name} [${tl.id}]  (unit: ${unitLine(tl)})`);
+    const fmt = posFmt(d, tl.id);
     const base = multi ? 3 : 2;
     const secs = [...v.sections].sort((a, b) => a.start - b.start || a.depth - b.depth);
     const items = sortByPosition(v, v.items);
@@ -24852,13 +24916,12 @@ async function cmdQuery() {
     console.log(JSON.stringify({ version: w.version, matches, ...computed ? { computed } : {} }, null, 2));
     return;
   }
-  const fmt = (n) => Number.isInteger(n) ? String(n) : n.toFixed(2);
   const byId = new Map(d.items.map((it) => [it.id, it]));
   const fieldName = (id) => d.fields.find((f) => f.id === id)?.name ?? id;
   console.log(`${plural(matches.length, "item")}${where.trim() ? ` where ${where.trim()}` : ""}${timelineIds ? ` on ${plural(timelineIds.length, "timeline")}` : ""}`);
   for (const id of matches) {
     const it = byId.get(id);
-    let line = itemLine(d, it, fmt);
+    let line = itemLine(d, it, posFmt(d, it.timelineId));
     const derived2 = computed?.items[id];
     if (derived2) line += `  {${Object.entries(derived2).map(([k, v]) => `${fieldName(k)}: ${Array.isArray(v) ? v.join(", ") : String(v)}`).join("; ")}}`;
     console.log(line);
