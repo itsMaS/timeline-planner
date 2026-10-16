@@ -7,7 +7,7 @@ import {
 import { iconByName } from '../model/icons'
 import { useActiveWhole, useStore } from '../model/store'
 import type { FieldAttachment, FieldDef, FieldValue, Id, Project } from '../model/types'
-import { formatUnit, unitSuffix } from '../model/util'
+import { formatSpan } from '../model/util'
 import { Markdown } from './Markdown'
 import { nav } from './nav'
 import { Select } from './Select'
@@ -407,8 +407,7 @@ export function RefEntry({ id, onRemove }: { id: Id; onRemove?: () => void }) {
   const Icon = iconByName(look.icon)
   const desc = (o.kind === 'item' ? o.entity.description : o.entity.description ?? '').trim()
   const tags = o.kind === 'item' ? o.entity.tags : []
-  const suffix = unitSuffix(proj.settings.unit.preset, proj.settings.unit.custom)
-  const fmt = (v: number) => formatUnit(v, Math.max(Math.abs(v), 0.01), suffix, proj.settings.unit.preset)
+  const fmt = (v: number) => formatSpan(v, proj.settings)
   const span = o.kind === 'item'
     ? (o.entity.duration > 0 ? `spans ${fmt(o.entity.duration)}` : '')
     : `${fmt(o.entity.end - o.entity.start)} long`

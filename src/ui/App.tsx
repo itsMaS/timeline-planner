@@ -9,6 +9,7 @@ import { blankProject, emptyFilters, useActiveProject, useActiveShare, useActive
 import { TEMPLATES } from '../model/templates'
 import { timelineView } from '../model/timelines'
 import type { Id, Project, TimelineSettings, UnitPreset } from '../model/types'
+import { daysBetween, parseISODate, todayISO } from '../model/calendar'
 import { uid } from '../model/util'
 import { activeView, filtersEqual, isUnfiltered, viewDirty } from '../model/views'
 import { exportCSV, exportFullSVG, exportJSON, exportPNG } from './export'
@@ -606,6 +607,7 @@ const UNIT_PRESETS: { key: UnitPreset; label: string }[] = [
   { key: 'weeks', label: 'Weeks' },
   { key: 'months', label: 'Months' },
   { key: 'years', label: 'Years' },
+  { key: 'calendar', label: 'Calendar dates' },
   { key: 'custom', label: 'Custom unit…' },
 ]
 
@@ -614,14 +616,47 @@ function SettingsModal() {
   const timeline = useActiveTimeline()
   const setUI = useStore(s => s.setUI)
   const tweak = useStore(s => s.tweak)
+  const mutate = useStore(s => s.mutate)
   const st = timeline.settings
   const multi = whole.timelines.length > 1
+  const [keepDates, setKeepDates] = useState(true)
 
   // Settings belong to the timeline on screen; the project-level copy only seeds new timelines.
   const patch = (recipe: (s: TimelineSettings) => void) => tweak(p => {
     const t = p.timelines.find(x => x.id === timeline.id)
     if (t) recipe(t.settings)
   })
+
+  const pickPreset = (v: UnitPreset) => patch(s => {
+    s.unit.preset = v
+    // Calendar dates start out anchored on today, with the date ruler showing.
+    if (v === 'calendar' && parseISODate(s.unit.baseDate) === null) {
+      s.unit.baseDate = todayISO()
+      s.unit.showRuler = true
+    }
+  })
+
+  // Re-anchoring a calendar timeline. With "keep dates" every entry shifts by
+  // the difference so it stays on its date (and the view with it); without,
+  // entries keep their offset from the base and slide in calendar terms. A
+  // document edit either way, so it goes through mutate (undoable, synced).
+  const setBaseDate = (iso: string) => {
+    if (parseISODate(iso) === null || iso === st.unit.baseDate) return
+    const delta = parseISODate(st.unit.baseDate) === null ? 0 : daysBetween(st.unit.baseDate, iso)
+    const shift = keepDates && delta !== 0
+    mutate(p => {
+      const t = p.timelines.find(x => x.id === timeline.id)
+      if (!t) return
+      t.settings.unit.baseDate = iso
+      if (!shift) return
+      for (const it of p.items) if (it.timelineId === timeline.id) it.pos -= delta
+      for (const sc of p.sections) if (sc.timelineId === timeline.id) { sc.start -= delta; sc.end -= delta }
+    })
+    if (shift) {
+      const cam = useStore.getState().active().camera
+      useStore.getState().setCamera({ ...cam, x: cam.x - delta })
+    }
+  }
 
   return (
     <div className="modal-scrim" onPointerDown={e => { if (e.target === e.currentTarget) setUI({ overlay: null }) }}>
@@ -651,7 +686,7 @@ function SettingsModal() {
               value={st.unit.preset}
               options={UNIT_PRESETS.map(u => ({ value: u.key, label: u.label }))}
               searchPlaceholder="Search units…"
-              onChange={v => patch(s => { s.unit.preset = v as UnitPreset })}
+              onChange={v => pickPreset(v as UnitPreset)}
             />
             {st.unit.preset === 'custom' && (
               <input
@@ -666,8 +701,28 @@ function SettingsModal() {
               type="checkbox" checked={st.unit.showRuler}
               onChange={e => patch(s => { s.unit.showRuler = e.target.checked })}
             />
-            Show unit ruler along the timeline
+            {st.unit.preset === 'calendar' ? 'Show the date ruler and today’s marker' : 'Show unit ruler along the timeline'}
           </label>
+          {st.unit.preset === 'calendar' && (
+            <div className="cal-base">
+              <p className="muted">
+                Positions are real dates: a unit is one day and the ruler switches between hours, days,
+                months, years and centuries as you zoom.
+              </p>
+              <label>Base date <span className="muted">— where position 0 sits</span></label>
+              <div className="row gap">
+                <input
+                  className="input" type="date" value={st.unit.baseDate}
+                  onChange={e => setBaseDate(e.target.value)}
+                />
+                <button className="primary-btn small" onClick={() => setBaseDate(todayISO())}>Today</button>
+              </div>
+              <label className="check-row">
+                <input type="checkbox" checked={keepDates} onChange={e => setKeepDates(e.target.checked)} />
+                Keep entries on their dates when the base date changes
+              </label>
+            </div>
+          )}
         </div>
 
         <div className="field">

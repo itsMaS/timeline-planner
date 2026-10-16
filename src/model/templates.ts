@@ -1,6 +1,7 @@
 import { newFieldDef } from './fields'
 import { blankProject, emptyFilters, newLevel } from './normalize'
 import type { Item, Project, Section } from './types'
+import { todayISO } from './calendar'
 import { uid } from './util'
 
 function item(p: Project, typeName: string, pos: number, title: string, extra?: Partial<Item>): Item {
@@ -158,9 +159,35 @@ export function projectPlanTemplate(): Project {
   return p
 }
 
+/**
+ * A personal timeline on calendar dates, anchored on today: life eras and
+ * chapters with milestone, home, work, education, travel and relationship
+ * types. Starts empty, framed on the last few decades.
+ */
+export function lifeStoryTemplate(): Project {
+  const p = blankProject('Life story')
+  p.hierarchyLevels = ['Era', 'Chapter'].map(n => newLevel(n))
+  const [critical, major, minor] = p.layers.map(l => l.id)
+  p.types = [
+    { id: uid(), name: 'Milestone', icon: 'Star', color: '#f59e0b', defaultLayerId: critical, fields: [] },
+    { id: uid(), name: 'Home', icon: 'Home', color: '#22c55e', defaultLayerId: major, fields: [] },
+    { id: uid(), name: 'Work', icon: 'Briefcase', color: '#3b82f6', defaultLayerId: major, fields: [] },
+    { id: uid(), name: 'Education', icon: 'GraduationCap', color: '#a855f7', defaultLayerId: major, fields: [] },
+    { id: uid(), name: 'Relationship', icon: 'Heart', color: '#ec4899', defaultLayerId: major, fields: [] },
+    { id: uid(), name: 'Travel', icon: 'Plane', color: '#06b6d4', defaultLayerId: minor, fields: [] },
+  ]
+  const settings = p.timelines[0].settings
+  settings.unit = { ...settings.unit, preset: 'calendar', baseDate: todayISO(), showRuler: true }
+  p.settings = structuredClone(settings)
+  // The last ~35 years up to a little past today.
+  p.camera = { x: -35 * 365.25, s: 0.08 }
+  return p
+}
+
 export const TEMPLATES: { key: string; name: string; blurb: string; make: () => Project }[] = [
   { key: 'empty', name: 'Empty', blurb: 'A blank line and one starter type. Bring your own structure.', make: () => blankProject('Untitled') },
   { key: 'game', name: 'Linear game', blurb: 'Chapters, story beats, encounters, death opportunities — a seeded 4-hour game plan.', make: linearGameTemplate },
   { key: 'film', name: 'Film script', blurb: 'Acts, sequences and scenes with classic plot-point types.', make: filmTemplate },
   { key: 'plan', name: 'Project plan', blurb: 'Phases, milestones, tasks and risks over time.', make: projectPlanTemplate },
+  { key: 'life', name: 'Life story', blurb: 'Real calendar dates from today back: eras, milestones, homes, jobs and trips.', make: lifeStoryTemplate },
 ]

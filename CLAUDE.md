@@ -136,6 +136,26 @@
 - In user-facing copy the shared document is a **project**; "timeline" means
   a subtab. Database tables, channels and RPC names keep their old names.
 
+## Calendar dates
+
+- Unit preset `calendar` (Settings → Time units → *Calendar dates*): one world
+  unit is one day and position 0 is `settings.unit.baseDate` (YYYY-MM-DD,
+  UTC). Picking the preset anchors on today and turns the ruler on; the
+  *Life story* template starts that way. Date maths, ruler ticks on calendar
+  boundaries (hours → days → half months → months → years → centuries) and
+  calendar snapping live in `src/model/calendar.ts`.
+- Call sites never format positions with `formatUnit` directly: use
+  `formatPos` (a date on calendar timelines) and `formatSpan` (a length),
+  `rulerTicks` for ruler/grid, `placePos` for where a pointer lands (whole
+  days on calendar timelines even with snapping off) and
+  `maxZoomFor`/`minZoomFloor` for zoom limits, all in `util.ts`.
+- Changing the base date is a `mutate` (undoable): with "keep entries on
+  their dates" (default) every item and section of that timeline shifts by
+  the difference, else they slide with the base. The inspector shows date
+  pickers (Date / Until, Starts / Ends) instead of number boxes. The API and
+  CLI keep raw positions (days from the base date); `outline` and `query`
+  append the ISO date.
+
 ## Suggest mode and history
 
 - Suggest mode = a **draft** (`store.drafts[projectId]`, persisted to

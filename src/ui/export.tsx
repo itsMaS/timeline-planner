@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { iconByName } from '../model/icons'
 import { contentExtent, isFieldShown, layoutTimeline, rowY, spineYFor, splitLabel, toggleBadges, typeOf } from '../model/layout'
 import type { Camera, FieldDef, Project } from '../model/types'
-import { clamp, download, formatUnit, rulerStepFor, sectionHue, unitSuffix } from '../model/util'
+import { clamp, download, formatSpan, rulerTicks, sectionHue } from '../model/util'
 import {
   attachmentsFor, childrenOf, fieldDisplayName, formatValue, groupText, levelOf, orderedFields, parentOf, readValue, type Owner,
 } from '../model/fields'
@@ -84,7 +84,7 @@ function ExportScene(props: { proj: Project; cam: Camera; w: number; h: number }
             const showText = avail >= nameW + 8
             const dur = sc.end - sc.start
             const durText = st.sectionStyle.showDuration
-              ? formatUnit(dur, dur, unitSuffix(st.unit.preset, st.unit.custom), st.unit.preset)
+              ? formatSpan(dur, st)
               : ''
             const durPx = Math.max(labelPx - 2.5, 9)
             const showDur = !!durText && avail >= nameW + 8 + durText.length * durPx * 0.62 + 10
@@ -115,17 +115,11 @@ function ExportScene(props: { proj: Project; cam: Camera; w: number; h: number }
           })
         })()}
         {(st.grid.show || st.unit.showRuler) && (() => {
-          const step = rulerStepFor(cam.s, st.unit.preset)
-          const n0 = Math.floor(cam.x / step)
-          const n1 = Math.ceil((cam.x + w / cam.s) / step)
-          const suffix = unitSuffix(st.unit.preset, st.unit.custom)
           const dash = st.grid.style === 'dashed' ? '5 7' : st.grid.style === 'dots' ? '0.5 9' : undefined
-          const ticks = []
-          for (let n = n0; n <= n1; n++) {
-            const v = n * step
-            const x = toX(v)
-            ticks.push(
-              <g key={n}>
+          const ticks = rulerTicks(cam.x, cam.x + w / cam.s, cam.s, st).map(({ pos, label }) => {
+            const x = toX(pos)
+            return (
+              <g key={pos}>
                 {st.grid.show && (
                   <line x1={x} y1={-spineY} x2={x} y2={h - spineY} stroke={C.line} opacity={st.grid.opacity * 0.6}
                     strokeDasharray={dash} strokeLinecap={st.grid.style === 'dots' ? 'round' : undefined} />
@@ -133,12 +127,12 @@ function ExportScene(props: { proj: Project; cam: Camera; w: number; h: number }
                 {st.unit.showRuler && (
                   <>
                     <line x1={x} y1={-5} x2={x} y2={5} stroke={C.line} strokeWidth={1.5} />
-                    <text x={x + 5} y={16} fontFamily={font} fontSize={10} fill={C.muted}>{formatUnit(v, step, suffix, st.unit.preset)}</text>
+                    <text x={x + 5} y={16} fontFamily={font} fontSize={10} fill={C.muted}>{label}</text>
                   </>
                 )}
-              </g>,
+              </g>
             )
-          }
+          })
           return <g>{ticks}</g>
         })()}
         <line x1={0} y1={0} x2={w} y2={0} stroke={C.line} strokeWidth={st.spine.width} opacity={st.spine.opacity} />

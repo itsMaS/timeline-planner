@@ -251,7 +251,8 @@ export interface Camera {
   s: number
 }
 
-export type UnitPreset = 'none' | 'minutes' | 'hours' | 'days' | 'weeks' | 'months' | 'years' | 'custom'
+/** 'calendar' = calendar dates: a unit is a day and position 0 is `unit.baseDate` (see calendar.ts). */
+export type UnitPreset = 'none' | 'minutes' | 'hours' | 'days' | 'weeks' | 'months' | 'years' | 'calendar' | 'custom'
 
 export interface TimelineSettings {
   /** Where markers may be placed relative to the spine. */
@@ -260,6 +261,11 @@ export interface TimelineSettings {
     preset: UnitPreset
     /** Suffix used when preset is 'custom' (e.g. "beats"). */
     custom: string
+    /**
+     * Calendar dates: the date at position 0 (YYYY-MM-DD, UTC). Set to today
+     * when the preset is picked; '' on timelines that never used calendar dates.
+     */
+    baseDate: string
     /** Draw tick marks + unit labels along the spine. */
     showRuler: boolean
   }

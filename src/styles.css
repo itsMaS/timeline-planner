@@ -316,6 +316,8 @@ input, select, textarea { font: inherit; color: inherit; }
 .grid-line { stroke: var(--line-soft); stroke-width: 1; }
 .ruler-tick { stroke: var(--line); stroke-width: 1.5; }
 .ruler-label { font-size: 10px; fill: var(--muted); }
+.today-mark line { stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 4 5; opacity: 0.55; }
+.today-mark text { font-size: 10px; font-weight: 600; fill: var(--accent); }
 
 .band-edge { stroke-width: 1; transition: stroke .2s; }
 .band-label-g { cursor: pointer; }
@@ -574,6 +576,11 @@ input, select, textarea { font: inherit; color: inherit; }
 .modal h2 { margin: 2px 0 4px; font-size: 17px; }
 .modal .field { margin-top: 10px; }
 .modal.settings { width: 420px; }
+.cal-base { margin-top: 6px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; display: grid; gap: 6px; }
+.cal-base p { margin: 0; font-size: 11.5px; }
+.cal-base > label:not(.check-row) { font-size: 11.5px; }
+.cal-base .row { align-items: center; }
+.cal-base .input { flex: 1; }
 .check-row {
   display: flex; align-items: center; gap: 8px; font-size: 12.5px;
   padding: 3px 0; cursor: pointer;

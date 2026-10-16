@@ -22,7 +22,7 @@ export const FIRST_TIMELINE_NAME = 'Main'
 
 export const defaultSettings = (): TimelineSettings => ({
   placement: 'above',
-  unit: { preset: 'none', custom: '', showRuler: false },
+  unit: { preset: 'none', custom: '', showRuler: false, baseDate: '' },
   grid: { show: false, style: 'solid', opacity: 0.35 },
   spine: { width: 2, opacity: 1 },
   bandStrength: 1,
@@ -35,7 +35,7 @@ export function normalizeSettings(raw: unknown): TimelineSettings {
   const s = ((raw && typeof raw === 'object') ? raw : {}) as Partial<TimelineSettings>
   return {
     placement: s.placement === 'both' ? 'both' : d.placement,
-    unit: { ...d.unit, ...(s.unit ?? {}) },
+    unit: { ...d.unit, ...(s.unit ?? {}), baseDate: typeof s.unit?.baseDate === 'string' ? s.unit.baseDate : '' },
     grid: { ...d.grid, ...(s.grid ?? {}) },
     spine: { ...d.spine, ...(s.spine ?? {}) },
     bandStrength: typeof s.bandStrength === 'number' ? s.bandStrength : d.bandStrength,

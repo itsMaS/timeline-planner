@@ -38,6 +38,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os'
 import { join, resolve as resolvePath } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { isoOfPos } from '../src/model/calendar'
 import { computeDoc, prepare, queryItems } from '../src/api/compute'
 import { compile } from '../src/model/expr'
 import { childrenOf, isDerived, rootFields } from '../src/model/fields'
@@ -137,9 +138,23 @@ async function cmdRead() {
   console.log(`edit the "doc" object in ${out}, then: propose --base ${out} --edited <edited.json> --title "…"`)
 }
 
+const num = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(2))
+
+/** Position printer for a timeline: calendar-date timelines add the date, e.g. "-931 (2024-03-12)". */
+function posFmt(d: Project, timelineId: string): (n: number) => string {
+  const unit = d.timelines.find(t => t.id === timelineId)?.settings.unit
+  if (unit?.preset !== 'calendar') return num
+  return n => `${num(n)} (${isoOfPos(n, unit.baseDate)})`
+}
+
+function unitLine(tl: Project['timelines'][number]): string {
+  const u = tl.settings.unit
+  if (u.preset === 'calendar') return `calendar dates: 1 unit = 1 day, position 0 = ${u.baseDate}`
+  return `${u.preset}${u.preset === 'custom' ? ` ${u.custom}` : ''}`
+}
+
 function outlineOf(d: Project): string {
   const lines: string[] = []
-  const fmt = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(2))
   lines.push(`# ${d.name}`)
   lines.push(`hierarchy: ${d.hierarchyLevels.map(l => `${l.name} [${l.id}]`).join(' > ')}`)
   // Fields: top-level ones with their folder, composites with their children indented, derived ones with the formula.
@@ -167,11 +182,13 @@ function outlineOf(d: Project): string {
   lines.push(`layers: ${d.layers.map(l => `${l.name} [${l.id}]`).join(', ') || '(none)'}`)
   const multi = d.timelines.length > 1
   if (multi) lines.push(`timelines: ${d.timelines.map(t => `${t.name} [${t.id}]`).join(', ')}`)
+  else if (d.timelines[0]?.settings.unit.preset !== 'none') lines.push(`unit: ${unitLine(d.timelines[0])}`)
   // One block per timeline; with a single timeline the headings start one level higher.
   for (const tl of d.timelines) {
     const v = timelineView(d, tl.id)
     lines.push('')
-    if (multi) lines.push(`## Timeline: ${tl.name} [${tl.id}]  (unit: ${tl.settings.unit.preset}${tl.settings.unit.preset === 'custom' ? ` ${tl.settings.unit.custom}` : ''})`)
+    if (multi) lines.push(`## Timeline: ${tl.name} [${tl.id}]  (unit: ${unitLine(tl)})`)
+    const fmt = posFmt(d, tl.id)
     const base = multi ? 3 : 2
     const secs = [...v.sections].sort((a, b) => a.start - b.start || a.depth - b.depth)
     const items = sortByPosition(v, v.items)
@@ -235,13 +252,12 @@ async function cmdQuery() {
     console.log(JSON.stringify({ version: w.version, matches, ...(computed ? { computed } : {}) }, null, 2))
     return
   }
-  const fmt = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(2))
   const byId = new Map(d.items.map(it => [it.id, it]))
   const fieldName = (id: string) => d.fields.find(f => f.id === id)?.name ?? id
   console.log(`${plural(matches.length, 'item')}${where.trim() ? ` where ${where.trim()}` : ''}${timelineIds ? ` on ${plural(timelineIds.length, 'timeline')}` : ''}`)
   for (const id of matches) {
     const it = byId.get(id)!
-    let line = itemLine(d, it, fmt)
+    let line = itemLine(d, it, posFmt(d, it.timelineId))
     const derived = computed?.items[id]
     if (derived) line += `  {${Object.entries(derived).map(([k, v]) => `${fieldName(k)}: ${Array.isArray(v) ? v.join(', ') : String(v)}`).join('; ')}}`
     console.log(line)

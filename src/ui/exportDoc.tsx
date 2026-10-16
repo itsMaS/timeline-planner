@@ -7,7 +7,7 @@ import { shownProcessorResults } from '../model/processors'
 import { sortByPosition, stackRuns } from '../model/stacks'
 import { timelineView } from '../model/timelines'
 import type { Id, Item, Project, Section } from '../model/types'
-import { formatUnit, unitSuffix } from '../model/util'
+import { formatPos, formatUnit, unitSuffix } from '../model/util'
 import { isItemVisible } from './exportScope'
 import { Markdown } from './Markdown'
 
@@ -123,6 +123,8 @@ function DocBody({ proj, roots, loose, base = 1 }: { proj: Project; roots: Secti
   const st = proj.settings
   const suffix = unitSuffix(st.unit.preset, st.unit.custom)
   const fmt = (v: number) => formatUnit(v, 0.05, suffix, st.unit.preset)
+  // Calendar timelines print dates for where a section starts and ends.
+  const at = (v: number) => (st.unit.preset === 'calendar' ? formatPos(v, st) : fmt(v))
 
   const renderItem = (it: Item, level: number) => {
     const t = typeOf(proj, it)
@@ -175,7 +177,7 @@ function DocBody({ proj, roots, loose, base = 1 }: { proj: Project; roots: Secti
           <span className="title">{sc.name || 'Untitled'}</span>
           <span className="type">{proj.hierarchyLevels[sc.depth]?.name ?? `Level ${sc.depth + 1}`}</span>
         </Heading>
-        <p className="meta">{fmt(sc.start)} → {fmt(sc.end)} ({fmt(sc.end - sc.start)}) · {countItems(n)} item{countItems(n) === 1 ? '' : 's'}</p>
+        <p className="meta">{at(sc.start)} → {at(sc.end)} ({fmt(sc.end - sc.start)}) · {countItems(n)} item{countItems(n) === 1 ? '' : 's'}</p>
         {procs.length > 0 && (
           <p className="procs">
             {procs.map((r, i) => (

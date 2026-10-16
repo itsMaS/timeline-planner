@@ -17,7 +17,8 @@ import { useActiveProject, useActiveWhole, useStore } from '../model/store'
 import { derived, timelineName, timelineView } from '../model/timelines'
 import type { Camera, FieldDef, Item, Section } from '../model/types'
 import { hideNewTypeInFilters } from '../model/views'
-import { PALETTE, clamp, formatUnit, rulerStepFor, sectionHue, snapPos, timeBaseFor, uid, unitSuffix } from '../model/util'
+import { PALETTE, clamp, formatPos, formatSpan, maxZoomFor, minZoomFloor, placePos, rulerTicks, sectionHue, uid } from '../model/util'
+import { todayPos } from '../model/calendar'
 import { bindParticleCanvas, burst, puff, ripple, setParticleLevel } from '../fx/particles'
 import { setSoundOn, sfx } from '../fx/sound'
 import { flyCamera, cancelFlight } from '../fx/springs'
@@ -161,11 +162,10 @@ export function CanvasView() {
 
   const cam = proj.camera
   const st = proj.settings
-  // Time presets can zoom far enough in to read individual seconds.
-  const timeBase = timeBaseFor(st.unit.preset)
-  const maxS = timeBase ? Math.max(MAX_S, timeBase * 400) : MAX_S
+  // Time presets can zoom far enough in to read individual seconds (calendar dates: hours).
+  const maxS = maxZoomFor(st.unit.preset, MAX_S)
   // Zoom-out limit follows the content extent so large scopes stay reachable.
-  const minS = Math.min(MIN_S, minZoomFor(proj, size.w))
+  const minS = Math.min(MIN_S, minZoomFor(proj, size.w), minZoomFloor(st.unit.preset, size.w))
   const spineY = spineYFor(proj, size.h)
   const selection = useMemo(() => new Set(ui.selection), [ui.selection])
   // While a proposal is open in the review panel the canvas shows it applied:
@@ -371,7 +371,7 @@ export function CanvasView() {
       addItem: typeId => {
         if (ui.readOnly) return null
         const raw = toPos(size.w / 2)
-        const pos = ui.snap ? snapPos(raw, cam.s) : raw
+        const pos = placePos(raw, cam.s, proj.settings, ui.snap)
         const id = createItem(typeId, pos, size.w / 2, spineY)
         if (id) promptName(id, size.w / 2, spineY + 14, pos)
         return id
@@ -390,10 +390,9 @@ export function CanvasView() {
       const st = useStore.getState()
       const p0 = st.activeView()
       const c = p0.camera
-      const base = timeBaseFor(p0.settings.unit.preset)
-      const wheelMaxS = base ? Math.max(MAX_S, base * 400) : MAX_S
+      const wheelMaxS = maxZoomFor(p0.settings.unit.preset, MAX_S)
       const rect = el.getBoundingClientRect()
-      const wheelMinS = Math.min(MIN_S, minZoomFor(p0, rect.width))
+      const wheelMinS = Math.min(MIN_S, minZoomFor(p0, rect.width), minZoomFloor(p0.settings.unit.preset, rect.width))
       const mx = e.clientX - rect.left
       if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
         st.setCamera({ x: c.x + e.deltaX / c.s, s: c.s })
@@ -416,7 +415,7 @@ export function CanvasView() {
       const rect = el.getBoundingClientRect()
       if (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) return
       const x = clientX - rect.left
-      const pos = ui.snap ? snapPos(toPos(x), cam.s) : toPos(x)
+      const pos = placePos(toPos(x), cam.s, proj.settings, ui.snap)
       createItem(typeId, pos, clientX - rect.left, clientY - rect.top)
     }
     return () => { chipDrop.current = null }
@@ -493,7 +492,7 @@ export function CanvasView() {
       if (t.tagName === 'BUTTON' || t.tagName === 'A') t.blur()
       const at = pointerRef.current ?? { x: size.w / 2, y: spineY - 40 }
       const rawPos = toPos(at.x)
-      const pos = st.ui.snap ? snapPos(rawPos, cam.s) : rawPos
+      const pos = placePos(rawPos, cam.s, proj.settings, st.ui.snap)
       setMenu({ x: at.x, y: at.y, target: { kind: 'bg', pos, rawPos }, search: true })
     }
     window.addEventListener('keydown', onKey)
@@ -543,7 +542,7 @@ export function CanvasView() {
       }
       if (best !== null) return best
     }
-    return ui.snap ? snapPos(np, cam.s) : np
+    return placePos(np, cam.s, proj.settings, ui.snap)
   }
 
   const selectedSectionIds = useMemo(
@@ -1189,7 +1188,7 @@ export function CanvasView() {
     if (ui.readOnly) return
     const rect = wrapRef.current!.getBoundingClientRect()
     const x = e.clientX - rect.left
-    const pos = ui.snap ? snapPos(toPos(x), cam.s) : toPos(x)
+    const pos = placePos(toPos(x), cam.s, proj.settings, ui.snap)
     const typeId = ui.lastTypeId ?? proj.types[0]?.id
     if (typeId) createItem(typeId, pos, x, e.clientY - rect.top)
   }
@@ -1384,7 +1383,7 @@ export function CanvasView() {
     const x = e.clientX - rect.left
     const y = e.clientY - rect.top
     const rawPos = toPos(x)
-    const pos = ui.snap ? snapPos(rawPos, cam.s) : rawPos
+    const pos = placePos(rawPos, cam.s, proj.settings, ui.snap)
     // On a header bar the menu is about that level; elsewhere about the
     // innermost section under the pointer.
     let row: number | null = null
@@ -1446,7 +1445,7 @@ export function CanvasView() {
     mutate(p => {
       const sc = p.sections.find(s0 => s0.id === id)
       if (!sc) return
-      const cut = clamp(ui.snap ? snapPos(rawPos, cam.s) : rawPos, sc.start + 0.05, sc.end - 0.05)
+      const cut = clamp(placePos(rawPos, cam.s, proj.settings, ui.snap), sc.start + 0.05, sc.end - 0.05)
       p.sections.push({ ...sc, id: uid(), name: `${sc.name} (2)`, start: cut, fieldValues: structuredClone(sc.fieldValues ?? {}) })
       sc.end = cut
     })
@@ -1582,7 +1581,7 @@ export function CanvasView() {
     const nameW = textW + sectionChecksW(marks, labelPx)
     const dur = sc.end - sc.start
     const durText = st.sectionStyle.showDuration
-      ? formatUnit(dur, dur, unitSuffix(st.unit.preset, st.unit.custom), st.unit.preset)
+      ? formatSpan(dur, st)
       : ''
     const durPx = Math.max(labelPx - 2.5, 9)
     // Processor badge sits right-aligned in the visible part of the bar and
@@ -1643,17 +1642,11 @@ export function CanvasView() {
 
           {/* unit ruler & background grid */}
           {(st.grid.show || st.unit.showRuler) && (() => {
-            const step = rulerStepFor(cam.s, st.unit.preset)
-            const n0 = Math.floor(cam.x / step)
-            const n1 = Math.ceil((cam.x + size.w / cam.s) / step)
-            const suffix = unitSuffix(st.unit.preset, st.unit.custom)
             const dash = st.grid.style === 'dashed' ? '5 7' : st.grid.style === 'dots' ? '0.5 9' : undefined
-            const ticks: React.ReactNode[] = []
-            for (let n = n0; n <= n1; n++) {
-              const v = n * step
-              const x = toX(v)
-              ticks.push(
-                <g key={n}>
+            const ticks = rulerTicks(cam.x, cam.x + size.w / cam.s, cam.s, st).map(({ pos, label }) => {
+              const x = toX(pos)
+              return (
+                <g key={pos}>
                   {st.grid.show && (
                     <line
                       x1={x} y1={-spineY} x2={x} y2={size.h - spineY}
@@ -1664,13 +1657,25 @@ export function CanvasView() {
                   {st.unit.showRuler && (
                     <>
                       <line x1={x} y1={-5} x2={x} y2={5} className="ruler-tick" />
-                      <text x={x + 5} y={16} className="ruler-label">{formatUnit(v, step, suffix, st.unit.preset)}</text>
+                      <text x={x + 5} y={16} className="ruler-label">{label}</text>
                     </>
                   )}
-                </g>,
+                </g>
               )
-            }
+            })
             return <g pointerEvents="none">{ticks}</g>
+          })()}
+
+          {/* calendar dates: where today is */}
+          {st.unit.preset === 'calendar' && st.unit.showRuler && (() => {
+            const x = toX(todayPos(st.unit.baseDate))
+            if (x < -40 || x > size.w + 40) return null
+            return (
+              <g pointerEvents="none" className="today-mark">
+                <line x1={x} y1={-spineY} x2={x} y2={size.h - spineY} />
+                <text x={x + 5} y={30}>Today</text>
+              </g>
+            )
           })()}
 
           {/* section header bars — a padding-free, fully opaque strip spanning
@@ -1969,7 +1974,12 @@ export function CanvasView() {
             <span className="tt-dot" style={{ background: hoverType.color }} />
             <strong>{hoverItem.title}</strong>
           </div>
-          <div className="tt-type">{hoverType.name}{hoverItem.duration > 0 ? ` · span ${hoverItem.duration.toFixed(1)}` : ''}</div>
+          <div className="tt-type">
+            {hoverType.name}
+            {st.unit.preset === 'calendar'
+              ? ` · ${formatPos(hoverItem.pos, st)}${hoverItem.duration > 0 ? ` → ${formatPos(hoverItem.pos + hoverItem.duration, st)}` : ''}`
+              : hoverItem.duration > 0 ? ` · span ${hoverItem.duration.toFixed(1)}` : ''}
+          </div>
           {hoverItem.createdBy && (
             <div className="tt-type creator">
               <span className="creator-dot" style={{ background: hoverItem.createdBy.color }} />
