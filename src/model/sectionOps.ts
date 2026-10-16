@@ -98,6 +98,41 @@ export function sectionContents(sections: Section[], items: Item[], sc: Section)
 }
 
 /**
+ * Ripple an edge of `grab` to `to`: the section resizes and everything past
+ * that edge (after a right edge, before a left one) travels with it, so the
+ * neighbours keep their size; enclosing sections grow or shrink to match.
+ * The section's own contents rescale into its new span unless `keepContents`.
+ */
+export function rippleEdge(sections: Section[], items: Item[], grab: Section, side: 'L' | 'R', to: number, keepContents: boolean): Reflow {
+  const e = side === 'R' ? grab.end : grab.start
+  const delta = to - e
+  const contents = sectionContents(sections, items, grab)
+  const anchors = enclosing(sections, grab.depth, grab)
+  // On the edge itself: past a right edge lie the starts and the ends of
+  // enclosing sections; past a left edge the ends and enclosing starts.
+  const map = side === 'R'
+    ? (x: number, s: 'start' | 'end', an: boolean) =>
+      (x > e + EPS || (Math.abs(x - e) <= EPS && (s === 'start' || an)) ? x + delta : x)
+    : (x: number, s: 'start' | 'end', an: boolean) =>
+      (x < e - EPS || (Math.abs(x - e) <= EPS && (s === 'end' || an)) ? x + delta : x)
+  const out = reflow(sections, items, contents.secIds, contents.itemIds, map, anchors)
+  const ns = side === 'R' ? grab.start : to
+  const ne = side === 'R' ? to : grab.end
+  out.sections.push({ id: grab.id, start: ns, end: ne })
+  if (keepContents) return out
+  const ow = grab.end - grab.start
+  const ratio = ow > EPS ? (ne - ns) / ow : 1
+  const remap = (v: number) => ns + (v - grab.start) * ratio
+  for (const s of sections) {
+    if (s.id !== grab.id && contents.secIds.has(s.id)) out.sections.push({ id: s.id, start: remap(s.start), end: remap(s.end) })
+  }
+  for (const it of items) {
+    if (contents.itemIds.has(it.id)) out.items.push({ id: it.id, pos: remap(it.pos), duration: it.duration * ratio })
+  }
+  return out
+}
+
+/**
  * Where a dragged section lands when its desired span `[desiredStart, +w]`
  * overlaps sections of its level: before or after the one under its leading
  * edge (whichever half the edge is in). The hole it leaves closes (unless it is

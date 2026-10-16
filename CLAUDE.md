@@ -284,7 +284,11 @@
   section grows) and a single-section label drag slots it among its level
   (`planSectionMove`: its old place closes, the leading edge past a
   neighbour's middle swaps; Ctrl/Cmd or nothing of its level in the way =
-  free move; multi-selection drags stay free). `sectionSpot` decides the
+  free move; multi-selection drags stay free). Edge drags ripple by default
+  (`rippleEdge`: the section left of a separator resizes, everything past
+  the edge travels, enclosing sections follow); Shift makes the neighbours
+  share the space (the old behaviour), Ctrl/Cmd keeps contents in place
+  instead of rescaling them. `sectionSpot` decides the
   background menu: a header-bar right-click is about that level, elsewhere
   the innermost section; within 8 px of an edge = between sections (no
   split). The marquee also takes items folded into clusters or layer dots.

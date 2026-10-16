@@ -11,7 +11,7 @@ import {
 } from '../model/layout'
 import { bandBadge } from '../model/processors'
 import { diffToChanges, pendingChanges, previewProject, type ChangeKind, type ProposalChange } from '../model/proposal'
-import { applyReflow, openGap, planSectionMove, sectionContents, sectionSpot, type SectionSpot } from '../model/sectionOps'
+import { applyReflow, openGap, planSectionMove, rippleEdge, sectionContents, sectionSpot, type SectionSpot } from '../model/sectionOps'
 import { sortByPosition, stackKey } from '../model/stacks'
 import { useActiveProject, useActiveWhole, useStore } from '../model/store'
 import { derived, timelineName, timelineView } from '../model/timelines'
@@ -79,8 +79,12 @@ type Drag =
       origSects: Map<string, { start: number; end: number }>
       /** Item → its position, duration and innermost affected section at drag start. */
       itemSec: Map<string, { pos: number; dur: number; secId: string }>
-      /** Contained sub-sections; they redistribute with the parent unless Shift is held. */
+      /** Contained sub-sections; they redistribute with the parent unless Ctrl/Cmd is held. */
       subSects: Map<string, { start: number; end: number; parentId: string }>
+      /** Default (no Shift): the section left of the separator (or the
+          grabbed one, on a lone edge) resizes and everything past the edge
+          travels with it. Shift shares the space between the neighbours. */
+      ripple: { grab: Section; side: 'L' | 'R' }
     }
   | {
       /** Translate every selected section together (label drag). */
@@ -674,7 +678,7 @@ export function CanvasView() {
       }),
     )
     // Sub-sections contained in a dragged section, mapped to their innermost
-    // dragged parent — they redistribute with it unless Shift is held.
+    // dragged parent — they redistribute with it unless Ctrl/Cmd is held.
     const subSects = new Map<string, { start: number; end: number; parentId: string }>()
     for (const s0 of proj.sections) {
       if (origSects.has(s0.id)) continue
@@ -688,8 +692,14 @@ export function CanvasView() {
       })
       if (parentId) subSects.set(s0.id, { start: s0.start, end: s0.end, parentId })
     }
+    // Ripple: a separator belongs to the section on its left.
+    const tol = 1 / cam.s
+    const leftOf = side === 'L'
+      ? proj.sections.find(s0 => s0.id !== sc.id && s0.depth === sc.depth && Math.abs(s0.end - pos) <= tol)
+      : undefined
+    const ripple = leftOf ? { grab: leftOf, side: 'R' as const } : { grab: sc, side }
     setDragBoth({
-      kind: 'sectionEdge', edges, orig: pos, startClientX: e.clientX,
+      kind: 'sectionEdge', edges, orig: pos, startClientX: e.clientX, ripple,
       cands: magnetCands({ sectionIds: new Set(edges.map(ed => ed.id)) }), min, max,
       origSects, itemSec: itemSecFor(origSects), subSects,
     })
@@ -954,6 +964,19 @@ export function CanvasView() {
       }
     } else if (d.kind === 'sectionEdge') {
       const du = (e.clientX - d.startClientX) / cam.s
+      if (!e.shiftKey) {
+        // Ripple: magnet only to what stays put (the side before the edge).
+        const { grab, side } = d.ripple
+        const stay = d.cands.filter(c => (side === 'R' ? c < d.orig : c > d.orig))
+        const np = side === 'R'
+          ? Math.max(snapWorld(d.orig + du, stay, e.altKey), grab.start + 0.25)
+          : Math.min(snapWorld(d.orig + du, stay, e.altKey), grab.end - 0.25)
+        const r = rippleEdge(proj.sections, proj.items, grab, side, np, e.ctrlKey || e.metaKey)
+        setSectionOverride(r.sections)
+        setPosOverride(null)
+        setDurOverride(r.items.length ? r.items : null)
+        return
+      }
       const np = clamp(snapWorld(d.orig + du, d.cands, e.altKey), d.min, d.max)
       const ovs: { id: string; start: number; end: number }[] = []
       const ovById = new Map<string, { start: number; end: number }>()
@@ -964,9 +987,10 @@ export function CanvasView() {
         ovById.set(ed.id, nb)
         ovs.push({ id: ed.id, ...nb })
       }
-      // Default: the section's contents — sub-sections and items — redistribute
-      // linearly into its new span; holding Shift leaves them in place.
-      if (!e.shiftKey) {
+      // Shift: the neighbours share the space. The sections' contents —
+      // sub-sections and items — redistribute linearly into their new spans;
+      // holding Ctrl/Cmd as well leaves them in place.
+      if (!(e.ctrlKey || e.metaKey)) {
         const remap = (secId: string, v: number): number | null => {
           const os = d.origSects.get(secId)
           const nb = ovById.get(secId)
