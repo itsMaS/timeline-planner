@@ -7,10 +7,11 @@ import { allowsTarget, attachmentsFor, backlinks, displayEntries, effectiveValue
 import { iconByName } from '../model/icons'
 import {
   PlacedItem, ROW_H, contentExtent, fitCamera, itemMatchesFilters, splitLabel, toggleBadges,
-  initialSectionDepth, layoutTimeline, minZoomFor, rowY, spineYFor, typeOf,
+  layoutTimeline, minZoomFor, rowY, spineYFor, typeOf,
 } from '../model/layout'
 import { bandBadge } from '../model/processors'
 import { diffToChanges, pendingChanges, previewProject, type ChangeKind, type ProposalChange } from '../model/proposal'
+import { applyReflow, openGap, planSectionMove, sectionContents, sectionSpot, type SectionSpot } from '../model/sectionOps'
 import { sortByPosition, stackKey } from '../model/stacks'
 import { useActiveProject, useActiveWhole, useStore } from '../model/store'
 import { derived, timelineName, timelineView } from '../model/timelines'
@@ -87,6 +88,11 @@ type Drag =
       /** Items inside the moved sections; they travel with the sections. */
       itemOrig: Map<string, number>
       cands: number[]; moved: boolean
+      /** A single section: it slots in among the sections of its level (the
+          others make room, its old place closes) unless Ctrl/Cmd is held or
+          nothing of its level is in the way. `duplicate`: an Alt-drag copy,
+          the original stays put. */
+      reorder?: { grab: Section; secIds: Set<string>; itemIds: Set<string>; duplicate: boolean }
     }
   | {
       /** Proportionally scale every selected section around the group's
@@ -103,7 +109,7 @@ type Drag =
       cands: number[]; minFactor: number; moved: boolean
     }
 
-type CtxTarget = { kind: 'bg'; pos: number; rawPos: number } | { kind: 'item'; id: string }
+type CtxTarget = { kind: 'bg'; pos: number; rawPos: number; spot?: SectionSpot } | { kind: 'item'; id: string }
 interface CtxMenu {
   x: number; y: number; target: CtxTarget
   /** Background menu switched to the "new item" type search. */
@@ -213,10 +219,11 @@ export function CanvasView() {
     if (!posOverride && !durOverride && !sectionOverride && !stackOverride) return view
     const p = derived(view, {})
     if (posOverride || durOverride || stackOverride) {
+      const durById = new Map(durOverride?.map(o => [o.id, o]))
       p.items = view.items.map(it => {
         let out = it
         if (posOverride?.has(it.id)) out = { ...out, pos: posOverride.get(it.id)! }
-        const dv = durOverride?.find(x => x.id === it.id)
+        const dv = durById.get(it.id)
         if (dv) out = { ...out, pos: dv.pos, duration: dv.duration }
         const sv = stackOverride?.get(it.id)
         if (sv !== undefined) out = { ...out, stack: sv }
@@ -224,8 +231,9 @@ export function CanvasView() {
       })
     }
     if (sectionOverride) {
+      const byId = new Map(sectionOverride.map(o => [o.id, o]))
       p.sections = proj.sections.map(s => {
-        const o = sectionOverride.find(x => x.id === s.id)
+        const o = byId.get(s.id)
         return o ? { ...s, start: o.start, end: o.end } : s
       })
     }
@@ -726,9 +734,10 @@ export function CanvasView() {
     e.stopPropagation()
     ;(e.target as Element).setPointerCapture?.(e.pointerId)
     if (e.altKey) {
-      const srcIds = expandContained([sc.id])
-      const srcSects = proj.sections.filter(s0 => srcIds.includes(s0.id))
-      const srcItems = itemsWithin(srcSects)
+      const src = sectionContents(proj.sections, proj.items, sc)
+      const srcIds = [...src.secIds]
+      const srcSects = proj.sections.filter(s0 => src.secIds.has(s0.id))
+      const srcItems = src.itemIds
       const idMap = new Map(srcIds.map(id => [id, uid()]))
       const newItemIds: string[] = []
       const orig = new Map<string, { start: number; end: number }>()
@@ -759,6 +768,9 @@ export function CanvasView() {
         startClientX: e.clientX, orig, itemOrig,
         cands: magnetCands({ sectionIds: new Set(idMap.values()), items: new Set(newItemIds) }),
         moved: false,
+        reorder: {
+          grab: { ...sc, id: newGrabId }, secIds: new Set(idMap.values()), itemIds: new Set(newItemIds), duplicate: true,
+        },
       })
       return
     }
@@ -775,14 +787,21 @@ export function CanvasView() {
       sfx.select()
     }
     // Contained sections and the items inside all of them travel with the move.
-    const allIds = expandContained(ids)
+    // A lone section takes its deeper sections and the items from its start
+    // up to its end, and slots in among its level (see `reorder`).
+    const single = ids.length === 1 && ids[0] === sc.id
+    const contents = single ? sectionContents(proj.sections, proj.items, sc) : null
+    const allIds = contents ? [...contents.secIds] : expandContained(ids)
     const orig = new Map(
       proj.sections.filter(s0 => allIds.includes(s0.id)).map(s0 => [s0.id, { start: s0.start, end: s0.end }]),
     )
-    const itemOrig = itemsWithin(orig.values())
+    const itemOrig = contents
+      ? new Map(proj.items.filter(it => contents.itemIds.has(it.id)).map(it => [it.id, it.pos]))
+      : itemsWithin(orig.values())
     setDragBoth({
       kind: 'sectionMove', ids: allIds, grabId: sc.id, startClientX: e.clientX, orig, itemOrig,
       cands: magnetCands({ sectionIds: new Set(allIds), items: new Set(itemOrig.keys()) }), moved: false,
+      reorder: contents ? { grab: sc, ...contents, duplicate: false } : undefined,
     })
   }
 
@@ -985,6 +1004,16 @@ export function CanvasView() {
       if (!d.moved && Math.abs(e.clientX - d.startClientX) <= 3) return
       d.moved = true
       const du = (e.clientX - d.startClientX) / cam.s
+      const plan = d.reorder && !(e.ctrlKey || e.metaKey)
+        ? planSectionMove(proj.sections, proj.items, d.reorder.grab, d.reorder, d.reorder.grab.start + du, d.reorder.duplicate)
+        : null
+      if (plan) {
+        setSectionOverride(plan.sections)
+        setPosOverride(null)
+        setDurOverride(plan.items.length ? plan.items : null)
+        return
+      }
+      setDurOverride(null)
       const grab = d.orig.get(d.grabId) ?? d.orig.values().next().value
       if (!grab) return
       const delta = snapWorld(grab.start + du, d.cands, e.altKey) - grab.start
@@ -1060,6 +1089,14 @@ export function CanvasView() {
       for (const pl of layout.placed) {
         const iy = spineY + pl.ny
         if (pl.x >= ax && pl.x <= bx && iy >= ay && iy <= by) hits.push(pl.item.id)
+      }
+      // Items folded into clusters or minimized to dots (they'd show once
+      // zoomed in) join when the box spans them along the line and reaches
+      // into the item rows; filtered-out and hidden items never do.
+      const rowsBottom = spineY + (st.placement === 'both' ? rowY(-maxDownRows) + 20 : 12)
+      if (by > headerH && ay < rowsBottom) {
+        for (const cl of layout.clusters) if (cl.x >= ax && cl.x <= bx) hits.push(...cl.ids)
+        for (const dot of layout.dots) if (!dot.ghost && dot.x >= ax && dot.x <= bx) hits.push(dot.item.id)
       }
       // Sections join the marquee through their header bars (same geometry as render).
       for (const sc of proj.sections) {
@@ -1348,7 +1385,14 @@ export function CanvasView() {
     const y = e.clientY - rect.top
     const rawPos = toPos(x)
     const pos = ui.snap ? snapPos(rawPos, cam.s) : rawPos
-    setMenu({ x, y, target: { kind: 'bg', pos, rawPos } })
+    // On a header bar the menu is about that level; elsewhere about the
+    // innermost section under the pointer.
+    let row: number | null = null
+    for (let d0 = 0; d0 <= maxSectionDepth; d0++) {
+      if (y >= barTopFor(d0) && y < barTopFor(d0) + sizeAtDepth(d0) + 10) row = d0
+    }
+    const spot = sectionSpot(proj.sections, rawPos, 8 / cam.s, Math.max(proj.hierarchyLevels.length - 1, 0), row)
+    setMenu({ x, y, target: { kind: 'bg', pos, rawPos, spot } })
   }
 
   const itemContextMenu = (e: React.MouseEvent, item: Item) => {
@@ -1407,6 +1451,28 @@ export function CanvasView() {
       sc.end = cut
     })
     showToast('Section split.', true)
+    sfx.snap()
+    setMenu(null)
+  }
+
+  /**
+   * New section at a context-menu spot: everything after it slides right and
+   * every section across it grows, so it gets room of its own.
+   */
+  const menuNewSection = (spot: SectionSpot, at: number) => {
+    const span = (size.w * 0.25) / cam.s
+    const room = openGap(proj.sections, proj.items, at, span, spot.anchors)
+    const id = uid()
+    mutate(p => {
+      applyReflow(p, room)
+      const timelineId = p.activeTimelineId ?? p.timelines[0].id
+      const levelName = p.hierarchyLevels[spot.depth]?.name ?? 'Section'
+      p.sections.push({
+        id, name: `New ${levelName.toLowerCase()}`, timelineId,
+        depth: spot.depth, start: at, end: at + span, fieldValues: {},
+      })
+    })
+    select([`S:${id}`])
     sfx.snap()
     setMenu(null)
   }
@@ -1967,34 +2033,24 @@ export function CanvasView() {
             />
           ) : menu.target.kind === 'bg' ? (() => {
             const { pos, rawPos } = menu.target
+            const spot = menu.target.spot
+              ?? sectionSpot(proj.sections, rawPos, 8 / cam.s, Math.max(proj.hierarchyLevels.length - 1, 0), null)
+            // A free spot keeps the grid snap; an edge is exact.
+            const at = spot.at === rawPos ? pos : spot.at
+            const levelName = (proj.hierarchyLevels[spot.depth]?.name ?? 'section').toLowerCase()
             return (
               <>
                 <button onClick={() => setMenu({ ...menu, search: true })}>
                   <Plus width={13} height={13} /> New item here…
                 </button>
-                <button onClick={() => {
-                  const span = (size.w * 0.25) / cam.s
-                  const id = uid()
-                  mutate(p => {
-                    const timelineId = p.activeTimelineId ?? p.timelines[0].id
-                    const depth = initialSectionDepth(p, timelineId, pos, pos + span)
-                    const levelName = p.hierarchyLevels[depth]?.name ?? 'Section'
-                    p.sections.push({
-                      id, name: `New ${levelName.toLowerCase()}`, timelineId,
-                      depth, start: pos, end: pos + span, fieldValues: {},
-                    })
-                  })
-                  select([`S:${id}`])
-                  setMenu(null)
-                }}><RectangleHorizontal width={13} height={13} /> New section here</button>
-                {proj.sections
-                  .filter(sc => sc.start < rawPos && sc.end > rawPos)
-                  .sort((a, b) => a.depth - b.depth)
-                  .map(sc => (
-                    <button key={`split-${sc.id}`} onClick={() => menuSplitSection(sc.id, rawPos)}>
-                      <Scissors width={13} height={13} /> Split “{sc.name}” here
-                    </button>
-                  ))}
+                <button onClick={() => menuNewSection(spot, at)}>
+                  <RectangleHorizontal width={13} height={13} /> New {levelName} here
+                </button>
+                {spot.split && (
+                  <button onClick={() => menuSplitSection(spot.split!.id, rawPos)}>
+                    <Scissors width={13} height={13} /> Split “{spot.split.name}” here
+                  </button>
+                )}
                 {getClipboard().length > 0 && (
                   <button onClick={() => menuPasteAt(pos)}><ClipboardPaste width={13} height={13} /> Paste here</button>
                 )}

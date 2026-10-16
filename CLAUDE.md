@@ -259,6 +259,15 @@
   each stack in a dashed box, items in stack order (no caption or numbers; item
   headings carry no position / layer / creator line, by the owner's call);
   `exportScope`, the CSV and the CLI `outline` use the same order.
+- **Section ripple** (`src/model/sectionOps.ts`): "New section here" opens
+  room (`openGap`: later sections and items slide right, every enclosing
+  section grows) and a single-section label drag slots it among its level
+  (`planSectionMove`: its old place closes, the leading edge past a
+  neighbour's middle swaps; Ctrl/Cmd or nothing of its level in the way =
+  free move; multi-selection drags stay free). `sectionSpot` decides the
+  background menu: a header-bar right-click is about that level, elsewhere
+  the innermost section; within 8 px of an edge = between sections (no
+  split). The marquee also takes items folded into clusters or layer dots.
 - `exportScope()` (`src/ui/exportScope.ts`) is the single rule for what an
   export contains (visible items, optionally only inside the selected
   sections); PNG, SVG, CSV and the document PDF all take it. Project JSON is
