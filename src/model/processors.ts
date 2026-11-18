@@ -65,6 +65,18 @@ function indicesIn(ix: PosIndex, lo: number, hi: number): number[] {
 
 /** Items and nested sections inside `section` (item start inside the range), on the section's own timeline. */
 export function entitiesInside(p: Project, section: Section): Owner[] {
+  // Every processor of the section's level asks; work it out once per
+  // section object and document arrays.
+  const hit = insideCache.get(section)
+  if (hit && hit.items === p.items && hit.sections === p.sections) return hit.out
+  const out = findInside(p, section)
+  insideCache.set(section, { items: p.items, sections: p.sections, out })
+  return out
+}
+
+const insideCache = new WeakMap<Section, { items: unknown; sections: unknown; out: Owner[] }>()
+
+function findInside(p: Project, section: Section): Owner[] {
   const eps = 1e-9
   const lo = section.start - eps
   const hi = section.end + eps

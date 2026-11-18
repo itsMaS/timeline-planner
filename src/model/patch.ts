@@ -31,7 +31,42 @@ export interface Patch {
   set?: Partial<Pick<Project, ScalarKey>>
 }
 
-const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
+const same = (a: unknown, b: unknown) => a === b || JSON.stringify(a) === JSON.stringify(b)
+
+const json = (x: unknown) => JSON.stringify(x)
+
+/**
+ * Structural sharing after a change: `next` (a fresh clone of `base` with an
+ * edit applied) takes back `base`'s objects for every entity, collection and
+ * top-level value the edit did not touch. Typing into one item then replaces
+ * only that item and the `items` array; types, fields, sections and every
+ * other item keep their identity, so caches and memos keyed on them survive.
+ * Mutates and returns `next`; `base` is never modified.
+ */
+export function reuseUnchanged<T extends object>(base: T, next: T): T {
+  const b = base as Record<string, unknown>
+  const n = next as Record<string, unknown>
+  for (const k of Object.keys(n)) {
+    const a = b[k]
+    const v = n[k]
+    if (a === v || !a || !v || typeof a !== 'object' || typeof v !== 'object') continue
+    if (Array.isArray(a) && Array.isArray(v)) {
+      const byId = new Map<unknown, unknown>()
+      for (const e of a) if (e && typeof e === 'object' && 'id' in e) byId.set((e as Entity).id, e)
+      let whole = a.length === v.length
+      const out = v.map((e, i) => {
+        const old = e && typeof e === 'object' && 'id' in e ? byId.get((e as Entity).id) : a[i]
+        const keep = old !== undefined && json(old) === json(e) ? old : e
+        if (keep !== a[i]) whole = false
+        return keep
+      })
+      n[k] = whole ? a : out
+    } else if (!Array.isArray(a) && !Array.isArray(v) && json(a) === json(v)) {
+      n[k] = a
+    }
+  }
+  return next
+}
 
 function diffCollection(a: Entity[], b: Entity[]): CollectionPatch | null {
   const am = new Map(a.map(e => [e.id, e]))

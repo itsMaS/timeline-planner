@@ -1,5 +1,5 @@
 import type { Camera, FieldDef, Filters, Item, Project } from './types'
-import { attachmentsFor, displayEntries, readValue, type Owner } from './fields'
+import { attachmentsFor, displayEntries, readValue, typeById, type Owner } from './fields'
 import { matchesRule } from './scope'
 import { compareStack, stackKey } from './stacks'
 import { clamp, lerp } from './util'
@@ -68,13 +68,13 @@ export function initialSectionDepth(p: Project, timelineId: string | undefined, 
 }
 
 export function layerIndexOf(p: Project, it: Item): number {
-  const layerId = it.layerId ?? p.types.find(t => t.id === it.typeId)?.defaultLayerId ?? null
+  const layerId = it.layerId ?? typeById(p, it.typeId)?.defaultLayerId ?? null
   const idx = p.layers.findIndex(l => l.id === layerId)
   return idx < 0 ? p.layers.length : idx
 }
 
 export function typeOf(p: Project, it: Item) {
-  return p.types.find(t => t.id === it.typeId) ?? p.types[0]
+  return typeById(p, it.typeId) ?? p.types[0]
 }
 
 export function itemMatchesFilters(p: Project, it: Item, f: Filters): boolean {

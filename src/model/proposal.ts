@@ -45,7 +45,7 @@ export interface Proposal {
 }
 
 type Entity = { id: string }
-const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
+const same = (a: unknown, b: unknown) => a === b || JSON.stringify(a) === JSON.stringify(b)
 const list = (p: Project, col: ColKey) => (p[col] ?? []) as unknown as Entity[]
 
 /** Entity-level changes that turn `base` into `edited`. Notes are keyed by entity id (or scalar name). */

@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { repairFolders } from './folders'
 import { repairSchema } from './fields'
 import { fitCamera, clampSectionDepths } from './layout'
-import { applyPatch, diffProject, type Patch } from './patch'
+import { applyPatch, diffProject, reuseUnchanged, type Patch } from './patch'
 import { applyChanges, diffToChanges, type Proposal, type ProposalChange } from './proposal'
 import {
   activeTimeline, defaultSettings, duplicateTimeline as copyTimeline, FIRST_TIMELINE_ID, FIRST_TIMELINE_NAME, newTimeline, nextTimelineName,
@@ -314,7 +314,7 @@ function rebaseDraft(oldBase: Project, newBase: Project, draft: Project): Projec
   repairFolders(next)
   clampSectionDepths(next)
   repairSchema(next)
-  return next
+  return reuseUnchanged(draft, next)
 }
 
 /** Consistency passes after any change; new entities without a timeline land on `fallback`. */
@@ -390,6 +390,7 @@ export const useStore = create<Store>((set, get) => ({
     recipe(next)
     // Entities the recipe created without a timeline belong to the one on screen.
     repairAll(next, base.activeTimelineId)
+    reuseUnchanged(base, next)
     const fwd = diffProject(base, next)
     if (fwd) {
       const inv = diffProject(next, base)!
@@ -421,6 +422,7 @@ export const useStore = create<Store>((set, get) => ({
     recipe(next)
     repairTimelines(next, base.activeTimelineId)
     clampSectionDepths(next)
+    reuseUnchanged(base, next)
     // Only synced fields (timeline settings, name…) travel; camera/filters stay per user.
     const fwd = diffProject(base, next)
     if (fwd && !canEdit(s, cur.id)) return
@@ -458,6 +460,7 @@ export const useStore = create<Store>((set, get) => ({
     const next = structuredClone(base)
     applyPatch(next, entry.inv)
     repairAll(next)
+    reuseUnchanged(base, next)
     if (draft) {
       set({ drafts: withDraft(s, cur.id, next), ui: { ...s.ui, selection: [] } })
       persistSoon(get)
@@ -482,6 +485,7 @@ export const useStore = create<Store>((set, get) => ({
     const next = structuredClone(base)
     applyPatch(next, entry.fwd)
     repairAll(next)
+    reuseUnchanged(base, next)
     if (draft) {
       set({ drafts: withDraft(s, cur.id, next), ui: { ...s.ui, selection: [] } })
       persistSoon(get)
@@ -652,6 +656,7 @@ export const useStore = create<Store>((set, get) => ({
     const next = structuredClone(cur)
     applyPatch(next, patch)
     repairAll(next)
+    reuseUnchanged(cur, next)
     const draft = s.drafts[projectId]
     set({
       projects: s.projects.map(p => (p.id === projectId ? next : p)),
@@ -669,6 +674,7 @@ export const useStore = create<Store>((set, get) => ({
     keepUserState(next, cur)
     for (const p of reapply) applyPatch(next, p)
     repairAll(next)
+    reuseUnchanged(cur, next)
     const share = s.shares[projectId]
     const draft = s.drafts[projectId]
     set({

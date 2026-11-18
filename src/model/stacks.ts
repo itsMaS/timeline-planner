@@ -1,4 +1,5 @@
 import type { Item, Project } from './types'
+import { typeById } from './fields'
 
 /**
  * Items sharing a position form a stack. Their order (`Item.stack`, lower
@@ -11,7 +12,7 @@ import type { Item, Project } from './types'
 export const stackKey = (pos: number) => Math.round(pos * 1e6)
 
 const layerOf = (p: Project, it: Item) => {
-  const layerId = it.layerId ?? p.types.find(t => t.id === it.typeId)?.defaultLayerId ?? null
+  const layerId = it.layerId ?? typeById(p, it.typeId)?.defaultLayerId ?? null
   const idx = p.layers.findIndex(l => l.id === layerId)
   return { idx: idx < 0 ? p.layers.length : idx, pin: idx >= 0 && p.layers[idx].pin }
 }

@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react'
+import { BufferedInput, BufferedTextarea } from './Buffered'
 import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Copy, FileText, Trash2, X } from 'lucide-react'
 import { attachmentsFor, fieldById, fieldLabel, formatValue, groupAttachments, groupText, kindGlyph, levelOf, readValue, type Owner } from '../model/fields'
 import { iconByName } from '../model/icons'
@@ -394,11 +395,12 @@ function ItemPanel({ id }: { id: string }) {
       </Head>
       <div className="insp-body" onKeyDown={enterNav}>
         <ProposalSlot col="items" id={item.id} />
-        <input
+        <BufferedInput
+          entity={`${item.id}:title`}
           className="input title-input"
           value={item.title}
           placeholder="Title"
-          onChange={e => edit(it => { it.title = e.target.value })}
+          onCommit={v => edit(it => { it.title = v })}
         />
         <div className="row gap">
           <div className="field grow">
@@ -455,17 +457,19 @@ function ItemPanel({ id }: { id: string }) {
         )}
         <div className="field">
           <label>Tags <span className="muted">(comma separated)</span></label>
-          <input
+          <BufferedInput
+            entity={`${item.id}:tags`}
             className="input"
             value={item.tags.join(', ')}
-            onChange={e => edit(it => { it.tags = e.target.value.split(',').map(s => s.trim()).filter(Boolean) })}
+            onCommit={v => edit(it => { it.tags = v.split(',').map(s => s.trim()).filter(Boolean) })}
           />
         </div>
         <div className="field">
           <label>Link</label>
-          <input
+          <BufferedInput
+            entity={`${item.id}:link`}
             className="input" placeholder="https://…" value={item.link}
-            onChange={e => edit(it => { it.link = e.target.value })}
+            onCommit={v => edit(it => { it.link = v })}
           />
           {item.link && <a className="link-btn" href={item.link} target="_blank" rel="noreferrer noopener">open ↗</a>}
         </div>
@@ -491,10 +495,11 @@ function ItemPanel({ id }: { id: string }) {
           {preview ? (
             <div className="md-preview"><Markdown text={item.description || '*nothing yet*'} /></div>
           ) : (
-            <textarea
+            <BufferedTextarea
+              entity={`${item.id}:description`}
               className="input desc"
               value={item.description}
-              onChange={e => edit(it => { it.description = e.target.value })}
+              onCommit={v => edit(it => { it.description = v })}
               onPaste={e => {
                 const files = [...e.clipboardData.files].filter(f => f.type.startsWith('image/'))
                 if (!files.length) return
@@ -618,7 +623,7 @@ function SectionPanel({ section }: { section: Section }) {
       </Head>
       <div className="insp-body" onKeyDown={enterNav}>
         <ProposalSlot col="sections" id={section.id} />
-        <input className="input title-input" value={section.name} onChange={e => edit(s => { s.name = e.target.value })} />
+        <BufferedInput entity={`${section.id}:name`} className="input title-input" value={section.name} onCommit={v => edit(s => { s.name = v })} />
         {proj.settings.unit.preset === 'calendar' ? (
           <div className="row gap">
             <div className="field grow">
@@ -673,10 +678,11 @@ function SectionPanel({ section }: { section: Section }) {
           {preview ? (
             <div className="md-preview"><Markdown text={section.description || '*nothing yet*'} /></div>
           ) : (
-            <textarea
+            <BufferedTextarea
+              entity={`${section.id}:description`}
               className="input desc"
               value={section.description ?? ''}
-              onChange={e => edit(s => { s.description = e.target.value })}
+              onCommit={v => edit(s => { s.description = v })}
             />
           )}
         </div>

@@ -14,9 +14,9 @@ var __export = (target, all) => {
 };
 var __copyProps = (to, from, except, desc) => {
   if (from && typeof from === "object" || typeof from === "function") {
-    for (let key of __getOwnPropNames(from))
-      if (!__hasOwnProp.call(to, key) && key !== except)
-        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+    for (let key2 of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key2) && key2 !== except)
+        __defProp(to, key2, { get: () => from[key2], enumerable: !(desc = __getOwnPropDesc(from, key2)) || desc.enumerable });
   }
   return to;
 };
@@ -4161,14 +4161,14 @@ function evaluate(ast, scope) {
 }
 var cache = /* @__PURE__ */ new Map();
 function compile(src) {
-  const key = src.trim();
-  if (!key) return { ast: null, error: null };
-  let c = cache.get(key);
+  const key2 = src.trim();
+  if (!key2) return { ast: null, error: null };
+  let c = cache.get(key2);
   if (!c) {
-    const r = tryParse(key);
+    const r = tryParse(key2);
     c = r.ast ? { ast: r.ast, error: null } : { ast: null, error: r.error.message };
     if (cache.size > 500) cache.clear();
-    cache.set(key, c);
+    cache.set(key2, c);
   }
   return c;
 }
@@ -4179,11 +4179,11 @@ function itemBuiltin(p, it, name) {
     case "title":
       return { found: true, value: it.title };
     case "type":
-      return { found: true, value: p.types.find((t) => t.id === it.typeId)?.name ?? null };
+      return { found: true, value: typeById(p, it.typeId)?.name ?? null };
     case "tags":
       return { found: true, value: it.tags };
     case "layer": {
-      const lid = it.layerId ?? p.types.find((t) => t.id === it.typeId)?.defaultLayerId;
+      const lid = it.layerId ?? typeById(p, it.typeId)?.defaultLayerId;
       return { found: true, value: p.layers.find((l) => l.id === lid)?.name ?? null };
     }
     case "pos":
@@ -4245,19 +4245,25 @@ function fieldValueFor(p, field, v) {
   if (field.kind === "ref" && Array.isArray(v)) return v.map((id) => entityTitle(p, id));
   return v;
 }
+var key = (s) => s.trim().toLowerCase();
+var nameTables = /* @__PURE__ */ new WeakMap();
 function entityScope(p, owner, read = (field) => valueOn(p, owner, field), prefer = []) {
   const atts = attachmentsFor(p, owner);
-  const byName = /* @__PURE__ */ new Map();
-  const key = (s) => s.trim().toLowerCase();
-  for (const f of prefer) if (!byName.has(key(f.name))) byName.set(key(f.name), f);
-  for (const { field, group } of atts) {
-    if (!byName.has(key(field.name))) byName.set(key(field.name), field);
-    if (group) {
-      const dotted = `${key(group.name)}.${key(field.name)}`;
-      if (!byName.has(dotted)) byName.set(dotted, field);
-      byName.set(`${key(group.name)} \xB7 ${key(field.name)}`, field);
+  let byName = prefer.length ? void 0 : nameTables.get(atts);
+  if (!byName) {
+    byName = /* @__PURE__ */ new Map();
+    for (const f of prefer) if (!byName.has(key(f.name))) byName.set(key(f.name), f);
+    for (const { field, group } of atts) {
+      if (!byName.has(key(field.name))) byName.set(key(field.name), field);
+      if (group) {
+        const dotted = `${key(group.name)}.${key(field.name)}`;
+        if (!byName.has(dotted)) byName.set(dotted, field);
+        byName.set(`${key(group.name)} \xB7 ${key(field.name)}`, field);
+      }
     }
+    if (!prefer.length) nameTables.set(atts, byName);
   }
+  const names = byName;
   const valueOf = (f) => {
     if (f.kind === "group") {
       const t = groupText(p, owner, f, (c) => read(c));
@@ -4270,7 +4276,7 @@ function entityScope(p, owner, read = (field) => valueOn(p, owner, field), prefe
       const name = key(raw);
       const alias = name.startsWith("$") ? name.slice(1) : null;
       if (!alias) {
-        const f = byName.get(name);
+        const f = names.get(name);
         if (f) return { found: true, value: valueOf(f) };
         if (p.fields.some((x) => key(x.name) === name)) return { found: true, value: null };
       }
@@ -4581,6 +4587,17 @@ function expandAttachments(p, list2) {
   for (const e of list2) push(e, null, 0);
   return out;
 }
+var typeIndex = /* @__PURE__ */ new WeakMap();
+function typeById(p, id) {
+  if (!id) return void 0;
+  let ix = typeIndex.get(p.types);
+  if (!ix) {
+    ix = /* @__PURE__ */ new Map();
+    for (const t of p.types) if (!ix.has(t.id)) ix.set(t.id, t);
+    typeIndex.set(p.types, ix);
+  }
+  return ix.get(id);
+}
 var fieldById = (p, id) => id ? p.fields.find((f) => f.id === id) : void 0;
 var levelOf = (p, s) => p.hierarchyLevels[s.depth];
 function ownerOf(p, id) {
@@ -4593,6 +4610,15 @@ function ownerOf(p, id) {
 }
 function typeAttachments(p, type) {
   if (!type) return [];
+  const hit = typeAttCache.get(type);
+  if (hit && hit.fields === p.fields && hit.folders === p.typeFolders) return hit.list;
+  const list2 = resolveTypeAttachments(p, type);
+  typeAttCache.set(type, { fields: p.fields, folders: p.typeFolders, list: list2 });
+  return list2;
+}
+var typeAttCache = /* @__PURE__ */ new WeakMap();
+var levelAttCache = /* @__PURE__ */ new WeakMap();
+function resolveTypeAttachments(p, type) {
   const out = [];
   const index = /* @__PURE__ */ new Map();
   const add = (list2, from) => {
@@ -4611,6 +4637,14 @@ function typeAttachments(p, type) {
   return expandAttachments(p, out);
 }
 function levelAttachments(p, level) {
+  if (!level) return [];
+  const hit = levelAttCache.get(level);
+  if (hit && hit.fields === p.fields) return hit.list;
+  const list2 = resolveLevelAttachments(p, level);
+  levelAttCache.set(level, { fields: p.fields, list: list2 });
+  return list2;
+}
+function resolveLevelAttachments(p, level) {
   const out = [];
   for (const att of level?.fields ?? []) {
     const field = fieldById(p, att.fieldId);
@@ -4619,7 +4653,7 @@ function levelAttachments(p, level) {
   return expandAttachments(p, out);
 }
 function attachmentsFor(p, owner) {
-  if (owner.kind === "item") return typeAttachments(p, p.types.find((t) => t.id === owner.entity.typeId));
+  if (owner.kind === "item") return typeAttachments(p, typeById(p, owner.entity.typeId));
   return levelAttachments(p, levelOf(p, owner.entity));
 }
 function groupText(p, owner, group, read = (f) => valueOn(p, owner, f)) {
@@ -4629,8 +4663,8 @@ function groupText(p, owner, group, read = (f) => valueOn(p, owner, f)) {
   const tpl = group.template?.trim() ?? "";
   if (tpl) {
     return tpl.replace(/\{([^}]+)\}/g, (_, raw) => {
-      const key = raw.trim().toLowerCase();
-      const hit = texts.find((x) => x.c.name.trim().toLowerCase() === key || x.c.id === raw.trim());
+      const key2 = raw.trim().toLowerCase();
+      const hit = texts.find((x) => x.c.name.trim().toLowerCase() === key2 || x.c.id === raw.trim());
       return hit ? hit.text : "";
     });
   }
@@ -4689,9 +4723,9 @@ function valueOn(p, owner, field) {
 }
 var evaluating = /* @__PURE__ */ new Set();
 function derivedValue(p, owner, field) {
-  const key = `${owner.entity.id}:${field.id}`;
-  if (evaluating.has(key)) return null;
-  evaluating.add(key);
+  const key2 = `${owner.entity.id}:${field.id}`;
+  if (evaluating.has(key2)) return null;
+  evaluating.add(key2);
   try {
     const parent = parentOf(p, field);
     const siblings = parent ? childrenOf(p, parent).filter((c) => c.id !== field.id) : [];
@@ -4708,7 +4742,7 @@ function derivedValue(p, owner, field) {
     }
     return clampValue(field, coerceValue(field, Array.isArray(raw) ? raw : String(raw)));
   } finally {
-    evaluating.delete(key);
+    evaluating.delete(key2);
   }
 }
 function coerceValue(field, v) {
@@ -4952,6 +4986,14 @@ function indicesIn(ix, lo, hi) {
   return out.sort((x, y) => x - y);
 }
 function entitiesInside(p, section) {
+  const hit = insideCache.get(section);
+  if (hit && hit.items === p.items && hit.sections === p.sections) return hit.out;
+  const out = findInside(p, section);
+  insideCache.set(section, { items: p.items, sections: p.sections, out });
+  return out;
+}
+var insideCache = /* @__PURE__ */ new WeakMap();
+function findInside(p, section) {
   const eps = 1e-9;
   const lo = section.start - eps;
   const hi = section.end + eps;
@@ -4980,10 +5022,10 @@ function evalProcessor(p, section, proc, att = null) {
   const contributed = [];
   const where = proc.where?.trim() ?? "";
   for (const o of inside) {
-    const key = o.kind === "item" ? o.entity.typeId : levelOf(p, o.entity)?.id;
+    const key2 = o.kind === "item" ? o.entity.typeId : levelOf(p, o.entity)?.id;
     if (targets.size) {
-      if (!key || !targets.has(key)) continue;
-    } else if (key && exclude.has(key)) continue;
+      if (!key2 || !targets.has(key2)) continue;
+    } else if (key2 && exclude.has(key2)) continue;
     else if (proc.op === "count" && o.kind === "section") continue;
     if (where && !matchesRule(p, o, where)) continue;
     let v = null;
@@ -5052,7 +5094,7 @@ function shownProcessorResults(p, section) {
 // src/model/stacks.ts
 var stackKey = (pos) => Math.round(pos * 1e6);
 var layerOf = (p, it) => {
-  const layerId = it.layerId ?? p.types.find((t) => t.id === it.typeId)?.defaultLayerId ?? null;
+  const layerId = it.layerId ?? typeById(p, it.typeId)?.defaultLayerId ?? null;
   const idx = p.layers.findIndex((l) => l.id === layerId);
   return { idx: idx < 0 ? p.layers.length : idx, pin: idx >= 0 && p.layers[idx].pin };
 };
@@ -5087,7 +5129,7 @@ function clampSectionDepths(p) {
   }
 }
 function typeOf(p, it) {
-  return p.types.find((t) => t.id === it.typeId) ?? p.types[0];
+  return typeById(p, it.typeId) ?? p.types[0];
 }
 function itemMatchesFilters(p, it, f) {
   if (f.offTypes.includes(it.typeId)) return false;
@@ -5210,8 +5252,8 @@ function migrateLegacyFields(p) {
         next.push(normalizeAttachment(raw));
         continue;
       }
-      const key = (raw.name ?? "").trim().toLowerCase();
-      let def = p.fields.find((f) => f.kind === "text" && f.name.trim().toLowerCase() === key);
+      const key2 = (raw.name ?? "").trim().toLowerCase();
+      let def = p.fields.find((f) => f.kind === "text" && f.name.trim().toLowerCase() === key2);
       if (!def) {
         def = newFieldDef(raw.id, raw.name || "Field", "text");
         p.fields.push(def);
@@ -5306,7 +5348,7 @@ var SYNC_COLLECTIONS = [
 var SYNC_SCALARS = ["name", "settings"];
 
 // src/model/proposal.ts
-var same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+var same = (a, b) => a === b || JSON.stringify(a) === JSON.stringify(b);
 var list = (p, col) => p[col] ?? [];
 function diffToChanges(base, edited, notes = {}) {
   const out = [];
@@ -24495,10 +24537,10 @@ function Markdown({ text }) {
   const lines = text.split("\n");
   const blocks = [];
   let listBuf = [];
-  const flushList = (key) => {
+  const flushList = (key2) => {
     if (!listBuf.length) return;
     blocks.push(
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ul", { children: listBuf.map((li, i) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("li", { children: inline(li, `${key}-${i}`) }, i)) }, key)
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ul", { children: listBuf.map((li, i) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("li", { children: inline(li, `${key2}-${i}`) }, i)) }, key2)
     );
     listBuf = [];
   };

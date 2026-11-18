@@ -58,14 +58,22 @@ export function exportScope(proj: Project, selection: string[]): ExportScope {
     : null
   const inSections = (it: Item) => !sections.length || sections.some(sc => it.pos >= sc.start - EPS && it.pos <= sc.end + EPS)
   const includes = (it: Item) => isItemVisible(proj, it) && inSections(it)
-  const items = sortByPosition(proj, proj.items.filter(includes))
-  const filtered = proj.items.some(it => !isItemVisible(proj, it))
+  // `items` and `filtered` walk every item, so they are worked out on first
+  // read: the toolbar builds a scope on every edit but only reads them while
+  // the export menu is open.
+  let items: Item[] | undefined
+  let filtered: boolean | undefined
+  const isFiltered = () => (filtered ??= proj.items.some(it => !isItemVisible(proj, it)))
   const describe = (what: string, whole = 'whole timeline') => sections.length === 0
-    ? `${what} of ${filtered ? 'visible items' : whole}`
+    ? `${what} of ${isFiltered() ? 'visible items' : whole}`
     : sections.length === 1
       ? `${what} of “${sections[0].name || 'Untitled'}”`
       : `${what} of ${sections.length} selected sections`
-  return { sections, sectionIds: sections.length ? sections.map(s => s.id) : null, range, includes, items, filtered, describe }
+  return {
+    sections, sectionIds: sections.length ? sections.map(s => s.id) : null, range, includes, describe,
+    get items() { return (items ??= sortByPosition(proj, proj.items.filter(includes))) },
+    get filtered() { return isFiltered() },
+  }
 }
 
 /** A copy of the project holding only the items in scope (sections and layers stay for context). */

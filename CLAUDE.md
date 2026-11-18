@@ -21,6 +21,18 @@
   `normalize.ts` holds the pure helpers (`blankProject`, `emptyFilters`,
   `normalizeFilters`, `normalizeProject`) so the CLI and the Edge Function
   can import them without pulling in zustand; `store.ts` re-exports them.
+- **Performance invariants.** Store updates are structurally shared:
+  `mutate`/`tweak`/undo/redo/remote patches run `reuseUnchanged`
+  (`src/model/patch.ts`) so untouched entities and arrays keep their
+  identity, and per-timeline slices are cached on the source arrays
+  (`timelineView`). Caches key on that identity (`typeAttachments`,
+  `levelAttachments`, `typeById`, `entitiesInside`, rule results in
+  `layout.ts`), so never modify store objects in place outside a `mutate`
+  recipe. The camera lives on the project, so `proj` is a new object on every
+  pan / zoom frame: key memos on `proj.items`, `proj.sections`, schema
+  arrays etc., never on `proj` itself. Free-text inspector inputs go through
+  `BufferedInput` / `BufferedTextarea` (`src/ui/Buffered.tsx`), which commit
+  after a short pause, on blur and on switching entity, not per keystroke.
 - `ROADMAP.md` records what the fields system shipped, the decisions taken
   with the owner and what comes next. Update it when a listed item ships or a
   decision changes.

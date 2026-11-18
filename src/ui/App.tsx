@@ -305,7 +305,8 @@ function Toolbar({ applyView }: { applyView: (id: string | null) => void }) {
   // selected sections narrow it to just those sub-trees.
   const scope = useExportScope(proj, ui.selection)
   const scene = { density: ui.density, theme: ui.theme, showFields: ui.showFields, showTitles: ui.showTitles }
-  const scopeHint = scope.sections.length
+  // Only read inside the export menu; working it out walks every item.
+  const scopeHint = !exportOpen ? '' : scope.sections.length
     ? `Only items inside the selected section${scope.sections.length === 1 ? '' : 's'} that are visible on the canvas.`
     : scope.filtered ? 'Items hidden by the current filters are left out.' : 'Everything is visible, so everything is included.'
   const view = activeView(proj)

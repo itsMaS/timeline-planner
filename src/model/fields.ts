@@ -134,6 +134,19 @@ export function expandAttachments<T extends { att: FieldAttachment; field: Field
   return out
 }
 
+const typeIndex = new WeakMap<ItemType[], Map<Id, ItemType>>()
+/** The item type with this id, through an index built once per types array (hot in layout, rules and processors). */
+export function typeById(p: Project, id: Id | null | undefined): ItemType | undefined {
+  if (!id) return undefined
+  let ix = typeIndex.get(p.types)
+  if (!ix) {
+    ix = new Map()
+    for (const t of p.types) if (!ix.has(t.id)) ix.set(t.id, t)
+    typeIndex.set(p.types, ix)
+  }
+  return ix.get(id)
+}
+
 export const fieldById = (p: Project, id: Id | null | undefined) => (id ? p.fields.find(f => f.id === id) : undefined)
 export const processorById = (p: Project, id: Id | null | undefined) => (id ? p.processors.find(f => f.id === id) : undefined)
 export const levelOf = (p: Project, s: Section): HierarchyLevel | undefined => p.hierarchyLevels[s.depth]
@@ -167,6 +180,20 @@ export interface TypeAttachment {
  */
 export function typeAttachments(p: Project, type: ItemType | undefined): (TypeAttachment & { group: FieldDef | null })[] {
   if (!type) return []
+  // Resolved once per type object (and field / folder arrays): rules and
+  // processors ask for every item they visit. Edits replace what they change
+  // (see reuseUnchanged), so identity is a safe key. Callers never mutate it.
+  const hit = typeAttCache.get(type)
+  if (hit && hit.fields === p.fields && hit.folders === p.typeFolders) return hit.list
+  const list = resolveTypeAttachments(p, type)
+  typeAttCache.set(type, { fields: p.fields, folders: p.typeFolders, list })
+  return list
+}
+
+const typeAttCache = new WeakMap<ItemType, { fields: FieldDef[]; folders: unknown; list: (TypeAttachment & { group: FieldDef | null })[] }>()
+const levelAttCache = new WeakMap<HierarchyLevel, { fields: FieldDef[]; list: { att: FieldAttachment; field: FieldDef; group: FieldDef | null }[] }>()
+
+function resolveTypeAttachments(p: Project, type: ItemType): (TypeAttachment & { group: FieldDef | null })[] {
   const out: TypeAttachment[] = []
   const index = new Map<Id, number>()
   const add = (list: FieldAttachment[] | undefined, from: TypeFolder | null) => {
@@ -185,6 +212,15 @@ export function typeAttachments(p: Project, type: ItemType | undefined): (TypeAt
 
 /** Fields attached to a section's level, with their definitions (groups expanded). */
 export function levelAttachments(p: Project, level: HierarchyLevel | undefined): { att: FieldAttachment; field: FieldDef; group: FieldDef | null }[] {
+  if (!level) return []
+  const hit = levelAttCache.get(level)
+  if (hit && hit.fields === p.fields) return hit.list
+  const list = resolveLevelAttachments(p, level)
+  levelAttCache.set(level, { fields: p.fields, list })
+  return list
+}
+
+function resolveLevelAttachments(p: Project, level: HierarchyLevel | undefined): { att: FieldAttachment; field: FieldDef; group: FieldDef | null }[] {
   const out: { att: FieldAttachment; field: FieldDef }[] = []
   for (const att of level?.fields ?? []) {
     const field = fieldById(p, att.fieldId)
@@ -200,7 +236,7 @@ export function levelAttachments(p: Project, level: HierarchyLevel | undefined):
  * field that can hold a value.
  */
 export function attachmentsFor(p: Project, owner: Owner): { att: FieldAttachment; field: FieldDef; group: FieldDef | null }[] {
-  if (owner.kind === 'item') return typeAttachments(p, p.types.find(t => t.id === owner.entity.typeId))
+  if (owner.kind === 'item') return typeAttachments(p, typeById(p, owner.entity.typeId))
   return levelAttachments(p, levelOf(p, owner.entity))
 }
 

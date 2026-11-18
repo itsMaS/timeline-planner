@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Crosshair, RotateCcw, X } from 'lucide-react'
+import { BufferedInput } from './Buffered'
 import {
   backlinks, clampValue, coerceValue, defaultFor, derivedValue, effectiveValue, entityTitle, formatToggle, formatValue, isDerived, kindGlyph,
   levelOf, locationOf, ownerOf, parseInput, refCandidates, type Owner,
@@ -203,12 +204,17 @@ export function FieldValueInput(props: {
     const over = field.maxLength !== null && s.length > field.maxLength
     return (
       <div className="fv-text">
-        <input
+        <BufferedInput
+          entity={`${props.ownerId ?? 'default'}:${field.id}`}
           className={`input ${props.compact ? 'sm' : ''}`}
           value={s}
           placeholder={placeholder}
-          onChange={e => props.onChange(e.target.value === '' ? null : e.target.value)}
-          onBlur={() => { if (over) props.onChange(clampValue(field, s)) }}
+          onCommit={v => props.onChange(v === '' ? null : v)}
+          onBlur={e => {
+            // The pending text was committed just before this runs; clamp what the box holds.
+            const t = e.currentTarget.value
+            if (field.maxLength !== null && t.length > field.maxLength) props.onChange(clampValue(field, t))
+          }}
           onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
         />
         {field.maxLength !== null && s.length > 0 && (

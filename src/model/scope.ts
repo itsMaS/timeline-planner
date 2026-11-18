@@ -1,5 +1,5 @@
 import { compile, evaluate, truthy, type Scope, type Value } from './expr'
-import { attachmentsFor, entityTitle, groupText, levelOf, sectionsAt, valueOn, type Owner } from './fields'
+import { attachmentsFor, entityTitle, groupText, levelOf, sectionsAt, typeById, valueOn, type Owner } from './fields'
 import type { FieldDef, FieldValue, Item, Project, Section } from './types'
 
 /**
@@ -18,9 +18,9 @@ export const builtinNames = (kind: 'item' | 'section'): readonly string[] => (ki
 function itemBuiltin(p: Project, it: Item, name: string): { found: boolean; value: Value } {
   switch (name) {
     case 'title': return { found: true, value: it.title }
-    case 'type': return { found: true, value: p.types.find(t => t.id === it.typeId)?.name ?? null }
+    case 'type': return { found: true, value: typeById(p, it.typeId)?.name ?? null }
     case 'tags': return { found: true, value: it.tags }
-    case 'layer': { const lid = it.layerId ?? p.types.find(t => t.id === it.typeId)?.defaultLayerId; return { found: true, value: p.layers.find(l => l.id === lid)?.name ?? null } }
+    case 'layer': { const lid = it.layerId ?? typeById(p, it.typeId)?.defaultLayerId; return { found: true, value: p.layers.find(l => l.id === lid)?.name ?? null } }
     case 'pos': return { found: true, value: it.pos }
     case 'duration': return { found: true, value: it.duration }
     case 'end': return { found: true, value: it.pos + it.duration }
@@ -64,6 +64,9 @@ function fieldValueFor(p: Project, field: FieldDef, v: Value): Value {
   return v
 }
 
+const key = (s: string) => s.trim().toLowerCase()
+const nameTables = new WeakMap<object, Map<string, FieldDef>>()
+
 /**
  * Resolver for one entity. `read` overrides how a field's value is produced
  * (derived fields plug in there); by default it is the effective stored value.
@@ -76,18 +79,24 @@ export function entityScope(
   prefer: FieldDef[] = [],
 ): Scope {
   const atts = attachmentsFor(p, owner)
-  const byName = new Map<string, FieldDef>()
-  const key = (s: string) => s.trim().toLowerCase()
-  for (const f of prefer) if (!byName.has(key(f.name))) byName.set(key(f.name), f)
-  for (const { field, group } of atts) {
-    if (!byName.has(key(field.name))) byName.set(key(field.name), field)
-    // Children also answer to "Group.child" and "Group · child".
-    if (group) {
-      const dotted = `${key(group.name)}.${key(field.name)}`
-      if (!byName.has(dotted)) byName.set(dotted, field)
-      byName.set(`${key(group.name)} · ${key(field.name)}`, field)
+  // The name table only depends on the attachment list (cached per type /
+  // level), so it is built once per list unless `prefer` adds names.
+  let byName = prefer.length ? undefined : nameTables.get(atts)
+  if (!byName) {
+    byName = new Map<string, FieldDef>()
+    for (const f of prefer) if (!byName.has(key(f.name))) byName.set(key(f.name), f)
+    for (const { field, group } of atts) {
+      if (!byName.has(key(field.name))) byName.set(key(field.name), field)
+      // Children also answer to "Group.child" and "Group · child".
+      if (group) {
+        const dotted = `${key(group.name)}.${key(field.name)}`
+        if (!byName.has(dotted)) byName.set(dotted, field)
+        byName.set(`${key(group.name)} · ${key(field.name)}`, field)
+      }
     }
+    if (!prefer.length) nameTables.set(atts, byName)
   }
+  const names = byName
   const valueOf = (f: FieldDef): Value => {
     if (f.kind === 'group') { const t = groupText(p, owner, f, c => read(c) as FieldValue | null); return t || null }
     return fieldValueFor(p, f, read(f))
@@ -97,7 +106,7 @@ export function entityScope(
       const name = key(raw)
       const alias = name.startsWith('$') ? name.slice(1) : null
       if (!alias) {
-        const f = byName.get(name)
+        const f = names.get(name)
         if (f) return { found: true, value: valueOf(f) }
         // A field that exists in the project but is not attached here reads as unset (not as text).
         if (p.fields.some(x => key(x.name) === name)) return { found: true, value: null }
