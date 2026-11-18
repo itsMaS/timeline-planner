@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import { itemMatchesFilters, typeOf } from '../model/layout'
 import { sortByPosition } from '../model/stacks'
 import { derived } from '../model/timelines'
@@ -33,6 +34,18 @@ export function isItemVisible(proj: Project, it: Item): boolean {
 }
 
 const EPS = 1e-9
+
+/**
+ * `exportScope` for components that render on every camera move (App,
+ * Viewer): recomputed only when something it reads changes, not the camera.
+ */
+export function useExportScope(proj: Project, selection: string[]): ExportScope {
+  return useMemo(
+    () => exportScope(proj, selection),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [proj.items, proj.sections, proj.filters, proj.layers, proj.types, proj.typeFolders, proj.fields, proj.hierarchyLevels, proj.processors, selection],
+  )
+}
 
 export function exportScope(proj: Project, selection: string[]): ExportScope {
   const ids = [...new Set(selection.filter(x => x.startsWith('S:')).map(x => x.slice(2)))]

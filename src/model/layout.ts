@@ -88,8 +88,24 @@ export function itemMatchesFilters(p: Project, it: Item, f: Filters): boolean {
     const hay = `${it.title} ${it.description} ${it.tags.join(' ')} ${extra}`.toLowerCase()
     if (!hay.includes(q)) return false
   }
-  if (f.rules?.trim() && !matchesRule(p, { kind: 'item', entity: it }, f.rules)) return false
+  if (f.rules?.trim() && !ruleMatch(p, it, f.rules)) return false
   return true
+}
+
+/**
+ * Rule results are cached per item object: the canvas re-runs the filters on
+ * every pan / zoom frame, while the answer only changes with the item, the
+ * rule or the document around it (edits replace these arrays, never patch
+ * them in place).
+ */
+const ruleCache = new WeakMap<Item, { rules: string; deps: readonly unknown[]; v: boolean }>()
+function ruleMatch(p: Project, it: Item, rules: string): boolean {
+  const deps = [p.items, p.sections, p.fields, p.types, p.typeFolders, p.layers, p.hierarchyLevels, p.processors]
+  const hit = ruleCache.get(it)
+  if (hit && hit.rules === rules && hit.deps.every((d, i) => d === deps[i])) return hit.v
+  const v = matchesRule(p, { kind: 'item', entity: it }, rules)
+  ruleCache.set(it, { rules, deps, v })
+  return v
 }
 
 const LABEL_MAX = 200

@@ -14,7 +14,9 @@ import { uid } from '../model/util'
 import { activeView, filtersEqual, isUnfiltered, viewDirty } from '../model/views'
 import { exportCSV, exportFullSVG, exportJSON, exportPNG } from './export'
 import { exportDocPDF } from './exportDoc'
-import { exportScope } from './exportScope'
+import { useExportScope } from './exportScope'
+
+const NO_SELECTION: string[] = []
 import { CanvasView } from './Canvas'
 import { creatorStamp } from '../sync/client'
 import { getClipboard, setClipboard } from './clipboard'
@@ -301,7 +303,7 @@ function Toolbar({ applyView }: { applyView: (id: string | null) => void }) {
   const fileRef = useRef<HTMLInputElement>(null)
   // Every export follows the canvas: filtered-out items are left out, and
   // selected sections narrow it to just those sub-trees.
-  const scope = exportScope(proj, ui.selection)
+  const scope = useExportScope(proj, ui.selection)
   const scene = { density: ui.density, theme: ui.theme, showFields: ui.showFields, showTitles: ui.showTitles }
   const scopeHint = scope.sections.length
     ? `Only items inside the selected section${scope.sections.length === 1 ? '' : 's'} that are visible on the canvas.`
@@ -313,7 +315,8 @@ function Toolbar({ applyView }: { applyView: (id: string | null) => void }) {
   const timelineIds = everyTimeline ? whole.timelines.map(t => t.id) : [timeline.id]
   /** The document CSV / PDF exports read: every timeline, or the one on screen. */
   const docProject = everyTimeline ? whole : proj
-  const docScope = everyTimeline ? exportScope(whole, []) : scope
+  const wholeScope = useExportScope(whole, NO_SELECTION)
+  const docScope = everyTimeline ? wholeScope : scope
   const describeDoc = (what: string) => (everyTimeline ? `${what} of all timelines` : scope.describe(what))
 
   const renameProjectPrompt = (id: Id) => {

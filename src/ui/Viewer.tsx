@@ -11,7 +11,7 @@ import { useIsMobile } from './mobile'
 import { nav } from './nav'
 import { PanelDivider } from './Panels'
 import { exportDocPDF } from './exportDoc'
-import { exportScope } from './exportScope'
+import { useExportScope } from './exportScope'
 import { RuleFilterButton } from './RuleFilter'
 import { PresenceBar } from './Share'
 import { Sidebar } from './Sidebar'
@@ -32,7 +32,7 @@ export function Viewer() {
   const tweak = useStore(s => s.tweak)
   const select = useStore(s => s.select)
   const showToast = useStore(s => s.showToast)
-  const scope = exportScope(proj, ui.selection)
+  const scope = useExportScope(proj, ui.selection)
 
   useEffect(() => { document.documentElement.dataset.theme = ui.theme }, [ui.theme])
   useEffect(() => { document.title = `${proj.name} — Timeline Planner` }, [proj.name])

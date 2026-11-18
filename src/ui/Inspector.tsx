@@ -717,7 +717,12 @@ function ProcessorPanel({ section }: { section: Section }) {
   const proj = useActiveProject()
   const canEdit = useCanEdit()
   const setUI = useStore(s => s.setUI)
-  const results = useMemo(() => processorResults(proj, section), [proj, section])
+  // Keyed on the arrays, not `proj`, which is new on every pan / zoom frame.
+  const results = useMemo(
+    () => processorResults(proj, section),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [proj.items, proj.sections, proj.fields, proj.types, proj.typeFolders, proj.hierarchyLevels, proj.processors, proj.filters, section],
+  )
   const [openId, setOpenId] = useState<string | null>(null)
   const level = levelOf(proj, section)
   if (!results.length) {

@@ -31,17 +31,50 @@ export interface ProcessorResult {
   error?: string
 }
 
+interface PosIndex { keys: number[]; idx: number[] }
+
+// Entries of one timeline sorted by start, cached on the source array (arrays
+// are replaced, never edited, when the document changes), so every section
+// finds what lies inside it by binary search instead of scanning everything:
+// band badges evaluate this for each section on every document change.
+const posIndexCache = new WeakMap<readonly unknown[], Map<string, PosIndex>>()
+function posIndex<T extends { timelineId?: Id }>(all: T[], timelineId: Id | undefined, keyOf: (x: T) => number): PosIndex {
+  let per = posIndexCache.get(all)
+  if (!per) { per = new Map(); posIndexCache.set(all, per) }
+  const tk = timelineId ?? ''
+  let hit = per.get(tk)
+  if (!hit) {
+    const idx: number[] = []
+    all.forEach((x, i) => { if (x.timelineId === timelineId && !Number.isNaN(keyOf(x))) idx.push(i) })
+    idx.sort((a, b) => keyOf(all[a]) - keyOf(all[b]) || a - b)
+    hit = { keys: idx.map(i => keyOf(all[i])), idx }
+    per.set(tk, hit)
+  }
+  return hit
+}
+
+/** Source indices whose key lies in [lo, hi], in source order. */
+function indicesIn(ix: PosIndex, lo: number, hi: number): number[] {
+  let a = 0
+  let b = ix.keys.length
+  while (a < b) { const m = (a + b) >> 1; if (ix.keys[m] < lo) a = m + 1; else b = m }
+  const out: number[] = []
+  for (let k = a; k < ix.keys.length && ix.keys[k] <= hi; k++) out.push(ix.idx[k])
+  return out.sort((x, y) => x - y)
+}
+
 /** Items and nested sections inside `section` (item start inside the range), on the section's own timeline. */
 export function entitiesInside(p: Project, section: Section): Owner[] {
   const eps = 1e-9
+  const lo = section.start - eps
+  const hi = section.end + eps
   const out: Owner[] = []
-  for (const it of p.items) {
-    if (it.timelineId !== section.timelineId) continue
-    if (it.pos >= section.start - eps && it.pos <= section.end + eps) out.push({ kind: 'item', entity: it })
+  for (const i of indicesIn(posIndex(p.items, section.timelineId, it => it.pos), lo, hi)) {
+    out.push({ kind: 'item', entity: p.items[i] })
   }
-  for (const sc of p.sections) {
-    if (sc.id === section.id || sc.timelineId !== section.timelineId) continue
-    if (sc.depth > section.depth && sc.start >= section.start - eps && sc.end <= section.end + eps) out.push({ kind: 'section', entity: sc })
+  for (const i of indicesIn(posIndex(p.sections, section.timelineId, sc => sc.start), lo, hi)) {
+    const sc = p.sections[i]
+    if (sc.id !== section.id && sc.depth > section.depth && sc.end <= hi) out.push({ kind: 'section', entity: sc })
   }
   return out
 }

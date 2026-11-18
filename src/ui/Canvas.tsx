@@ -1571,7 +1571,10 @@ export function CanvasView() {
     }
     for (const bl of backlinks(proj, selId)) if (bl.field.refShowLinks) out.push({ from: bl.owner.entity.id, to: selId })
     return out
-  }, [proj, ui.selection])
+    // Not keyed on `proj`: it is a new object on every pan / zoom frame. Any
+    // edit, on any timeline, replaces the items / sections arrays.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [proj.items, proj.sections, proj.fields, proj.types, proj.typeFolders, proj.hierarchyLevels, ui.selection])
   const highlightId = ui.highlightId
 
   const sectionsSorted = useMemo(

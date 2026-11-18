@@ -156,7 +156,9 @@ export function Sidebar() {
       map.set(it.typeId, (map.get(it.typeId) ?? 0) + 1)
     }
     return map
-  }, [proj])
+    // Not keyed on `proj` itself: it is a new object on every pan / zoom frame.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [proj.items, proj.sections, proj.filters, proj.types, proj.typeFolders, proj.layers, proj.fields, proj.hierarchyLevels, proj.processors])
 
   const layerCounts = useMemo(() => {
     const map = new Map<string, number>()
@@ -165,7 +167,8 @@ export function Sidebar() {
       if (lid) map.set(lid, (map.get(lid) ?? 0) + 1)
     }
     return map
-  }, [proj])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [proj.items, proj.types])
 
   const allTags = useMemo(() => {
     const s = new Set<string>()

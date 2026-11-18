@@ -4455,8 +4455,20 @@ function activeTimeline(p) {
   return p.timelines.find((t) => t.id === p.activeTimelineId) ?? p.timelines[0];
 }
 var timelineById = (p, id) => id ? p.timelines.find((t) => t.id === id) : void 0;
-var itemsOf = (p, timelineId) => p.items.filter((it) => it.timelineId === timelineId);
-var sectionsOf = (p, timelineId) => p.sections.filter((sc) => sc.timelineId === timelineId);
+var sliceCache = /* @__PURE__ */ new WeakMap();
+function sliceOf(all, timelineId) {
+  let per = sliceCache.get(all);
+  if (!per) {
+    per = /* @__PURE__ */ new Map();
+    sliceCache.set(all, per);
+  }
+  let hit = per.get(timelineId);
+  if (!hit) {
+    hit = all.filter((x) => x.timelineId === timelineId);
+    per.set(timelineId, hit);
+  }
+  return hit;
+}
 var viewCache = /* @__PURE__ */ new WeakMap();
 var WHOLE = Symbol("whole");
 function wholeOf(p) {
@@ -4475,8 +4487,8 @@ function timelineView(p, timelineId) {
   const camera = tl.id === p.activeTimelineId || !p.cameras?.[tl.id] ? p.camera : p.cameras[tl.id];
   const view = {
     ...p,
-    items: itemsOf(p, tl.id),
-    sections: sectionsOf(p, tl.id),
+    items: sliceOf(p.items, tl.id),
+    sections: sliceOf(p.sections, tl.id),
     settings: tl.settings,
     camera,
     activeTimelineId: tl.id
@@ -4907,16 +4919,49 @@ var PROCESSOR_OPS = [
   { op: "max", label: "Maximum", needsField: "number" },
   { op: "distinct", label: "Distinct values", needsField: "any" }
 ];
+var posIndexCache = /* @__PURE__ */ new WeakMap();
+function posIndex(all, timelineId, keyOf) {
+  let per = posIndexCache.get(all);
+  if (!per) {
+    per = /* @__PURE__ */ new Map();
+    posIndexCache.set(all, per);
+  }
+  const tk = timelineId ?? "";
+  let hit = per.get(tk);
+  if (!hit) {
+    const idx = [];
+    all.forEach((x, i) => {
+      if (x.timelineId === timelineId && !Number.isNaN(keyOf(x))) idx.push(i);
+    });
+    idx.sort((a, b) => keyOf(all[a]) - keyOf(all[b]) || a - b);
+    hit = { keys: idx.map((i) => keyOf(all[i])), idx };
+    per.set(tk, hit);
+  }
+  return hit;
+}
+function indicesIn(ix, lo, hi) {
+  let a = 0;
+  let b = ix.keys.length;
+  while (a < b) {
+    const m = a + b >> 1;
+    if (ix.keys[m] < lo) a = m + 1;
+    else b = m;
+  }
+  const out = [];
+  for (let k = a; k < ix.keys.length && ix.keys[k] <= hi; k++) out.push(ix.idx[k]);
+  return out.sort((x, y) => x - y);
+}
 function entitiesInside(p, section) {
   const eps = 1e-9;
+  const lo = section.start - eps;
+  const hi = section.end + eps;
   const out = [];
-  for (const it of p.items) {
-    if (it.timelineId !== section.timelineId) continue;
-    if (it.pos >= section.start - eps && it.pos <= section.end + eps) out.push({ kind: "item", entity: it });
+  for (const i of indicesIn(posIndex(p.items, section.timelineId, (it) => it.pos), lo, hi)) {
+    out.push({ kind: "item", entity: p.items[i] });
   }
-  for (const sc of p.sections) {
-    if (sc.id === section.id || sc.timelineId !== section.timelineId) continue;
-    if (sc.depth > section.depth && sc.start >= section.start - eps && sc.end <= section.end + eps) out.push({ kind: "section", entity: sc });
+  for (const i of indicesIn(posIndex(p.sections, section.timelineId, (sc) => sc.start), lo, hi)) {
+    const sc = p.sections[i];
+    if (sc.id !== section.id && sc.depth > section.depth && sc.end <= hi) out.push({ kind: "section", entity: sc });
   }
   return out;
 }
@@ -5055,8 +5100,17 @@ function itemMatchesFilters(p, it, f) {
     const hay = `${it.title} ${it.description} ${it.tags.join(" ")} ${extra}`.toLowerCase();
     if (!hay.includes(q)) return false;
   }
-  if (f.rules?.trim() && !matchesRule(p, { kind: "item", entity: it }, f.rules)) return false;
+  if (f.rules?.trim() && !ruleMatch(p, it, f.rules)) return false;
   return true;
+}
+var ruleCache = /* @__PURE__ */ new WeakMap();
+function ruleMatch(p, it, rules) {
+  const deps = [p.items, p.sections, p.fields, p.types, p.typeFolders, p.layers, p.hierarchyLevels, p.processors];
+  const hit = ruleCache.get(it);
+  if (hit && hit.rules === rules && hit.deps.every((d, i) => d === deps[i])) return hit.v;
+  const v = matchesRule(p, { kind: "item", entity: it }, rules);
+  ruleCache.set(it, { rules, deps, v });
+  return v;
 }
 
 // src/model/normalize.ts
@@ -5281,7 +5335,7 @@ function diffToChanges(base, edited, notes = {}) {
 }
 
 // src/ui/exportDoc.tsx
-var import_react3 = __toESM(require_react(), 1);
+var import_react4 = __toESM(require_react(), 1);
 var import_server2 = __toESM(require_server_node(), 1);
 
 // node_modules/lucide-react/dist/esm/icons/index.js
@@ -24409,6 +24463,7 @@ var ICON_CATEGORIES = Object.fromEntries(
 );
 
 // src/ui/exportScope.ts
+var import_react3 = __toESM(require_react(), 1);
 function isItemVisible(proj, it) {
   const layerId = it.layerId ?? typeOf(proj, it)?.defaultLayerId ?? null;
   if (layerId && proj.layers.find((l) => l.id === layerId)?.eye) return false;
@@ -24507,7 +24562,7 @@ function Heading7({ level, className, children }) {
 }
 function FieldList({ proj, fields }) {
   if (!fields.length) return null;
-  return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("dl", { className: "fields", children: groupAttachments(proj, fields).map((g) => /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(import_react3.default.Fragment, { children: [
+  return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("dl", { className: "fields", children: groupAttachments(proj, fields).map((g) => /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(import_react4.default.Fragment, { children: [
     g.folder && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "group", children: [
       /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("dt", { style: { color: g.folder.color }, children: g.folder.name }),
       /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("dd", {})
@@ -24578,7 +24633,7 @@ function DocBody({ proj, roots, loose, base = 1 }) {
       ] }, r.proc.id)) }),
       /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(FieldList, { proj, fields: secFields }),
       sc.description?.trim() && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(Markdown, { text: sc.description }),
-      entries.map((e, i) => /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(import_react3.default.Fragment, { children: e.node }, i))
+      entries.map((e, i) => /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(import_react4.default.Fragment, { children: e.node }, i))
     ] }, sc.id);
   };
   return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(import_jsx_runtime2.Fragment, { children: [

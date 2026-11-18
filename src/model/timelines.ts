@@ -107,6 +107,20 @@ export function timelineIndex(p: Project, id: Id): number {
 export const itemsOf = (p: Project, timelineId: Id): Item[] => p.items.filter(it => it.timelineId === timelineId)
 export const sectionsOf = (p: Project, timelineId: Id): Section[] => p.sections.filter(sc => sc.timelineId === timelineId)
 
+// The per-timeline slices are cached on the source array, not the project:
+// panning or zooming replaces the project object (the camera lives on it) but
+// keeps `items` / `sections`, so the view keeps handing out the same arrays
+// and every memo keyed on them (layout inputs, processor badges, sidebar
+// counts) stays put instead of recomputing on each frame.
+const sliceCache = new WeakMap<readonly unknown[], Map<Id, unknown[]>>()
+function sliceOf<T extends { timelineId?: Id }>(all: T[], timelineId: Id): T[] {
+  let per = sliceCache.get(all)
+  if (!per) { per = new Map(); sliceCache.set(all, per) }
+  let hit = per.get(timelineId) as T[] | undefined
+  if (!hit) { hit = all.filter(x => x.timelineId === timelineId); per.set(timelineId, hit) }
+  return hit
+}
+
 // Views are cached per (project object, timeline id) so a store selector that
 // returns one hands React the same object until the project actually changes.
 const viewCache = new WeakMap<Project, Map<Id, Project>>()
@@ -148,8 +162,8 @@ export function timelineView(p: Project, timelineId?: Id | null): Project {
     : p.cameras[tl.id]
   const view: Project = {
     ...p,
-    items: itemsOf(p, tl.id),
-    sections: sectionsOf(p, tl.id),
+    items: sliceOf(p.items, tl.id),
+    sections: sliceOf(p.sections, tl.id),
     settings: tl.settings,
     camera,
     activeTimelineId: tl.id,

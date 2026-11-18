@@ -482,7 +482,9 @@ export function ReadFieldValue({ field, value }: { field: FieldDef; value: Field
 /** "Referenced by" list for an item or section. */
 export function ReferencedBy({ id }: { id: Id }) {
   const proj = useActiveWhole()
-  const links = useMemo(() => backlinks(proj, id), [proj, id])
+  // Keyed on the arrays, not `proj`, which is new on every pan / zoom frame.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const links = useMemo(() => backlinks(proj, id), [proj.items, proj.sections, proj.fields, proj.types, proj.typeFolders, proj.hierarchyLevels, id])
   if (!links.length) return null
   return (
     <div className="field">
